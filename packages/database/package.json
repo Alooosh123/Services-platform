@@ -1,0 +1,28 @@
+{
+  "name": "@digital-topup/database",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "push": "prisma db push",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "backup": "ts-node --project ../../scripts/tsconfig.json ../../scripts/backup-db.ts",
+    "restore": "ts-node --project ../../scripts/tsconfig.json ../../scripts/restore-db.ts",
+    "seed": "ts-node prisma/seed.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "prisma": "^5.10.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "@types/node": "^20.11.24",
+    "bcrypt": "^5.1.1",
+    "@types/bcrypt": "^5.0.2"
+  }
+}

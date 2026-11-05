@@ -1,0 +1,1593 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum AgentPricingMode {
+  PERCENTAGE
+  CUSTOM_PRICE
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AgentProductPrice {
+  id             String       @id @default(uuid())
+  subAgentUserId String
+  productId      String
+  currency       CurrencyCode
+  retailPrice    Decimal      @db.Decimal(18, 4)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  subAgent User    @relation("AgentBranchPrices", fields: [subAgentUserId], references: [id], onDelete: Cascade)
+  product  Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([subAgentUserId, productId, currency])
+  @@index([productId, isActive])
+  @@map("agent_product_prices")
+}
+
+enum UserRole {
+  OWNER
+  GENERAL_MANAGER
+  FINANCE_MANAGER
+  SUPPORT
+  FULFILLMENT_OPERATOR
+  AUDITOR
+  CUSTOMER
+  ADMIN
+  FINANCE
+  SUPER_ADMIN
+  RESELLER
+  SUB_AGENT
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_KYC
+}
+
+enum ServiceCategoryType {
+  GAMES_ID
+  DIGITAL_CARDS
+  TELECOM_TOPUP
+  ISP_INTERNET
+  CUSTOM_SERVICE
+}
+
+enum FulfillmentType {
+  API_DIRECT
+  LOCAL_PIN_VAULT
+  MANUAL
+}
+
+enum PinVaultStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+}
+
+enum WalletLedgerEntryType {
+  CREDIT
+  DEBIT
+  LOCK
+  UNLOCK
+  REFUND
+  COMMISSION
+}
+
+enum DepositStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CREDITED
+}
+
+enum CurrencyCode {
+  YER
+  USD
+  SAR
+}
+
+enum PaymentStatus {
+  Created
+  Pending
+  AwaitingVerification
+  Confirmed
+  Failed
+  Expired
+  Reversed
+  Refunded
+  NeedsReconciliation
+}
+
+enum OrderStatus {
+  AwaitingPayment
+  PaymentReview
+  Paid
+  Queued
+  Processing
+  ManualReview
+  Completed
+  Failed
+  Cancelled
+  RefundPending
+  Refunded
+  ReconciliationRequired
+}
+
+enum PaymentChannelCode {
+  JAIB
+  JAWALI
+  CASH
+  ONE_CASH
+  EASY
+  WALLET
+  CARD
+  BINANCE_PAY
+  USDT_TRC20
+  USDT_BEP20
+}
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum LedgerTransactionType {
+  TOPUP
+  PURCHASE
+  REFUND
+  EXCHANGE
+  ADJUSTMENT
+}
+
+enum ProviderType {
+  MOCK
+  MANUAL
+  EXTERNAL_API
+}
+
+enum PayoutStatus {
+  REQUESTED
+  APPROVED
+  PROCESSING
+  CONFIRMED
+  FAILED
+  UNKNOWN
+  CANCELLED
+}
+
+enum ReconciliationStatus {
+  MATCHED
+  DISCREPANCY
+  UNKNOWN_INTERNAL
+  UNKNOWN_EXTERNAL
+  RESOLVED_MANUAL
+  PENDING_REVIEW
+}
+
+enum DiscrepancyType {
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  MISSING_IN_BANK
+  MISSING_IN_INTERNAL
+  DUPLICATE_EXTERNAL
+  TIMING_DIFFERENCE
+  FEE_MISMATCH
+  UNAUTHORIZED_DEBIT
+}
+
+enum PaymentChannelMode {
+  MANUAL
+  API
+  BLOCKED_EXTERNAL
+  DISABLED
+}
+
+enum SupplierAccountType {
+  PREPAID
+  POSTPAID
+  PAY_PER_ORDER
+}
+
+enum ServiceRequestStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  FULFILLED
+}
+
+enum PriceRuleScope {
+  DEFAULT
+  CATEGORY
+  SERVICE
+  PRODUCT
+}
+
+enum MarginType {
+  PERCENTAGE
+  FIXED
+}
+
+enum ChannelVerificationStatus {
+  VERIFIED
+  PENDING_REVIEW
+  REJECTED
+}
+
+enum SaaSBillingCycle {
+  WEEKLY
+  MONTHLY
+  ANNUAL
+}
+
+enum SaaSSubscriptionStatus {
+  ACTIVE
+  TRIAL
+  PENDING_PAYMENT
+  EXPIRED
+  SUSPENDED
+  CANCELLED
+}
+
+enum SaaSTenantStatus {
+  ACTIVE
+  PENDING_SETUP
+  SUSPENDED
+  TERMINATED
+}
+
+enum SaaSInvoiceStatus {
+  PAID
+  PENDING
+  OVERDUE
+  CANCELLED
+}
+
+// ----------------------------------------------------
+// IDENTITY & USERS
+// ----------------------------------------------------
+model Tier {
+  id                     String   @id @default(uuid())
+  code                   String   @unique
+  name                   String
+  nameAr                 String
+  defaultDiscountPercent Decimal  @default(0.0000) @db.Decimal(7, 4)
+  dailyTransactionLimit  Decimal? @db.Decimal(18, 4)
+  displayOrder           Int      @default(0)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  users         User[]
+  productPrices ProductTierPrice[]
+
+  @@index([isActive, displayOrder])
+  @@map("tiers")
+}
+
+model User {
+  id                           String           @id @default(uuid())
+  email                        String?          @unique
+  phone                        String?          @unique
+  passwordHash                 String
+  fullName                     String
+  fullNameAr                   String?
+  role                         UserRole         @default(CUSTOMER)
+  status                       AccountStatus    @default(ACTIVE)
+  isVerified                   Boolean          @default(false)
+  isActive                     Boolean          @default(true)
+  avatarUrl                    String?
+  twoFactorSecret              String?
+  isTwoFactorEnabled           Boolean          @default(false)
+  transactionPinHash           String?
+  transactionPinFailedAttempts Int              @default(0)
+  transactionPinLockedUntil    DateTime?
+  tierId                       String?
+  parentAgentId                String?
+  agentPricingMode             AgentPricingMode @default(PERCENTAGE)
+  parentAgentCommissionPercent Decimal          @default(0.0000) @db.Decimal(7, 4)
+  emailVerifiedAt              DateTime?
+  phoneVerifiedAt              DateTime?
+  verificationCode             String?
+  resetPasswordToken           String?
+  resetPasswordExpires         DateTime?
+  createdAt                    DateTime         @default(now())
+  updatedAt                    DateTime         @updatedAt
+
+  tier                     Tier?                  @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  parentAgent              User?                  @relation("AgentHierarchy", fields: [parentAgentId], references: [id], onDelete: SetNull)
+  subAgents                User[]                 @relation("AgentHierarchy")
+  agentProductPrices       AgentProductPrice[]    @relation("AgentBranchPrices")
+  devices                  UserDevice[]
+  merchantApiCredential    MerchantApiCredential?
+  wallets                  Wallet[]
+  orders                   Order[]
+  sessions                 Session[]
+  walletTopups             WalletTopup[]
+  depositRequests          DepositRequest[]       @relation("UserDeposits")
+  reviewedDeposits         DepositRequest[]       @relation("DepositReviewedBy")
+  depositHistories         DepositStatusHistory[] @relation("DepositHistoryChangedBy")
+  currencyExchanges        CurrencyExchange[]
+  assignedFulfillments     ManualFulfillment[]    @relation("AssignedOperator")
+  auditLogs                AuditLog[]             @relation("PerformedByAudit")
+  payoutRequests           PayoutRequest[]
+  submittedServiceRequests ServiceRequest[]       @relation("UserSubmittedServiceRequests")
+  reviewedServiceRequests  ServiceRequest[]       @relation("UserReviewedServiceRequests")
+  priceRuleVersions        PriceRuleVersion[]
+  commissionsEarned        Order[]                @relation("AgentCommissionRecipient")
+
+  @@index([parentAgentId])
+  @@index([tierId, role])
+  @@index([status, role])
+  @@map("users")
+}
+
+model UserDevice {
+  id                    String   @id @default(uuid())
+  userId                String
+  deviceFingerprintHash String
+  deviceName            String?
+  userAgent             String?
+  ipAddress             String?
+  isTrusted             Boolean  @default(false)
+  lastSeenAt            DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceFingerprintHash])
+  @@index([userId, isTrusted])
+  @@index([lastSeenAt])
+  @@map("user_devices")
+}
+
+model MerchantApiCredential {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  apiKeyHash  String    @unique
+  secretHash  String
+  ipWhitelist String[]  @default([])
+  webhookUrl  String?
+  isActive    Boolean   @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([isActive])
+  @@map("merchant_api_credentials")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  refreshToken String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ----------------------------------------------------
+// CURRENCIES & EXCHANGE
+// ----------------------------------------------------
+model Currency {
+  code      CurrencyCode @id
+  name      String
+  nameAr    String
+  symbol    String
+  symbolAr  String
+  decimals  Int          @default(2)
+  isBase    Boolean      @default(false)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  wallets        Wallet[]
+  ledgerAccounts LedgerAccount[]
+
+  @@map("currencies")
+}
+
+model FxRate {
+  id            String       @id @default(uuid())
+  fromCurrency  CurrencyCode
+  toCurrency    CurrencyCode
+  rate          Decimal      @db.Decimal(16, 6) // Exchange multiplier
+  buyMargin     Decimal      @default(0.0000) @db.Decimal(6, 4)
+  sellMargin    Decimal      @default(0.0000) @db.Decimal(6, 4)
+  feePercentage Decimal      @default(0.0000) @db.Decimal(6, 4)
+  effectiveFrom DateTime     @default(now())
+  effectiveTo   DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@unique([fromCurrency, toCurrency, effectiveFrom])
+  @@map("fx_rates")
+}
+
+model CurrencyExchange {
+  id           String       @id @default(uuid())
+  userId       String
+  fromCurrency CurrencyCode
+  toCurrency   CurrencyCode
+  fromAmount   Decimal      @db.Decimal(18, 4)
+  toAmount     Decimal      @db.Decimal(18, 4)
+  fxRate       Decimal      @db.Decimal(16, 6)
+  feeAmount    Decimal      @default(0.0000) @db.Decimal(18, 4)
+  ledgerTxId   String?
+  createdAt    DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("currency_exchanges")
+}
+
+// ----------------------------------------------------
+// WALLETS & STRICT DOUBLE-ENTRY LEDGER
+// ----------------------------------------------------
+model Wallet {
+  id            String       @id @default(uuid())
+  userId        String
+  currency      CurrencyCode
+  balance       Decimal      @default(0.0000) @db.Decimal(18, 4)
+  lockedBalance Decimal      @default(0.0000) @db.Decimal(18, 4)
+  creditLimit   Decimal      @default(0.0000) @db.Decimal(18, 4)
+  version       Int          @default(0)
+  isFrozen      Boolean      @default(false)
+  frozenReason  String?
+  frozenAt      DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currencyRel     Currency            @relation(fields: [currency], references: [code])
+  topups          WalletTopup[]
+  depositRequests DepositRequest[]
+  ledgerEntries   LedgerEntry[]
+  walletEntries   WalletLedgerEntry[]
+
+  @@unique([userId, currency]) // Explicit separation: 1 wallet per currency per user
+  @@map("wallets")
+}
+
+model WalletLedgerEntry {
+  id             String                @id @default(uuid())
+  walletId       String
+  entryType      WalletLedgerEntryType
+  amount         Decimal               @db.Decimal(18, 4)
+  balanceBefore  Decimal               @db.Decimal(18, 4)
+  balanceAfter   Decimal               @db.Decimal(18, 4)
+  referenceType  String
+  referenceId    String?
+  idempotencyKey String                @unique
+  description    String?
+  createdAt      DateTime              @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  @@index([walletId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("wallet_ledger_entries")
+}
+
+model DepositRequest {
+  id                String             @id @default(uuid())
+  depositNumber     String             @unique // E.g. "DEP-20261009-1234"
+  userId            String
+  walletId          String
+  currency          CurrencyCode
+  amount            Decimal            @db.Decimal(18, 4)
+  paymentMethodCode PaymentChannelCode
+  referenceNumber   String // Customer transfer transaction reference number
+  proofImageUrl     String? // Receipt screenshot
+  senderName        String? // Sender account/payer name
+  senderPhone       String? // Sender phone number
+  status            DepositStatus      @default(PENDING)
+  reviewedByUserId  String?
+  reviewNotes       String?
+  rejectionReason   String?
+  ledgerTxId        String? // Linked double-entry ledger transaction ID when credited
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user          User                   @relation("UserDeposits", fields: [userId], references: [id], onDelete: Cascade)
+  wallet        Wallet                 @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  reviewedBy    User?                  @relation("DepositReviewedBy", fields: [reviewedByUserId], references: [id])
+  statusHistory DepositStatusHistory[]
+
+  @@unique([paymentMethodCode, referenceNumber])
+  @@index([userId, status])
+  @@index([referenceNumber])
+  @@index([paymentMethodCode, status, createdAt])
+  @@map("deposit_requests")
+}
+
+model DepositStatusHistory {
+  id               String         @id @default(uuid())
+  depositRequestId String
+  fromStatus       DepositStatus?
+  toStatus         DepositStatus
+  changedByUserId  String?
+  notes            String?
+  createdAt        DateTime       @default(now())
+
+  depositRequest DepositRequest @relation(fields: [depositRequestId], references: [id], onDelete: Cascade)
+  changedByUser  User?          @relation("DepositHistoryChangedBy", fields: [changedByUserId], references: [id])
+
+  @@index([depositRequestId])
+  @@map("deposit_status_histories")
+}
+
+model PaymentChannelConfig {
+  id                      String                    @id @default(uuid())
+  code                    PaymentChannelCode        @unique
+  name                    String
+  nameAr                  String
+  accountNumber           String // E.g. "770123456"
+  accountHolderName       String // E.g. "منصة الشحن الرقمية المحدودة"
+  instructionsAr          String
+  supportedCurrencies     Json // ["YER"] or ["YER","USD"]
+  minAmount               Decimal                   @default(1.0000) @db.Decimal(18, 4)
+  maxAmount               Decimal                   @default(10000000.0000) @db.Decimal(18, 4)
+  mode                    PaymentChannelMode        @default(MANUAL)
+  verificationStatus      ChannelVerificationStatus @default(VERIFIED)
+  verifiedByFinanceUserId String?
+  verifiedAt              DateTime?
+  financeApprovalRequired Boolean                   @default(false)
+  pendingAccountNumber    String?
+  pendingInstructionsAr   String?
+  pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
+  killSwitchReason        String?
+  killSwitchAt            DateTime?
+  isActive                Boolean                   @default(true)
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+
+  @@map("payment_channel_configs")
+}
+
+model WalletTopup {
+  id              String        @id @default(uuid())
+  userId          String
+  walletId        String
+  currency        CurrencyCode
+  amount          Decimal       @db.Decimal(18, 4)
+  paymentMethodId String
+  status          PaymentStatus @default(Pending)
+  referenceNumber String // Customer transfer transaction number
+  proofImage      String?
+  confirmedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id])
+  wallet        Wallet        @relation(fields: [walletId], references: [id])
+  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+
+  @@unique([paymentMethodId, referenceNumber])
+  @@map("wallet_topups")
+}
+
+model LedgerAccount {
+  id          String            @id @default(uuid())
+  code        String            @unique // E.g. "1001-CASH-JAIB", "2001-CUSTOMER-WALLET-YER"
+  name        String
+  type        LedgerAccountType
+  currency    CurrencyCode
+  description String?
+  createdAt   DateTime          @default(now())
+
+  currencyRel Currency      @relation(fields: [currency], references: [code])
+  entries     LedgerEntry[]
+
+  @@map("ledger_accounts")
+}
+
+model LedgerTransaction {
+  id              String                @id @default(uuid())
+  txNumber        String                @unique // E.g. "LTX-20261009-0001"
+  type            LedgerTransactionType
+  status          String                @default("POSTED") // POSTED, REVERSED
+  postedAt        DateTime              @default(now())
+  referenceType   String // TOPUP, ORDER, REFUND, EXCHANGE, ADJUSTMENT
+  referenceId     String // Order ID or Topup ID
+  idempotencyKey  String?               @unique
+  notes           String?
+  createdByUserId String?
+  isReversal      Boolean               @default(false)
+  reversalOfId    String? // Link to reversed transaction if this is a reversal
+  createdAt       DateTime              @default(now())
+
+  entries LedgerEntry[]
+
+  @@index([referenceType, referenceId])
+  @@map("ledger_transactions")
+}
+
+model LedgerEntry {
+  id            String       @id @default(uuid())
+  transactionId String
+  accountId     String
+  walletId      String? // Associated customer wallet if applicable
+  debitAmount   Decimal      @default(0.0000) @db.Decimal(18, 4)
+  creditAmount  Decimal      @default(0.0000) @db.Decimal(18, 4)
+  currency      CurrencyCode
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account     LedgerAccount     @relation(fields: [accountId], references: [id])
+  wallet      Wallet?           @relation(fields: [walletId], references: [id])
+
+  @@index([transactionId])
+  @@index([accountId])
+  @@map("ledger_entries")
+}
+
+// ----------------------------------------------------
+// DYNAMIC CATALOG & SERVICES (YEMEN MARKET FOCUS)
+// ----------------------------------------------------
+model ServiceCategory {
+  id           String              @id @default(uuid())
+  slug         String              @unique
+  parentId     String?
+  categoryType ServiceCategoryType @default(CUSTOM_SERVICE)
+  name         String
+  nameAr       String
+  icon         String?
+  displayOrder Int                 @default(0)
+  isActive     Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+
+  parent   ServiceCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children ServiceCategory[] @relation("CategoryHierarchy")
+  services Service[]
+
+  @@index([parentId, displayOrder])
+  @@index([categoryType, isActive])
+  @@map("service_categories")
+}
+
+model Service {
+  id            String   @id @default(uuid())
+  slug          String   @unique // "pubg-mobile", "yoyo", "toptop"
+  categoryId    String?
+  name          String
+  nameAr        String
+  description   String?
+  descriptionAr String?
+  iconUrl       String?
+  bannerUrl     String?
+  displayOrder  Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category ServiceCategory? @relation(fields: [categoryId], references: [id])
+  fields   ServiceField[]
+  products Product[]
+  orders   Order[]
+
+  @@map("services")
+}
+
+model ServiceField {
+  id              String   @id @default(uuid())
+  serviceId       String
+  fieldKey        String // E.g. "player_id", "zone_id"
+  label           String
+  labelAr         String
+  type            String   @default("text") // text, number, select
+  required        Boolean  @default(true)
+  validationRegex String? // Regex constraint
+  placeholderAr   String?
+  helperTextAr    String?
+  displayOrder    Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, fieldKey])
+  @@map("service_fields")
+}
+
+model Product {
+  id                   String          @id @default(uuid())
+  serviceId            String
+  name                 String
+  nameAr               String
+  sku                  String          @unique
+  providerId           String?
+  providerProductSku   String?
+  isManualFulfillment  Boolean         @default(false)
+  requiredFieldsSchema Json?
+  fulfillmentType      FulfillmentType @default(API_DIRECT)
+  isAvailable          Boolean         @default(true)
+  displayOrder         Int             @default(0)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  service          Service                  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  provider         Provider?                @relation(fields: [providerId], references: [id])
+  prices           ProductPrice[]
+  tierPrices       ProductTierPrice[]
+  agentPrices      AgentProductPrice[]
+  providerMappings ProductProviderMapping[]
+  pinCodes         PinVault[]
+  orders           Order[]
+
+  @@map("products")
+}
+
+model ProductPrice {
+  id          String       @id @default(uuid())
+  productId   String
+  currency    CurrencyCode
+  retailPrice Decimal      @db.Decimal(18, 4)
+  costPrice   Decimal      @db.Decimal(18, 4)
+  isAvailable Boolean      @default(true)
+  updatedAt   DateTime     @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, currency])
+  @@map("product_prices")
+}
+
+model ProductTierPrice {
+  id                     String       @id @default(uuid())
+  productId              String
+  tierId                 String
+  currency               CurrencyCode
+  retailPrice            Decimal      @db.Decimal(18, 4)
+  agentCommissionPercent Decimal      @default(0.0000) @db.Decimal(7, 4)
+  isActive               Boolean      @default(true)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tier    Tier    @relation(fields: [tierId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, tierId, currency])
+  @@index([tierId, isActive])
+  @@map("product_tier_prices")
+}
+
+model ProductProviderMapping {
+  id                 String   @id @default(uuid())
+  productId          String
+  providerId         String
+  providerProductSku String
+  providerCost       Decimal? @db.Decimal(18, 4)
+  priority           Int      @default(100)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, providerId])
+  @@unique([providerId, providerProductSku])
+  @@index([productId, isActive, priority])
+  @@map("product_provider_mappings")
+}
+
+model PinVault {
+  id                   String         @id @default(uuid())
+  productId            String
+  orderId              String?
+  serialNumber         String?
+  batchNumber          String?
+  pinCodeCiphertext    String
+  pinCodeHash          String         @unique
+  encryptionKeyVersion String
+  status               PinVaultStatus @default(AVAILABLE)
+  expiresAt            DateTime?
+  reservedAt           DateTime?
+  soldAt               DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([productId, status, createdAt])
+  @@index([orderId])
+  @@index([expiresAt])
+  @@map("pin_vault")
+}
+
+model ProviderApiLog {
+  id              String   @id @default(uuid())
+  providerId      String
+  orderId         String?
+  operation       String
+  requestPayload  Json?
+  responsePayload Json?
+  httpStatus      Int?
+  success         Boolean  @default(false)
+  durationMs      Int?
+  errorCode       String?
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([providerId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([success, createdAt])
+  @@map("provider_api_logs")
+}
+
+// ----------------------------------------------------
+// PAYMENT CHANNELS & ATTEMPTS
+// ----------------------------------------------------
+model PaymentMethod {
+  id                  String             @id @default(uuid())
+  code                PaymentChannelCode @unique // JAIB, JAWALI, CASH, ONE_CASH, EASY, WALLET
+  name                String
+  nameAr              String
+  type                String             @default("MANUAL") // GATEWAY, MANUAL, WALLET
+  supportedCurrencies Json               @default("[\"YER\",\"USD\",\"SAR\"]")
+  feePercentage       Decimal            @default(0.0000) @db.Decimal(6, 4)
+  feeFixed            Decimal            @default(0.0000) @db.Decimal(18, 4)
+  minAmount           Decimal            @default(1.0000) @db.Decimal(18, 4)
+  maxAmount           Decimal            @default(10000000.0000) @db.Decimal(18, 4)
+  instructionsAr      String?
+  isActive            Boolean            @default(true)
+  isMock              Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+
+  payments Payment[]
+  topups   WalletTopup[]
+
+  @@map("payment_methods")
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  orderId           String?
+  userId            String
+  paymentMethodId   String
+  amount            Decimal       @db.Decimal(18, 4)
+  currency          CurrencyCode
+  providerCurrency  String?
+  providerAmount    Decimal?      @db.Decimal(18, 6)
+  status            PaymentStatus @default(Pending)
+  checkoutUrl       String?
+  gatewayReference  String?       @unique
+  providerReference String?       @unique
+  idempotencyKey    String?       @unique
+  providerEventId   String?
+  feeAmount         Decimal       @default(0.0000) @db.Decimal(18, 4)
+  ledgerTxId        String?
+  proofImage        String? // Transfer screenshot receipt
+  payerAccount      String? // Customer sender phone or account number
+  verifiedByUserId  String?
+  confirmedAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  order         Order?                @relation(fields: [orderId], references: [id])
+  paymentMethod PaymentMethod         @relation(fields: [paymentMethodId], references: [id])
+  webhookEvents PaymentWebhookEvent[]
+
+  @@index([userId, status, createdAt])
+  @@map("payments")
+}
+
+model PaymentWebhookEvent {
+  id              String    @id @default(uuid())
+  provider        String
+  providerEventId String
+  paymentId       String?
+  payloadHash     String
+  status          String    @default("RECEIVED")
+  errorMessage    String?
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, providerEventId])
+  @@index([status, receivedAt])
+  @@map("payment_webhook_events")
+}
+
+// ----------------------------------------------------
+// ORDERS & PRICE/BENEFICIARY SNAPSHOTS
+// ----------------------------------------------------
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique
+  userId      String
+  serviceId   String
+  productId   String
+  status      OrderStatus @default(AwaitingPayment)
+
+  // IMMUTABLE SNAPSHOTS AT TIME OF PURCHASE
+  snapshotServiceName       String
+  snapshotServiceNameAr     String?
+  snapshotProductName       String
+  snapshotProductNameAr     String?
+  snapshotCurrency          CurrencyCode
+  snapshotRetailPrice       Decimal      @db.Decimal(18, 4)
+  snapshotCostPrice         Decimal      @db.Decimal(18, 4)
+  snapshotProfit            Decimal      @db.Decimal(18, 4)
+  snapshotBeneficiaryFields Json
+  snapshotPaymentMethodCode String
+  agentParentUserId         String?
+  agentCommissionAmount     Decimal      @default(0.0000) @db.Decimal(18, 4)
+
+  idempotencyKey String    @unique
+  providerId     String?
+  providerTxId   String?
+  voucherCode    String?
+  errorMessage   String?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user                     User                 @relation(fields: [userId], references: [id])
+  agentCommissionRecipient User?                @relation("AgentCommissionRecipient", fields: [agentParentUserId], references: [id], onDelete: SetNull)
+  service                  Service              @relation(fields: [serviceId], references: [id])
+  product                  Product              @relation(fields: [productId], references: [id])
+  provider                 Provider?            @relation(fields: [providerId], references: [id])
+  payments                 Payment[]
+  statusHistory            OrderStatusHistory[]
+  manualFulfillment        ManualFulfillment?
+  pinCodes                 PinVault[]
+  providerApiLogs          ProviderApiLog[]
+
+  @@index([userId, status])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model OrderStatusHistory {
+  id              String      @id @default(uuid())
+  orderId         String
+  oldStatus       OrderStatus
+  newStatus       OrderStatus
+  reason          String?
+  changedByUserId String?
+  createdAt       DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_status_history")
+}
+
+// ----------------------------------------------------
+// FULFILLMENT & PROVIDERS
+// ----------------------------------------------------
+model Provider {
+  id                    String       @id @default(uuid())
+  code                  String       @unique // "MOCK", "MANUAL", "EXTERNAL_API"
+  name                  String
+  type                  ProviderType @default(MOCK)
+  baseUrl               String?
+  apiKey                String?
+  credentialsCiphertext String?
+  priority              Int          @default(100)
+  timeoutMs             Int          @default(30000)
+  balance               Decimal      @default(0.0000) @db.Decimal(18, 4)
+  currency              CurrencyCode @default(USD)
+  isActive              Boolean      @default(true)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  orders           Order[]
+  supplierAccounts SupplierAccount[]
+  products         Product[]
+  productMappings  ProductProviderMapping[]
+  apiLogs          ProviderApiLog[]
+
+  @@map("providers")
+}
+
+model ManualFulfillment {
+  id                 String    @id @default(uuid())
+  orderId            String    @unique
+  assignedOperatorId String?
+  status             String    @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, REJECTED
+  operatorNotes      String?
+  proofVoucherCode   String?
+  proofScreenshotUrl String?
+  completedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  order            Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignedOperator User? @relation("AssignedOperator", fields: [assignedOperatorId], references: [id])
+
+  @@map("manual_fulfillments")
+}
+
+// ----------------------------------------------------
+// AUDITING & SYSTEM LOGS
+// ----------------------------------------------------
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  userRole   String?
+  action     String
+  entityName String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation("PerformedByAudit", fields: [userId], references: [id])
+
+  @@index([entityName, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ----------------------------------------------------
+// PHASE 05: PAYOUTS, SETTLEMENT & RECONCILIATION
+// ----------------------------------------------------
+model PayoutRequest {
+  id                 String             @id @default(uuid())
+  payoutNumber       String             @unique // E.g. "PO-20261010-001"
+  userId             String
+  walletId           String?
+  currency           CurrencyCode
+  amount             Decimal            @db.Decimal(18, 4)
+  feeAmount          Decimal            @default(0.0000) @db.Decimal(18, 4)
+  channelCode        PaymentChannelCode
+  destinationAccount String
+  beneficiaryName    String
+  idempotencyKey     String             @unique
+  status             PayoutStatus       @default(REQUESTED)
+  approvedByUserId   String?
+  approvalNotes      String?
+  externalReference  String?
+  failureReason      String?
+  ledgerTxId         String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("payout_requests")
+}
+
+model ReconciliationBatch {
+  id                    String              @id @default(uuid())
+  batchNumber           String              @unique // E.g. "REC-20261010-001"
+  channelCode           PaymentChannelCode?
+  statementDate         DateTime
+  totalRecords          Int                 @default(0)
+  matchedCount          Int                 @default(0)
+  discrepancyCount      Int                 @default(0)
+  totalAmountMatched    Decimal             @default(0.0000) @db.Decimal(18, 4)
+  totalAmountDiscrepant Decimal             @default(0.0000) @db.Decimal(18, 4)
+  status                String              @default("COMPLETED") // COMPLETED, PENDING_REVIEW, RESOLVED
+  reconciledByUserId    String?
+  notes                 String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  items ReconciliationItem[]
+
+  @@map("reconciliation_batches")
+}
+
+model ReconciliationItem {
+  id               String               @id @default(uuid())
+  batchId          String
+  referenceNumber  String
+  expectedAmount   Decimal              @db.Decimal(18, 4)
+  actualAmount     Decimal              @db.Decimal(18, 4)
+  currency         CurrencyCode
+  status           ReconciliationStatus @default(PENDING_REVIEW)
+  discrepancyType  DiscrepancyType?
+  internalTxId     String?
+  notes            String?
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+  createdAt        DateTime             @default(now())
+
+  batch ReconciliationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, status])
+  @@index([referenceNumber])
+  @@map("reconciliation_items")
+}
+
+model SupplierAccount {
+  id               String              @id @default(uuid())
+  providerId       String
+  currency         CurrencyCode        @default(USD)
+  balance          Decimal             @default(0.0000) @db.Decimal(18, 4)
+  creditLimit      Decimal             @default(0.0000) @db.Decimal(18, 4)
+  accountType      SupplierAccountType @default(PREPAID)
+  lastReconciledAt DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  provider     Provider              @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  transactions SupplierTransaction[]
+
+  @@unique([providerId, currency])
+  @@map("supplier_accounts")
+}
+
+model SupplierTransaction {
+  id            String       @id @default(uuid())
+  accountId     String
+  type          String // PREPAID_TOPUP, ORDER_FULFILLMENT, REFUND, ADJUSTMENT
+  currency      CurrencyCode
+  amount        Decimal      @db.Decimal(18, 4)
+  balanceBefore Decimal      @db.Decimal(18, 4)
+  balanceAfter  Decimal      @db.Decimal(18, 4)
+  referenceId   String? // Order ID or Deposit ref
+  ledgerTxId    String?
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  account SupplierAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("supplier_transactions")
+}
+
+// ----------------------------------------------------
+// PHASE 06: DYNAMIC CATALOG & PRICING ENGINE
+// ----------------------------------------------------
+model ServiceRequest {
+  id                 String               @id @default(uuid())
+  userId             String?
+  appName            String
+  categorySlug       String?
+  suggestedPackages  String?
+  playerFieldDetails String?
+  officialWebsiteUrl String?
+  notes              String?
+  status             ServiceRequestStatus @default(PENDING)
+  reviewedByUserId   String?
+  reviewNotes        String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  user           User? @relation("UserSubmittedServiceRequests", fields: [userId], references: [id])
+  reviewedByUser User? @relation("UserReviewedServiceRequests", fields: [reviewedByUserId], references: [id])
+
+  @@map("service_requests")
+}
+
+model PriceRuleVersion {
+  id              String         @id @default(uuid())
+  version         Int            @default(1)
+  scope           PriceRuleScope
+  targetId        String?
+  marginType      MarginType
+  marginValue     Decimal        @db.Decimal(18, 4)
+  minMargin       Decimal?       @db.Decimal(18, 4)
+  maxMargin       Decimal?       @db.Decimal(18, 4)
+  feeFixed        Decimal        @default(0.0000) @db.Decimal(18, 4)
+  feePercentage   Decimal        @default(0.0000) @db.Decimal(6, 4)
+  validFrom       DateTime       @default(now())
+  validTo         DateTime?
+  isActive        Boolean        @default(true)
+  changeReason    String
+  createdByUserId String?
+  createdAt       DateTime       @default(now())
+
+  createdByUser User? @relation(fields: [createdByUserId], references: [id])
+
+  @@index([scope, targetId])
+  @@map("price_rule_versions")
+}
+
+// ----------------------------------------------------
+// PHASE 07: DAILY CLOSE, OWNER EARNINGS & PAYOUTS
+// ----------------------------------------------------
+model DailyCloseReport {
+  id                   String   @id @default(uuid())
+  closeDate            String   @unique // Format: YYYY-MM-DD
+  status               String   @default("CLOSED") // OPEN, PRELIMINARY, CLOSED, ADJUSTED
+  totalOrdersCount     Int      @default(0)
+  completedOrdersCount Int      @default(0)
+  failedOrdersCount    Int      @default(0)
+  pendingOrdersCount   Int      @default(0)
+  metricsJson          Json // Structured breakdown by YER, USD, SAR
+  isImmutable          Boolean  @default(true)
+  closedByUserId       String?
+  notes                String?
+  closedAt             DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  adjustments DailyCloseAdjustment[]
+
+  @@map("daily_close_reports")
+}
+
+model DailyCloseAdjustment {
+  id               String       @id @default(uuid())
+  reportId         String
+  currency         CurrencyCode
+  adjustmentType   String // RECONCILIATION_VARIANCE, REFUND_ADJUSTMENT, MANUAL_SETTLEMENT
+  amount           Decimal      @db.Decimal(18, 4)
+  reason           String
+  ledgerTxId       String?
+  approvedByUserId String?
+  createdAt        DateTime     @default(now())
+
+  report DailyCloseReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@map("daily_close_adjustments")
+}
+
+model PayoutBeneficiary {
+  id                 String             @id @default(uuid())
+  userId             String
+  beneficiaryName    String
+  channelCode        PaymentChannelCode
+  accountNumber      String
+  verificationStatus String             @default("VERIFIED") // VERIFIED, PENDING_REVIEW, REJECTED
+  financeApprovedBy  String?
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  payouts OwnerPayoutTransaction[]
+
+  @@index([userId])
+  @@map("payout_beneficiaries")
+}
+
+model OwnerPayoutTransaction {
+  id                String       @id @default(uuid())
+  payoutNumber      String       @unique
+  userId            String
+  beneficiaryId     String
+  currency          CurrencyCode
+  amount            Decimal      @db.Decimal(18, 4)
+  status            String       @default("REQUESTED") // REQUESTED, APPROVED, PROCESSING, CONFIRMED, FAILED, UNKNOWN
+  idempotencyKey    String       @unique
+  approvedByUserId  String?
+  approvalNotes     String?
+  externalReference String? // Bank receipt / transfer reference
+  failureReason     String?
+  ledgerTxId        String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  beneficiary PayoutBeneficiary @relation(fields: [beneficiaryId], references: [id])
+
+  @@index([userId])
+  @@index([beneficiaryId])
+  @@map("owner_payout_transactions")
+}
+
+model OwnerEarningsWallet {
+  id                String       @id @default(uuid())
+  userId            String
+  currency          CurrencyCode
+  realizedEarnings  Decimal      @default(0.0000) @db.Decimal(18, 4)
+  lockedEarnings    Decimal      @default(0.0000) @db.Decimal(18, 4)
+  withdrawnEarnings Decimal      @default(0.0000) @db.Decimal(18, 4)
+  updatedAt         DateTime     @updatedAt
+
+  @@unique([userId, currency])
+  @@map("owner_earnings_wallets")
+}
+
+// ----------------------------------------------------
+// Phase 08 Models: Support Tickets & Notifications
+// ----------------------------------------------------
+
+model SupportTicket {
+  id               String    @id @default(uuid())
+  ticketNumber     String    @unique // E.g. "TCK-20261011-0001"
+  userId           String
+  category         String // ORDER_ISSUE, DEPOSIT_ISSUE, ACCOUNT_ISSUE, REFUND_REQUEST, GENERAL_INQUIRY
+  priority         String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status           String    @default("OPEN") // OPEN, IN_PROGRESS, WAITING_FOR_CUSTOMER, RESOLVED, CLOSED
+  subject          String
+  description      String
+  orderId          String?
+  depositId        String?
+  assignedToUserId String?
+  idempotencyKey   String?   @unique
+  resolvedAt       DateTime?
+  closedAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  messages TicketMessage[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@index([orderId])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id             String   @id @default(uuid())
+  ticketId       String
+  senderUserId   String
+  senderRole     String // CUSTOMER, SUPPORT_AGENT, ADMIN
+  message        String
+  attachments    String? // JSON array of URLs / filenames
+  isInternalNote Boolean  @default(false) // If true, visible ONLY to support/admin staff
+  idempotencyKey String?
+  createdAt      DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("ticket_messages")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String // ORDER_UPDATE, DEPOSIT_CONFIRMED, PAYOUT_UPDATE, SECURITY_ALERT, SUPPORT_REPLY, SYSTEM_ANNOUNCEMENT
+  title     String
+  message   String
+  data      Json? // Optional structured metadata (orderId, ticketId, etc.)
+  status    String    @default("UNREAD") // UNREAD, READ, ARCHIVED
+  channel   String    @default("IN_APP") // IN_APP, SMS, EMAIL
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([status])
+  @@map("notifications")
+}
+
+// ----------------------------------------------------
+// Phase 10 Models: System Health, Alerts & Disaster Recovery Backups
+// ----------------------------------------------------
+
+model SystemAlert {
+  id              String    @id @default(uuid())
+  alertType       String // DB_LOCKS_HIGH, QUEUE_LAG_HIGH, DEPOSIT_MISMATCH, etc.
+  severity        String // INFO, WARNING, CRITICAL
+  title           String
+  message         String
+  source          String // ENGINE, RECONCILIATION, HEALTH_CHECK, PAYOUT
+  metrics         Json? // JSON details
+  escalationLevel String    @default("DUTY_ENGINEER") // DUTY_ENGINEER, FINANCE_MANAGER, GENERAL_MANAGER
+  isResolved      Boolean   @default(false)
+  resolvedBy      String?
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([isResolved])
+  @@index([severity])
+  @@index([alertType])
+  @@map("system_alerts")
+}
+
+model BackupRecord {
+  id                String    @id @default(uuid())
+  fileName          String
+  sizeBytes         BigInt    @default(0)
+  checksumSha256    String
+  status            String    @default("COMPLETED") // PENDING, IN_PROGRESS, COMPLETED, FAILED, VERIFIED
+  environment       String    @default("production")
+  tablesIncluded    String    @default("all")
+  recordsCount      Int       @default(0)
+  durationSeconds   Int       @default(0)
+  rtoTargetSeconds  Int       @default(1800) // 30 min target
+  rpoTargetSeconds  Int       @default(300) // 5 min target
+  verifiedAt        DateTime?
+  verificationNotes String?
+  createdAt         DateTime  @default(now())
+
+  @@index([status])
+  @@map("backup_records")
+}
+
+// ----------------------------------------------------
+// Phase 11 Models: Pilot Rollout & Go/No-Go Decision Gate (AT-21)
+// ----------------------------------------------------
+
+model PilotConfig {
+  id                     String    @id @default("default-pilot-config")
+  isPilotActive          Boolean   @default(true)
+  maxOrderAmountYER      Decimal   @default(10000.0)
+  maxOrderAmountUSD      Decimal   @default(20.0)
+  maxDailyWalletLimitYER Decimal   @default(50000.0)
+  allowedProductIds      String    @default("ALL")
+  allowedChannelCodes    String    @default("JAIB,JAWALI,ONE_CASH")
+  cohortType             String    @default("TRUSTED_BETA_USERS")
+  whitelistedUserIds     String    @default("")
+  goNoGoDecision         String    @default("CONDITIONAL_GO")
+  approvedBy             String?
+  approvedAt             DateTime?
+  launchNotes            String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@map("pilot_configs")
+}
+
+model PilotRunAudit {
+  id                     String   @id @default(uuid())
+  cycleName              String
+  userId                 String
+  depositTxId            String
+  orderId                String
+  supplierSettlementTxId String
+  dailyCloseReportId     String
+  payoutRequestId        String?
+  currency               String
+  amount                 Decimal
+  ledgerBalanced         Boolean  @default(true)
+  reconciliationMatched  Boolean  @default(true)
+  bankProofMatched       Boolean  @default(true)
+  providerProofMatched   Boolean  @default(true)
+  status                 String   @default("PASSED")
+  detailsJson            Json?
+  executedBy             String   @default("SYSTEM_PILOT_RUNNER")
+  createdAt              DateTime @default(now())
+
+  @@index([status])
+  @@map("pilot_run_audits")
+}
+
+// ----------------------------------------------------
+// Phase 12 Models: Operations Handover, Runbooks & Audits
+// ----------------------------------------------------
+
+model OperationsHandover {
+  id                    String    @id @default("default-handover-pkg")
+  version               String    @default("1.0.0-final")
+  status                String    @default("IN_PROGRESS") // IN_PROGRESS, TRANSFERRED, ACCEPTED_BY_OWNER
+  handedOverAt          DateTime?
+  technicalLeadSign     Json?
+  financeControllerSign Json?
+  supportLeadSign       Json?
+  operationsManagerSign Json?
+  projectOwnerSign      Json?
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("operations_handovers")
+}
+
+model OperationalDrillLog {
+  id                     String   @id @default(uuid())
+  drillType              String // SUPPORT_FAILED_ORDER_DIAGNOSIS, NEW_STAFF_DAILY_CLOSE, HISTORICAL_RECONCILIATION_AUDIT
+  title                  String
+  executedBy             String
+  status                 String   @default("PASSED")
+  simulatedTargetId      String?
+  stepsCompleted         Json?
+  durationSeconds        Int      @default(0)
+  auditIntegrityVerified Boolean  @default(true)
+  notes                  String?
+  createdAt              DateTime @default(now())
+
+  @@index([drillType])
+  @@index([status])
+  @@map("operational_drill_logs")
+}
+
+// ----------------------------------------------------
+// Phase 13 Models: SaaS Multi-Tenant & Subscription Management (Super Admin)
+// ----------------------------------------------------
+
+model SaaSPlan {
+  id                 String           @id @default(uuid())
+  name               String
+  nameAr             String
+  billingCycle       SaaSBillingCycle @unique
+  durationDays       Int
+  priceUsd           Decimal          @db.Decimal(18, 4)
+  priceYer           Decimal          @db.Decimal(18, 4)
+  priceSar           Decimal          @db.Decimal(18, 4)
+  hasFullPermissions Boolean          @default(true)
+  descriptionAr      String
+  featuresJson       Json
+  isActive           Boolean          @default(true)
+  sortOrder          Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  subscriptions SaaSSubscription[]
+
+  @@map("saas_plans")
+}
+
+model SaaSTenant {
+  id             String           @id @default(uuid())
+  name           String
+  slug           String           @unique
+  domain         String?          @unique
+  customDomain   String?
+  ownerName      String
+  ownerEmail     String
+  ownerPhone     String
+  status         SaaSTenantStatus @default(ACTIVE)
+  licenseKey     String           @unique
+  brandingConfig Json?
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  subscriptions SaaSSubscription[]
+  invoices      SaaSInvoice[]
+
+  @@index([status])
+  @@map("saas_tenants")
+}
+
+model SaaSSubscription {
+  id              String                 @id @default(uuid())
+  tenantId        String
+  planId          String
+  billingCycle    SaaSBillingCycle
+  pricePaid       Decimal                @db.Decimal(18, 4)
+  currency        CurrencyCode           @default(USD)
+  startDate       DateTime               @default(now())
+  endDate         DateTime
+  autoRenew       Boolean                @default(true)
+  status          SaaSSubscriptionStatus @default(ACTIVE)
+  lastRenewalDate DateTime?
+  cancelReason    String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  tenant   SaaSTenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan     SaaSPlan      @relation(fields: [planId], references: [id])
+  invoices SaaSInvoice[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("saas_subscriptions")
+}
+
+model SaaSInvoice {
+  id              String            @id @default(uuid())
+  invoiceNumber   String            @unique
+  tenantId        String
+  subscriptionId  String?
+  amount          Decimal           @db.Decimal(18, 4)
+  currency        CurrencyCode      @default(USD)
+  status          SaaSInvoiceStatus @default(PAID)
+  billingCycle    SaaSBillingCycle
+  paymentMethod   String?
+  referenceNumber String?
+  paidAt          DateTime?
+  dueDate         DateTime
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  tenant       SaaSTenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription SaaSSubscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("saas_invoices")
+}

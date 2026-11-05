@@ -1,0 +1,128 @@
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { OrdersService } from './orders.service';
+import { CreateOrderDto, RetryOrderDto } from './dto/create-order.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import {
+  OrderStatus,
+  UserRole,
+  ManualFulfillmentDto,
+  OrderRefundDto,
+} from '@digital-topup/shared';
+import { RequireTransactionPin } from '../auth/decorators/require-transaction-pin.decorator';
+import { TransactionPinGuard } from '../auth/guards/transaction-pin.guard';
+import { PoliciesGuard } from '../auth/guards/policies.guard';
+import { RequirePolicy } from '../auth/decorators/require-policy.decorator';
+
+@ApiTags('Orders')
+@Controller('orders')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
+export class OrdersController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @Post('checkout')
+  @RequireTransactionPin()
+  @RequirePolicy('orders:create')
+  @UseGuards(PoliciesGuard, TransactionPinGuard)
+  @ApiOperation({ summary: 'Submit a topup checkout order with atomic balance hold' })
+  @ApiResponse({ status: 201, description: 'Order created with dynamic snapshots and double-entry payment' })
+  async checkout(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateOrderDto,
+  ) {
+    return this.ordersService.createOrder(userId, dto);
+  }
+
+  @Get('my-orders')
+  @ApiOperation({ summary: 'Customer: List personal order history' })
+  async getMyOrders(
+    @CurrentUser('id') userId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: OrderStatus,
+  ) {
+    return this.ordersService.getMyOrders(
+      userId,
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 20,
+      status,
+    );
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Customer/Staff: Get detailed order status by ID or order number' })
+  async getOrderById(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
+    @Param('id') orderIdentifier: string,
+  ) {
+    const isStaff = role && role !== UserRole.CUSTOMER;
+    return this.ordersService.getOrderById(userId, orderIdentifier, isStaff);
+  }
+
+  @Get('admin/all')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR, UserRole.SUPPORT, UserRole.FINANCE)
+  @ApiOperation({ summary: 'Admin: Search and filter platform orders' })
+  async getAdminOrders(
+    @Query('status') status?: OrderStatus,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.ordersService.getAdminOrders({
+      status,
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+  }
+
+  @Post('admin/:id/fulfill-manual')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR)
+  @ApiOperation({ summary: 'Admin: Manually fulfill order with voucher pin or proof' })
+  async fulfillManual(
+    @CurrentUser('id') staffId: string,
+    @Param('id') orderId: string,
+    @Body() dto: ManualFulfillmentDto,
+  ) {
+    return this.ordersService.adminManualFulfill(staffId, orderId, dto);
+  }
+
+  @Post('admin/:id/refund')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Admin: Refund order and reverse ledger entries' })
+  async refundOrder(
+    @CurrentUser('id') staffId: string,
+    @Param('id') orderId: string,
+    @Body() dto: OrderRefundDto,
+  ) {
+    return this.ordersService.adminRefundOrder(staffId, orderId, dto);
+  }
+
+  @Post('admin/:id/retry')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR)
+  @ApiOperation({ summary: 'Admin: Trigger manual fulfillment/retry' })
+  async retryOrder(
+    @CurrentUser('id') staffId: string,
+    @Param('id') orderId: string,
+    @Body() dto: RetryOrderDto,
+  ) {
+    return this.ordersService.adminRetryOrder(staffId, orderId, dto);
+  }
+}

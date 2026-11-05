@@ -1,0 +1,25 @@
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# JavaScript workspaces
+node_modules/
+**/node_modules/
+**/.next/
+**/dist/
+**/coverage/
+*.tsbuildinfo
+npm-debug.log*
+
+# Flutter
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+
+# Editors and operating system files
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,95 @@
+{
+  "project": "Yemen Market Digital TopUp & Services Platform v1.0",
+  "roadmap_version": "1.0",
+  "prepared_at": "2026-10-09",
+  "note": "Phases P01/P02 are reported complete, not independently validated; P03-P12 are prospective.",
+  "core_requirements": [
+    "BR-01",
+    "BR-02",
+    "BR-03",
+    "BR-04",
+    "BR-05",
+    "BR-06",
+    "BR-07"
+  ],
+  "phases": [
+    {
+      "id": "P00",
+      "file": "PHASES/P00_REQUIREMENTS_REBASE.md",
+      "status": "مراجعة مطلوبة؛ ليست بديلًا لإعادة تنفيذ المشروع",
+      "depends": "تقارير Master Build وPhase 2 ومصدر الكود"
+    },
+    {
+      "id": "P01",
+      "file": "PHASES/P01_FOUNDATION_AND_LEDGER.md",
+      "status": "مُبلّغ عن إنجازه في تقرير Master Build Plan؛ التحقق المستقل مطلوب",
+      "depends": "P00 الأساسي"
+    },
+    {
+      "id": "P02",
+      "file": "PHASES/P02_AUTH_WALLETS_DEPOSITS.md",
+      "status": "مُبلّغ عن إنجازه في تقرير Phase 2؛ مطلوب Audit قبل المال الحقيقي",
+      "depends": "P01"
+    },
+    {
+      "id": "P03",
+      "file": "PHASES/P03_CHECKOUT_AND_FULFILLMENT.md",
+      "status": "المرحلة التالية — لم يرد تقرير تنفيذها بعد",
+      "depends": "P00 P01 P02"
+    },
+    {
+      "id": "P04",
+      "file": "PHASES/P04_PHONE_LINKING_AI_ASSISTANT.md",
+      "status": "مخطط؛ يخضع لتقييم قانوني وتشغيلي للهوية",
+      "depends": "P02 P03"
+    },
+    {
+      "id": "P05",
+      "file": "PHASES/P05_PAYMENT_AUTOMATION_SETTLEMENT.md",
+      "status": "مخطط؛ قد يُحجب جزئيًا حتى عقود وواجهات مزودين",
+      "depends": "P03 P04 وشراكات تجارية معتمدة"
+    },
+    {
+      "id": "P06",
+      "file": "PHASES/P06_ADMIN_DYNAMIC_CATALOG_PRICING_CHANNELS.md",
+      "status": "مخطط للقدرات المتقدمة؛ يوجد كتالوج أولي وقنوات ابتدائية بحسب التقارير",
+      "depends": "P03 P05 جزئيًا؛ يعمل في الوضع اليدوي قبل P05"
+    },
+    {
+      "id": "P07",
+      "file": "PHASES/P07_OWNER_EARNINGS_PAYOUT_DAILY_REPORTS.md",
+      "status": "مخطط؛ الوظيفة تتطلب تسويات ورصيدًا قابلًا للصرف",
+      "depends": "P05 P06 ودفتر حسابات معتمد"
+    },
+    {
+      "id": "P08",
+      "file": "PHASES/P08_CUSTOMER_MOBILE_UX_SUPPORT.md",
+      "status": "مخطط",
+      "depends": "P03 P04 P07"
+    },
+    {
+      "id": "P09",
+      "file": "PHASES/P09_SECURITY_COMPLIANCE_ANTI_FRAUD.md",
+      "status": "تدقيق شامل قبل الإنتاج؛ ضوابطه مستمرة منذ البداية",
+      "depends": "تطبيقات P01–P08 + اتفاقيات مزودين + رأي امتثال"
+    },
+    {
+      "id": "P10",
+      "file": "PHASES/P10_PRODUCTION_READINESS_STAGING.md",
+      "status": "مخطط",
+      "depends": "P03–P09"
+    },
+    {
+      "id": "P11",
+      "file": "PHASES/P11_PILOT_AND_PUBLIC_LAUNCH.md",
+      "status": "مخطط",
+      "depends": "P10 وقرار GO/NO-GO"
+    },
+    {
+      "id": "P12",
+      "file": "PHASES/P12_OPERATIONS_HANDOVER_EVOLUTION.md",
+      "status": "مخطط؛ مستمر بعد الإطلاق",
+      "depends": "P11"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "name": "digital-topup-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Digital TopUp & Services Platform - Production-Ready Architecture",
+  "workspaces": [
+    "packages/*",
+    "apps/backend",
+    "apps/web-admin",
+    "apps/web-customer",
+    "apps/web-saas"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:backend": "npm run start:dev --workspace=apps/backend",
+    "dev:admin": "npm run dev --workspace=apps/web-admin",
+    "dev:customer": "npm run dev --workspace=apps/web-customer",
+    "dev:saas": "npm run dev --workspace=apps/web-saas",
+    "db:generate": "npm run generate --workspace=packages/database",
+    "db:migrate": "npm run migrate --workspace=packages/database",
+    "db:migrate:deploy": "npm run migrate:deploy --workspace=packages/database",
+    "db:backup": "npm run backup --workspace=packages/database",
+    "db:restore": "npm run restore --workspace=packages/database --",
+    "db:push": "npm run push --workspace=packages/database",
+    "db:seed": "npm run seed --workspace=packages/database",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "keywords": [
+    "topup",
+    "gaming",
+    "services",
+    "fintech",
+    "ledger",
+    "pubg",
+    "nextjs",
+    "nestjs"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}
