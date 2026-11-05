@@ -95,3 +95,4 @@ npm run dev:customer
 * 🛡️ [قائمة التحقق الأمني (Security Checklist)](docs/SECURITY_CHECKLIST.md)
 * 💾 [دليل النسخ الاحتياطي والطوارئ (Backup & Recovery Guide)](docs/BACKUP_AND_RECOVERY_GUIDE.md)
 * 📋 [دليل المستخدم والمشرف (User Manual)](docs/USER_MANUAL.md)
+"# Services-platform" 
