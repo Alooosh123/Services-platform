@@ -29,6 +29,9 @@ import {
 } from './dto/saas.dto';
 
 @ApiTags('SaaS Platform & Multi-Tenant Management (Super Admin Portal)')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN)
 @Controller('saas')
 export class SaasController {
   constructor(private readonly saasService: SaasService) {}
