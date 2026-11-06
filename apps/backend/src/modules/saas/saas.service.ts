@@ -426,6 +426,83 @@ export class SaasService {
     }
   }
 
+  async assignTenantOwner(
+    tenantId: string,
+    dto: { userId: string; verificationReference: string },
+    actorUserId: string,
+  ): Promise<{ tenantId: string; userId: string; role: string; verificationReference: string }> {
+    const verificationReference = dto.verificationReference.trim();
+    if (!verificationReference) {
+      throw new BadRequestException('A manual owner identity-verification reference is required.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const tenant = await tx.saaSTenant.findUnique({ where: { id: tenantId } });
+      if (!tenant || tenant.status !== SaaSTenantStatus.ACTIVE) {
+        throw new NotFoundException('An active SaaS tenant was not found.');
+      }
+
+      const user = await tx.user.findUnique({ where: { id: dto.userId } });
+      if (!user) throw new NotFoundException('The owner account was not found.');
+      if (user.tenantId && user.tenantId !== tenantId) {
+        throw new ConflictException('This account already belongs to another tenant.');
+      }
+      if (
+        user.role !== 'CUSTOMER' &&
+        !(user.role === 'OWNER' && user.tenantId === tenantId)
+      ) {
+        throw new BadRequestException('Only a customer account can be promoted to tenant owner.');
+      }
+
+      const emailMatches =
+        !!user.email &&
+        user.email.trim().toLowerCase() === tenant.ownerEmail.trim().toLowerCase();
+      const phoneMatches =
+        !!user.phone &&
+        user.phone.trim() === tenant.ownerPhone.trim();
+      if (!emailMatches || !phoneMatches) {
+        throw new BadRequestException('The account email and phone must both match the tenant owner records.');
+      }
+
+      // A platform Super Admin is making an explicit manual identity-verification decision.
+      const updatedUser = await tx.user.update({
+        where: { id: user.id },
+        data: {
+          tenantId,
+          role: 'OWNER',
+          isVerified: true,
+          emailVerifiedAt: new Date(),
+          phoneVerifiedAt: new Date(),
+          verificationCode: null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: actorUserId,
+          userRole: 'SUPER_ADMIN',
+          action: 'SAAS_TENANT_OWNER_ASSIGNED',
+          entityName: 'SaaSTenant',
+          entityId: tenantId,
+          newValues: {
+            userId: updatedUser.id,
+            email: updatedUser.email,
+            phone: updatedUser.phone,
+            verificationReference,
+            manualVerification: true,
+          },
+        },
+      });
+
+      return {
+        tenantId,
+        userId: updatedUser.id,
+        role: updatedUser.role,
+        verificationReference,
+      };
+    });
+  }
+
   async updateTenantStatus(id: string, dto: UpdateTenantStatusDto): Promise<SaaSTenantDto> {
     const now = new Date();
     const existing = await this.prisma.saaSTenant.findUnique({ where: { id } });
