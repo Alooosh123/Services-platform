@@ -27,6 +27,7 @@ const TENANT_DIRECT_MODELS = new Set([
   'PaymentChannelConfig',
   'ProductPrice',
   'ProductTierPrice',
+  'PilotRunAudit',
   'SaaSSubscription',
   'SaaSInvoice',
 ]);
