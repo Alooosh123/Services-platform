@@ -294,6 +294,7 @@ model User {
   transactionPinFailedAttempts Int              @default(0)
   transactionPinLockedUntil    DateTime?
   tierId                       String?
+  tenantId                     String?
   parentAgentId                String?
   agentPricingMode             AgentPricingMode @default(PERCENTAGE)
   parentAgentCommissionPercent Decimal          @default(0.0000) @db.Decimal(7, 4)
@@ -306,6 +307,7 @@ model User {
   updatedAt                    DateTime         @updatedAt
 
   tier                     Tier?                  @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  tenant                   SaaSTenant?            @relation(fields: [tenantId], references: [id], onDelete: SetNull)
   parentAgent              User?                  @relation("AgentHierarchy", fields: [parentAgentId], references: [id], onDelete: SetNull)
   subAgents                User[]                 @relation("AgentHierarchy")
   agentProductPrices       AgentProductPrice[]    @relation("AgentBranchPrices")
@@ -328,6 +330,7 @@ model User {
   commissionsEarned        Order[]                @relation("AgentCommissionRecipient")
 
   @@index([parentAgentId])
+  @@index([tenantId, role, status])
   @@index([tierId, role])
   @@index([status, role])
   @@map("users")
@@ -1538,6 +1541,7 @@ model SaaSTenant {
 
   subscriptions SaaSSubscription[]
   invoices      SaaSInvoice[]
+  users         User[]
 
   @@index([status])
   @@map("saas_tenants")
