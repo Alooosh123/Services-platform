@@ -161,7 +161,6 @@ describe('SaasService - persistent subscription management', () => {
       ownerEmail: tenant.ownerEmail,
       ownerPhone: tenant.ownerPhone,
       billingCycle: SaaSBillingCycle.MONTHLY,
-      currency: CurrencyCode.USD,
     });
 
     expect(prisma.$transaction).toHaveBeenCalled();
