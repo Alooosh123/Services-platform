@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -25,6 +25,7 @@ import { SaasModule } from './modules/saas/saas.module';
 import { SecurityCoreModule } from './security/security-core.module';
 import { UsersAndAgentsModule } from './modules/users-and-agents/users-and-agents.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { TenantContextMiddleware } from './tenant/tenant-context.middleware';
 
 @Module({
   imports: [
@@ -58,5 +59,10 @@ import { PaymentsModule } from './modules/payments/payments.module';
     HandoverModule,
     SaasModule,
   ],
+  providers: [TenantContextMiddleware],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(TenantContextMiddleware).forRoutes('*');
+  }
+}
