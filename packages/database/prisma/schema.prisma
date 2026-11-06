@@ -280,6 +280,7 @@ model Tier {
   ownerEarningsWallets OwnerEarningsWallet[]
   pinVaultItems        PinVault[]
   providerApiLogs      ProviderApiLog[]
+  paymentChannelConfigs PaymentChannelConfig[]
   productPrices ProductTierPrice[]
 
   @@index([isActive, displayOrder])
@@ -550,7 +551,8 @@ model DepositStatusHistory {
 
 model PaymentChannelConfig {
   id                      String                    @id @default(uuid())
-  code                    PaymentChannelCode        @unique
+  tenantId                String?
+  code                    PaymentChannelCode
   name                    String
   nameAr                  String
   accountNumber           String // E.g. "770123456"
@@ -573,6 +575,9 @@ model PaymentChannelConfig {
   createdAt               DateTime                  @default(now())
   updatedAt               DateTime                  @updatedAt
 
+  tenant    SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
   @@map("payment_channel_configs")
 }
 
