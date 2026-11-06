@@ -234,23 +234,27 @@ export class SupplierBalanceService {
         const existing = await tx.supplierAccount.findFirst({
           where: { providerId: provider.id, currency: dto.currency, tenantId: tenantId || null },
         });
-        const balanceBefore = existing ? Number(existing.balance) : 0;
-        const balanceAfter = balanceBefore + dto.amount;
+        const balanceBeforeDecimal = existing
+          ? new Prisma.Decimal(existing.balance)
+          : new Prisma.Decimal(0);
+        const balanceAfterDecimal = balanceBeforeDecimal.plus(new Prisma.Decimal(dto.amount));
 
         const account = existing
           ? await tx.supplierAccount.update({
               where: { id: existing.id },
-              data: { balance: new Prisma.Decimal(balanceAfter) },
+              data: { balance: balanceAfterDecimal },
             })
           : await tx.supplierAccount.create({
               data: {
                 providerId: provider.id,
                 currency: dto.currency,
-                balance: new Prisma.Decimal(balanceAfter),
+                balance: balanceAfterDecimal,
                 creditLimit: new Prisma.Decimal(0),
                 accountType: SupplierAccountType.PREPAID,
               },
             });
+        const balanceBefore = balanceBeforeDecimal.toNumber();
+        const balanceAfter = balanceAfterDecimal.toNumber();
 
         // Legacy platform account balance is retained only for platform-scope operations.
         if (!tenantId) {
@@ -279,8 +283,8 @@ export class SupplierBalanceService {
             type: 'PREPAID_TOPUP',
             currency: dto.currency,
             amount: new Prisma.Decimal(dto.amount),
-            balanceBefore: new Prisma.Decimal(balanceBefore),
-            balanceAfter: new Prisma.Decimal(balanceAfter),
+            balanceBefore,
+            balanceAfter,
             referenceId: dto.referenceNumber,
             ledgerTxId,
             notes: dto.notes || `تغذية رصيد تجاري عبر السند ${dto.referenceNumber}`,
@@ -370,28 +374,29 @@ export class SupplierBalanceService {
           if (tenantId) {
             throw new NotFoundException('Tenant supplier account has not been funded.');
           }
-          const balanceBefore = Number(provider.balance);
-          const balanceAfter = balanceBefore - costPrice;
-          if (balanceAfter < 0) throw new BadRequestException('Supplier balance is insufficient.');
+          const balanceBefore = new Prisma.Decimal(provider.balance);
+          const balanceAfter = balanceBefore.minus(new Prisma.Decimal(costPrice));
+          if (balanceAfter.isNegative()) throw new BadRequestException('Supplier balance is insufficient.');
           await tx.provider.update({
             where: { id: provider.id },
-            data: { balance: new Prisma.Decimal(balanceAfter) },
+            data: { balance: balanceAfter },
           });
-          return { success: true, newBalance: balanceAfter };
+          return { success: true, newBalance: balanceAfter.toNumber() };
         }
 
-        const balanceBefore = Number(account.balance);
-        const balanceAfter = balanceBefore - costPrice;
-        if (balanceAfter + Number(account.creditLimit) < 0) {
+        const balanceBefore = new Prisma.Decimal(account.balance);
+        const balanceAfter = balanceBefore.minus(new Prisma.Decimal(costPrice));
+        const creditLimit = new Prisma.Decimal(account.creditLimit);
+        if (balanceAfter.plus(creditLimit).isNegative()) {
           throw new BadRequestException('Supplier commercial balance and credit limit are insufficient.');
         }
 
         const update = await tx.supplierAccount.updateMany({
           where: {
             id: account.id,
-            balance: { gte: new Prisma.Decimal(costPrice) },
+            balance: { equals: balanceBefore },
           },
-          data: { balance: { decrement: new Prisma.Decimal(costPrice) } },
+          data: { balance: balanceAfter },
         });
         if (update.count !== 1) {
           throw new ConflictException('Supplier balance changed concurrently. Retry the fulfillment.');
@@ -409,7 +414,7 @@ export class SupplierBalanceService {
             notes: `خصم تكلفة تنفيذ الطلب ${orderId}`,
           },
         });
-        return { success: true, newBalance: balanceAfter };
+        return { success: true, newBalance: balanceAfter.toNumber() };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error: any) {
       if (process.env.NODE_ENV === 'production' || tenantId) {
