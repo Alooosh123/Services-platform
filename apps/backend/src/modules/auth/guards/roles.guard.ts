@@ -23,8 +23,8 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Authentication required');
     }
 
-    // Super Admin & Owner have all privileges
-    if (user.role === UserRole.SUPER_ADMIN || user.role === UserRole.OWNER) {
+    // Only the platform Super Admin bypasses role checks. Tenant Owner is not platform admin.
+    if (user.role === UserRole.SUPER_ADMIN) {
       return true;
     }
 
