@@ -140,7 +140,7 @@ export class SaasService {
       hasFullPermissions: plan.hasFullPermissions,
       descriptionAr: plan.descriptionAr,
       features: Array.isArray(plan.featuresJson)
-        ? (plan.featuresJson as SaaSFeatureItem[])
+        ? (plan.featuresJson as unknown as SaaSFeatureItem[])
         : [],
       isActive: plan.isActive,
       sortOrder: plan.sortOrder,
@@ -583,7 +583,7 @@ export class SaasService {
       const pending = await tx.saaSInvoice.count({
         where: {
           tenantId,
-          status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+          status: { in: ['PENDING', 'OVERDUE'] },
         },
       });
       if (pending > 0) {
@@ -638,7 +638,7 @@ export class SaasService {
           include: { subscription: { include: { plan: true } } },
         });
         if (!existing) throw new NotFoundException('SaaS invoice not found');
-        if (![SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE].includes(existing.status)) {
+        if (existing.status !== 'PENDING' && existing.status !== 'OVERDUE') {
           throw new ConflictException('Only pending or overdue invoices can be marked as paid');
         }
 
