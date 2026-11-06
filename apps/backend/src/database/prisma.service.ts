@@ -18,6 +18,7 @@ const TENANT_DIRECT_MODELS = new Set([
   'OwnerEarningsWallet',
   'PinVault',
   'ProviderApiLog',
+  'PaymentChannelConfig',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
