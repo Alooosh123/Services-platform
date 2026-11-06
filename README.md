@@ -32,6 +32,7 @@ docker compose -f docker/docker-compose.yml ps
 
 * **متجر العميل:** `http://localhost:3000`
 * **لوحة الإدارة:** `http://localhost:3001`
+* **بوابة إدارة SaaS:** `http://localhost:3002`
 * **توثيق Swagger:** `http://localhost:4000/api/docs`
 
 ### 2. التشغيل اليدوي (Local Development)
@@ -53,6 +54,9 @@ npm run dev:admin
 
 # تشغيل متجر العميل (نافذة ثالثة)
 npm run dev:customer
+
+# تشغيل بوابة SaaS المستقلة (نافذة رابعة)
+npm run dev:saas
 ```
 
 أمر `npm run db:seed` لا يمسح بيانات قاعدة موجودة. إعادة ضبط بيانات التطوير بشكل صريح تتطلب تعيين `RESET_DATABASE_SEED=true`، وهو أمر هدّام ولا يعمل في بيئة الإنتاج.
@@ -94,6 +98,7 @@ npm run dev:customer
 ---
 
 ## 📚 التوثيق المرفق
+* 🏢 [دليل بوابة إدارة SaaS](docs/SAAS_ADMIN_PORTAL_GUIDE.md)
 * 📖 [دليل النشر والتشغيل (Deployment Guide)](docs/DEPLOYMENT_GUIDE.md)
 * 🛡️ [قائمة التحقق الأمني (Security Checklist)](docs/SECURITY_CHECKLIST.md)
 * 💾 [دليل النسخ الاحتياطي والطوارئ (Backup & Recovery Guide)](docs/BACKUP_AND_RECOVERY_GUIDE.md)
