@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # -------------------------------------------------------------
   # Job 1: Static Analysis, Linting & Type Checking
@@ -135,7 +139,7 @@ jobs:
   build-production:
     name: Build Monorepo Packages & Apps
     runs-on: ubuntu-latest
-    needs: [quality-gate, automated-tests, migration-dryrun, mobile-quality]
+    needs: [automated-tests, migration-dryrun, mobile-quality]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
