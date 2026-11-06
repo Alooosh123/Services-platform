@@ -14,6 +14,7 @@ import {
 import { CurrencyCode, PaymentChannelCode, DepositStatus } from '@digital-topup/shared';
 import { ConflictException, BadRequestException } from '@nestjs/common';
 import { HmacSignatureService } from '../../security/hmac-signature.service';
+import { runWithTenantContext } from '../../tenant/tenant-context.store';
 
 describe('DepositsService (Phase 2)', () => {
   let service: DepositsService;
@@ -127,9 +128,10 @@ describe('DepositsService (Phase 2)', () => {
     ledgerService = module.get<LedgerService>(LedgerService);
   });
 
-  it('does not publish unverified or disabled payment receiver configurations', async () => {
-    const channels = await service.getPaymentChannels();
-    // The test database seed deliberately keeps all external receiver accounts blocked.
+  it('does not publish shared mock payment adapters inside a tenant storefront', async () => {
+    const channels = await runWithTenantContext('tenant-alpha', () =>
+      service.getPaymentChannels(),
+    );
     expect(channels).toEqual([]);
   });
 
