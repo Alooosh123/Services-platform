@@ -269,7 +269,10 @@ model Tier {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  users         User[]
+  users             User[]
+  ledgerAccounts    LedgerAccount[]
+  ledgerTransactions LedgerTransaction[]
+  ledgerEntries     LedgerEntry[]
   productPrices ProductTierPrice[]
 
   @@index([isActive, displayOrder])
@@ -590,6 +593,7 @@ model WalletTopup {
 
 model LedgerAccount {
   id          String            @id @default(uuid())
+  tenantId    String?
   code        String            @unique // E.g. "1001-CASH-JAIB", "2001-CUSTOMER-WALLET-YER"
   name        String
   type        LedgerAccountType
@@ -597,6 +601,7 @@ model LedgerAccount {
   description String?
   createdAt   DateTime          @default(now())
 
+  tenant      SaaSTenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   currencyRel Currency      @relation(fields: [currency], references: [code])
   entries     LedgerEntry[]
 
@@ -605,6 +610,7 @@ model LedgerAccount {
 
 model LedgerTransaction {
   id              String                @id @default(uuid())
+  tenantId        String?
   txNumber        String                @unique // E.g. "LTX-20261009-0001"
   type            LedgerTransactionType
   status          String                @default("POSTED") // POSTED, REVERSED
@@ -618,14 +624,16 @@ model LedgerTransaction {
   reversalOfId    String? // Link to reversed transaction if this is a reversal
   createdAt       DateTime              @default(now())
 
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entries LedgerEntry[]
 
-  @@index([referenceType, referenceId])
+  @@index([tenantId, referenceType, referenceId])
   @@map("ledger_transactions")
 }
 
 model LedgerEntry {
   id            String       @id @default(uuid())
+  tenantId      String?
   transactionId String
   accountId     String
   walletId      String? // Associated customer wallet if applicable
@@ -635,6 +643,7 @@ model LedgerEntry {
   notes         String?
   createdAt     DateTime     @default(now())
 
+  tenant      SaaSTenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   account     LedgerAccount     @relation(fields: [accountId], references: [id])
   wallet      Wallet?           @relation(fields: [walletId], references: [id])
