@@ -1,7 +1,7 @@
 name: digital_topup_mobile
 description: "Digital TopUp & Services Customer Mobile Application in Flutter"
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -12,6 +12,7 @@ dependencies:
   http: ^1.2.0
   intl: ^0.19.0
   uuid: ^4.3.3
+  flutter_secure_storage: ^9.2.2
 
 dev_dependencies:
   flutter_test:
