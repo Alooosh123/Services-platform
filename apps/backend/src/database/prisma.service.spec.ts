@@ -1,5 +1,9 @@
 import { PrismaService } from './prisma.service';
-import { runWithTenantContext } from '../tenant/tenant-context.store';
+import {
+  runWithTenantContext,
+  runWithTenantResolverContext,
+  setPlatformAdminContext,
+} from '../tenant/tenant-context.store';
 
 describe('PrismaService tenant query scope', () => {
   let prisma: PrismaService;
@@ -110,6 +114,88 @@ describe('PrismaService tenant query scope', () => {
       };
       await middleware(params, async (value) => value);
       expect(params.args.where).toEqual({ tenantId: 'tenant-beta' });
+    });
+  });
+
+  it('restricts unverified platform-host requests to platform-owned ledger rows', async () => {
+    await runWithTenantContext(null, async () => {
+      const params: any = {
+        model: 'LedgerTransaction',
+        action: 'findMany',
+        args: {},
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({ tenantId: null });
+    });
+  });
+
+  it('restricts wallet relation queries to platform-owned users without a tenant context', async () => {
+    await runWithTenantContext(null, async () => {
+      const params: any = {
+        model: 'Wallet',
+        action: 'findMany',
+        args: { where: { currency: 'YER' } },
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({
+        currency: 'YER',
+        AND: [{ user: { is: { tenantId: null } } }],
+      });
+    });
+  });
+
+  it('allows cross-tenant ledger reads only in an authenticated platform-admin context', async () => {
+    await runWithTenantContext(null, async () => {
+      setPlatformAdminContext(true);
+      const params: any = {
+        model: 'LedgerTransaction',
+        action: 'findMany',
+        args: { where: { status: 'POSTED' } },
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({ status: 'POSTED' });
+    });
+  });
+
+  it('allows the trusted domain resolver to look up an active tenant before request scoping', async () => {
+    await runWithTenantResolverContext(async () => {
+      const params: any = {
+        model: 'SaaSTenant',
+        action: 'findFirst',
+        args: { where: { domain: 'alpha.example.test', status: 'ACTIVE' } },
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({ domain: 'alpha.example.test', status: 'ACTIVE' });
+    });
+  });
+
+  it('does not expose SaaS tenant metadata from a platform request without an admin role', async () => {
+    await runWithTenantContext(null, async () => {
+      const params: any = {
+        model: 'SaaSTenant',
+        action: 'findMany',
+        args: { where: { status: 'ACTIVE' } },
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({
+        status: 'ACTIVE',
+        AND: [{ id: '__NO_PLATFORM_TENANT_ACCESS__' }],
+      });
+    });
+  });
+
+  it('scopes SaaS invoices and subscriptions to the resolved tenant', async () => {
+    await runWithTenantContext('tenant-alpha', async () => {
+      const params: any = {
+        model: 'SaaSInvoice',
+        action: 'findMany',
+        args: { where: { status: 'PENDING' } },
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({
+        status: 'PENDING',
+        AND: [{ tenantId: 'tenant-alpha' }],
+      });
     });
   });
 
