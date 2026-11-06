@@ -82,13 +82,17 @@ describe('PrismaService tenant query scope', () => {
       const productParams: any = {
         model: 'Product',
         action: 'findMany',
-        args: { include: { prices: true, tierPrices: true, agentPrices: true } },
+        args: { include: { prices: true, tierPrices: true, productPrices: { _count: true }, agentPrices: true } },
       };
       await middleware(productParams, async (value) => value);
       expect(productParams.args.include.prices).toEqual({
         where: { AND: [{ tenantId: 'tenant-alpha' }] },
       });
       expect(productParams.args.include.tierPrices).toEqual({
+        where: { AND: [{ tenantId: 'tenant-alpha' }] },
+      });
+      expect(productParams.args.include.productPrices).toEqual({
+        _count: true,
         where: { AND: [{ tenantId: 'tenant-alpha' }] },
       });
       expect(productParams.args.include.agentPrices).toEqual({
