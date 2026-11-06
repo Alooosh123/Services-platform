@@ -95,6 +95,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             ...params.args.where,
             tenantId,
           };
+        } else if (
+          params.action === 'findMany' ||
+          params.action === 'findFirst' ||
+          params.action === 'findFirstOrThrow' ||
+          params.action === 'count' ||
+          params.action === 'aggregate' ||
+          params.action === 'groupBy' ||
+          params.action === 'updateMany' ||
+          params.action === 'deleteMany'
+        ) {
+          params.args.where = { tenantId };
         }
         return next(params);
       }
@@ -127,7 +138,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           params.action === 'findFirstOrThrow' ||
           params.action === 'count' ||
           params.action === 'aggregate' ||
-          params.action === 'groupBy'
+          params.action === 'groupBy' ||
+          params.action === 'updateMany' ||
+          params.action === 'deleteMany'
         ) {
           params.args.where = { tenantId };
         }
@@ -173,7 +186,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         params.action === 'findFirstOrThrow' ||
         params.action === 'count' ||
         params.action === 'aggregate' ||
-        params.action === 'groupBy'
+        params.action === 'groupBy' ||
+        params.action === 'updateMany' ||
+        params.action === 'deleteMany'
       ) {
         params.args.where = tenantFilter;
       }
