@@ -43,7 +43,7 @@ describe('TenantContextMiddleware', () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps unknown hostnames in the platform context rather than guessing a tenant', async () => {
+  it('places unknown hostnames in an unresolved isolation context, not global scope', async () => {
     prisma.saaSTenant.findFirst.mockResolvedValue(null);
     const request: any = { hostname: 'unknown.example.test' };
     let callbackTenantId: string | null | undefined;
@@ -53,9 +53,30 @@ describe('TenantContextMiddleware', () => {
 
     await middleware.use(request, {} as any, next);
 
-    expect(request.tenantId).toBeNull();
+    expect(request.tenantId).toBe('__UNRESOLVED_TENANT__');
     expect(request.tenant).toBeNull();
-    expect(callbackTenantId).toBeNull();
+    expect(callbackTenantId).toBe('__UNRESOLVED_TENANT__');
+  });
+
+  it('uses global scope only for explicitly configured platform hosts', async () => {
+    const previousHosts = process.env.PLATFORM_HOSTS;
+    process.env.PLATFORM_HOSTS = 'admin.example.test,api.example.test';
+    try {
+      const request: any = { hostname: 'admin.example.test' };
+      let callbackTenantId: string | null | undefined = '__unset__';
+      const next = jest.fn(() => {
+        callbackTenantId = getCurrentTenantId();
+      });
+
+      await middleware.use(request, {} as any, next);
+
+      expect(prisma.saaSTenant.findFirst).not.toHaveBeenCalled();
+      expect(request.tenantId).toBeNull();
+      expect(callbackTenantId).toBeNull();
+    } finally {
+      if (previousHosts === undefined) delete process.env.PLATFORM_HOSTS;
+      else process.env.PLATFORM_HOSTS = previousHosts;
+    }
   });
 
   it('does not query the database for localhost development hosts', async () => {
