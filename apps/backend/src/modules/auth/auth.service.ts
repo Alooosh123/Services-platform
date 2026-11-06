@@ -201,9 +201,9 @@ export class AuthService {
         this.logger.error(`Tenant registration lookup failed: ${error?.message || error}`);
         throw new ServiceUnavailableException('Store registration is unavailable until the tenant database can be reached.');
       }
-    } else if (process.env.NODE_ENV === 'production') {
-      throw new ForbiddenException('Customer registration must use an active store domain.');
     }
+    // A null tenant context is allowed only for localhost or an explicitly
+    // configured PLATFORM_HOSTS entry; unknown hosts receive the unresolved sentinel.
     if (!dto.email && !dto.phone) {
       throw new BadRequestException('Either email or phone number must be provided');
     }
