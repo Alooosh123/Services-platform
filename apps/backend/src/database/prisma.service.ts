@@ -89,7 +89,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         for (const key of Object.keys(node)) {
           const value = node[key];
           if (
-            (key === 'prices' || key === 'tierPrices' || key === 'agentPrices') &&
+            (key === 'prices' || key === 'tierPrices' || key === 'productPrices' || key === 'agentPrices') &&
             value !== false &&
             value !== null
           ) {
