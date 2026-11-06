@@ -65,6 +65,17 @@ export class DepositsService {
   private readonly logger = new Logger(DepositsService.name);
   private memoryDeposits: Map<string, InMemoryDeposit> = new Map();
 
+  private assertMemoryFallbackAllowed(operation: string, error?: any): void {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      this.logger.error(
+        `Refusing in-memory deposit fallback for ${operation}: ${error?.message || error || 'record unavailable'}`,
+      );
+      throw new ServiceUnavailableException(
+        `${operation} is unavailable because the tenant-scoped database could not be reached.`,
+      );
+    }
+  }
+
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
@@ -341,6 +352,7 @@ export class DepositsService {
       ) {
         throw new ConflictException(`الرقم المرجعي "${dto.referenceNumber}" مسجل مسبقاً في النظام.`);
       }
+      this.assertMemoryFallbackAllowed('create deposit request', err);
       if (process.env.NODE_ENV === 'test') {
         const memoryDeposit: InMemoryDeposit = {
           id: `test-dep-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -386,11 +398,10 @@ export class DepositsService {
         },
       });
 
-      if (deposits && deposits.length > 0) {
-        return deposits;
-      }
+      return deposits;
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getCustomerDeposits: reading memory (${err?.message})`);
+      this.assertMemoryFallbackAllowed('list customer deposits', err);
+      this.logger.warn(`Local unscoped development deposit-list fallback: ${err?.message}`);
     }
 
     const userDeposits: InMemoryDeposit[] = [];
@@ -425,9 +436,13 @@ export class DepositsService {
       }
     } catch (err: any) {
       if (err instanceof NotFoundException) throw err;
-      this.logger.warn(`Prisma offline during getDepositById: searching memory (${err?.message})`);
+      this.assertMemoryFallbackAllowed('read deposit detail', err);
+      this.logger.warn(`Local unscoped development deposit-detail fallback: ${err?.message}`);
     }
 
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      throw new NotFoundException('طلب الإيداع غير موجود');
+    }
     const memDep = this.memoryDeposits.get(depositId);
     if (!memDep) {
       throw new NotFoundException(`طلب الإيداع ${depositId} غير موجود`);
@@ -469,7 +484,8 @@ export class DepositsService {
 
       return deposits;
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getAllDepositsForAdmin: reading memory (${err?.message})`);
+      this.assertMemoryFallbackAllowed('list administrative deposits', err);
+      this.logger.warn(`Local unscoped development administrative-deposit fallback: ${err?.message}`);
 
       let results = Array.from(this.memoryDeposits.values());
       if (filters?.status) {
@@ -526,7 +542,8 @@ export class DepositsService {
         deposit: updated,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during markUnderReview: updating memory (${err?.message})`);
+      this.assertMemoryFallbackAllowed('mark deposit under review', err);
+      this.logger.warn(`Local unscoped development review fallback: ${err?.message}`);
 
       const memDep = this.memoryDeposits.get(depositId);
       if (memDep) {
@@ -557,6 +574,9 @@ export class DepositsService {
    * Strictly posts double-entry transaction and credits customer wallet atomically.
    */
   async approveAndCredit(staffUserId: string, depositId: string, dto?: ReviewDepositDto) {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      throw new NotFoundException('Deposit approval must use a persisted tenant-owned request.');
+    }
     if (process.env.NODE_ENV === 'test' && this.memoryDeposits.has(depositId)) {
       const deposit = this.memoryDeposits.get(depositId)!;
       if (deposit.status === DepositStatus.CREDITED || deposit.status === DepositStatus.APPROVED) {
@@ -706,7 +726,8 @@ export class DepositsService {
         deposit: updated,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during rejectDeposit: updating memory (${err?.message})`);
+      this.assertMemoryFallbackAllowed('reject deposit', err);
+      this.logger.warn(`Local unscoped development reject fallback: ${err?.message}`);
 
       const memDep = this.memoryDeposits.get(depositId);
       if (memDep) {
@@ -754,9 +775,11 @@ export class DepositsService {
       });
       if (deposit) return deposit;
     } catch (err: any) {
-      this.logger.warn(`Prisma offline in findDepositByReference (${err?.message})`);
+      this.assertMemoryFallbackAllowed('find deposit by reference', err);
+      this.logger.warn(`Local unscoped development reference lookup fallback: ${err?.message}`);
     }
 
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) return null;
     for (const d of this.memoryDeposits.values()) {
       if (
         d.referenceNumber.trim().toLowerCase() === trimmed.toLowerCase() &&
@@ -787,7 +810,8 @@ export class DepositsService {
           },
         },
       });
-    } catch {
+    } catch (error: any) {
+      this.assertMemoryFallbackAllowed('flag deposit discrepancy', error);
       const mem = this.memoryDeposits.get(depositId);
       if (mem) {
         mem.status = DepositStatus.UNDER_REVIEW;
@@ -819,6 +843,27 @@ export class DepositsService {
     timestampHeader?: string,
     rawBody?: Buffer,
   ): Promise<DepositConfirmResult> {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      const config = await this.prisma.paymentChannelConfig.findFirst({
+        where: { tenantId: getCurrentTenantId() || null, code: channelCode },
+      });
+      if (
+        !config ||
+        !config.isActive ||
+        config.verificationStatus !== ChannelVerificationStatus.VERIFIED ||
+        config.mode !== PaymentChannelMode.API
+      ) {
+        return {
+          success: false,
+          status: 'REJECTED',
+          message: 'قناة الويب هوك غير مفعلة أو غير معتمدة لهذا المتجر.',
+        };
+      }
+      throw new ServiceUnavailableException(
+        'Live provider webhook processing is disabled until a contracted tenant-specific provider adapter is installed.',
+      );
+    }
+
     const adapter = this.adapterRegistry.getAdapter(channelCode);
     if (!adapter) {
       throw new BadRequestException(`قناة الدفع ${channelCode} غير معروفة في النظام.`);
