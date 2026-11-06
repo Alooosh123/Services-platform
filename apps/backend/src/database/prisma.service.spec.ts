@@ -69,6 +69,46 @@ describe('PrismaService tenant query scope', () => {
     });
   });
 
+  it('scopes tenant product price rows and nested product price includes', async () => {
+    await runWithTenantContext('tenant-alpha', async () => {
+      const directParams: any = {
+        model: 'ProductPrice',
+        action: 'create',
+        args: { data: { productId: 'product-1', currency: 'YER' } },
+      };
+      await middleware(directParams, async (value) => value);
+      expect(directParams.args.data.tenantId).toBe('tenant-alpha');
+
+      const productParams: any = {
+        model: 'Product',
+        action: 'findMany',
+        args: { include: { prices: true, tierPrices: true, agentPrices: true } },
+      };
+      await middleware(productParams, async (value) => value);
+      expect(productParams.args.include.prices).toEqual({
+        where: { tenantId: 'tenant-alpha', AND: [] },
+      });
+      expect(productParams.args.include.tierPrices).toEqual({
+        where: { tenantId: 'tenant-alpha', AND: [] },
+      });
+      expect(productParams.args.include.agentPrices).toEqual({
+        where: { subAgent: { is: { tenantId: 'tenant-alpha' } }, AND: [] },
+      });
+    });
+  });
+
+  it('scopes bulk deletes even when a caller omits a where clause', async () => {
+    await runWithTenantContext('tenant-beta', async () => {
+      const params: any = {
+        model: 'LedgerEntry',
+        action: 'deleteMany',
+        args: {},
+      };
+      await middleware(params, async (value) => value);
+      expect(params.args.where).toEqual({ tenantId: 'tenant-beta' });
+    });
+  });
+
   it('does not apply tenant scoping to SaaS platform management records', async () => {
     await runWithTenantContext('tenant-alpha', async () => {
       const params: any = {
