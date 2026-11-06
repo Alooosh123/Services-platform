@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SaasService } from './saas.service';
@@ -26,6 +27,7 @@ import {
   RenewSubscriptionDto,
   UpdatePlanPriceDto,
   CreateInvoiceDto,
+  MarkSaasInvoicePaidDto,
 } from './dto/saas.dto';
 
 @ApiTags('SaaS Platform & Multi-Tenant Management (Super Admin Portal)')
@@ -110,9 +112,22 @@ export class SaasController {
   }
 
   @Post('invoices')
-  @ApiOperation({ summary: 'Issue a new manual or recurring SaaS invoice' })
+  @ApiOperation({ summary: 'Issue a new unpaid SaaS invoice' })
   async createInvoice(@Body() dto: CreateInvoiceDto) {
     return this.saasService.createInvoice(dto);
+  }
+
+  @Post('invoices/:id/mark-paid')
+  @ApiOperation({
+    summary: 'Confirm a SaaS invoice payment after finance verification',
+    description: 'Requires a verified transfer reference. This action is audited and activates the linked subscription.',
+  })
+  async markInvoicePaid(
+    @Param('id') id: string,
+    @Body() dto: MarkSaasInvoicePaidDto,
+    @Req() request: any,
+  ) {
+    return this.saasService.markInvoicePaid(id, dto, request.user.id);
   }
 
   @Get('kpis')
