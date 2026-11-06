@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { LedgerService } from '../ledger/ledger.service';
 import { WalletService } from '../wallet/wallet.service';
 import { Prisma } from '@prisma/client';
@@ -196,32 +197,30 @@ export class DepositsService {
         },
       });
 
-      if (dbConfigs && dbConfigs.length > 0) {
-        return dbConfigs.map((c) => ({
-          code: c.code as PaymentChannelCode,
-          name: c.name,
-          nameAr: c.nameAr,
-          accountNumber: c.accountNumber,
-          accountHolderName: c.accountHolderName,
-          instructionsAr: c.instructionsAr,
-          supportedCurrencies: c.supportedCurrencies as CurrencyCode[],
-          minAmount: Number(c.minAmount),
-          maxAmount: Number(c.maxAmount),
-          isActive: c.isActive,
-          mode: c.mode as PaymentChannelMode,
-          isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
-        }));
-      }
-      if (process.env.NODE_ENV === 'production') {
-        return [];
-      }
+      return dbConfigs.map((c) => ({
+        code: c.code as PaymentChannelCode,
+        name: c.name,
+        nameAr: c.nameAr,
+        accountNumber: c.accountNumber,
+        accountHolderName: c.accountHolderName,
+        instructionsAr: c.instructionsAr,
+        supportedCurrencies: c.supportedCurrencies as CurrencyCode[],
+        minAmount: Number(c.minAmount),
+        maxAmount: Number(c.maxAmount),
+        isActive: c.isActive,
+        mode: c.mode as PaymentChannelMode,
+        isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
+      }));
     } catch (err: any) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new ServiceUnavailableException('Verified payment channels are unavailable.');
+      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        this.logger.error(`Payment channel query failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Verified payment channels are unavailable from the tenant database.');
       }
-      this.logger.warn(`Prisma offline during getPaymentChannels: using adapter registry (${err?.message})`);
+      this.logger.warn(`Local unscoped development payment channel registry fallback (${err?.message})`);
     }
 
+    // Only unscoped local development may use the in-memory adapter registry.
+    if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return [];
     const channels = this.adapterRegistry.getAllChannels();
     return channels.filter(
       (c: any) => c.isActive && (!c.verificationStatus || c.verificationStatus === ChannelVerificationStatus.VERIFIED),
@@ -236,7 +235,7 @@ export class DepositsService {
     const activeChannel = (await this.getPaymentChannels()).find(
       (channel) => channel.code === dto.paymentMethodCode && channel.isActive,
     );
-    if (process.env.NODE_ENV === 'production' && !activeChannel) {
+    if ((process.env.NODE_ENV === 'production' || getCurrentTenantId()) && !activeChannel) {
       throw new BadRequestException('قناة الدفع غير مفعلة أو غير موثقة حالياً.');
     }
     if (activeChannel) {
