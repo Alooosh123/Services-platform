@@ -331,10 +331,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during login: checking memory users (${err?.message})`);
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Login database lookup failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Login is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development login fallback (${err?.message})`);
     }
 
-    if (!user) {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -386,10 +390,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during admin login (${err?.message})`);
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Admin login database lookup failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Administrative login is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development admin login fallback (${err?.message})`);
     }
 
-    if (!user) {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -629,7 +637,20 @@ export class AuthService {
   async createStaff(callerUserId: string, dto: CreateStaffDto) {
     const caller = await this.findUserById(callerUserId);
     if (!caller || (caller.role !== UserRole.SUPER_ADMIN && caller.role !== UserRole.OWNER)) {
-      throw new ForbiddenException('فقط المدير العام يمتلك صلاحية إنشاء حسابات إدارية جديدة');
+      throw new ForbiddenException('فقط المدير العام أو مالك المتجر يستطيع إنشاء حسابات ضمن نطاق صلاحياته');
+    }
+
+    if (caller.role === UserRole.OWNER) {
+      const tenantStaffRoles = [
+        UserRole.GENERAL_MANAGER,
+        UserRole.FINANCE_MANAGER,
+        UserRole.SUPPORT,
+        UserRole.FULFILLMENT_OPERATOR,
+        UserRole.AUDITOR,
+      ];
+      if (!caller.tenantId || !tenantStaffRoles.includes(dto.role)) {
+        throw new ForbiddenException('مالك المتجر لا يستطيع إنشاء حسابات منصة أو منح صلاحية مالك/مدير منصة.');
+      }
     }
 
     const passwordHash = await this.hashPassword(dto.password);
@@ -663,7 +684,11 @@ export class AuthService {
         createdAt: created.createdAt,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during createStaff: saving to memory (${err?.message})`);
+      if (caller.tenantId || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Staff account persistence failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Staff account creation is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development staff fallback (${err?.message})`);
 
       const newId = `user-staff-${Date.now()}`;
       const memoryStaff: InMemoryUser = {
@@ -809,14 +834,15 @@ export class AuthService {
         include: { wallets: true },
       });
       if (dbUser) return dbUser;
-    } catch {
-      // offline fallback
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return null;
+    } catch (error: any) {
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Persistent user lookup failed: ${error?.message || error}`);
+        throw new ServiceUnavailableException('The authenticated account database is unavailable.');
+      }
     }
 
-    const memUser = this.memoryUsers.get(userId);
-    if (memUser) return memUser;
-
-    return null;
+    return this.memoryUsers.get(userId) || null;
   }
 
   /**
