@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -31,6 +32,18 @@ import * as crypto from 'crypto';
 @Injectable()
 export class SaasService {
   private readonly logger = new Logger(SaasService.name);
+  
+  /**
+   * Tenant, subscription and invoice workflows currently use process memory.
+   * Never expose these non-durable operations in production.
+   */
+  private assertSaasTenantPersistenceAvailable(operation: string): void {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ServiceUnavailableException(
+        `SaaS ${operation} is disabled: durable database persistence and tenant isolation must be completed before production use.`,
+      );
+    }
+  }
 
   // Equal Features Suite - strictly identical across ALL subscription tiers
   private readonly fullEqualFeatures: SaaSFeatureItem[] = [
@@ -397,7 +410,13 @@ export class SaasService {
         }
       }
     } catch (err: any) {
-      this.logger.debug(`Database reading error, using in-memory plans: ${err.message}`);
+      this.logger.error(`SaaS plans database read failed: ${err.message}`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('SaaS plans are unavailable because durable database storage could not be read.');
+      }
+    }
+    if (process.env.NODE_ENV === 'production') {
+      throw new ServiceUnavailableException('SaaS plans have not been provisioned in the database.');
     }
     return this.inMemoryPlans;
   }
@@ -406,6 +425,7 @@ export class SaasService {
    * Updates pricing for a specific subscription plan while preserving equal permissions.
    */
   async updatePlanPrice(planId: string, dto: UpdatePlanPriceDto): Promise<SaaSPlanDto> {
+    this.assertSaasTenantPersistenceAvailable('plan price updates');
     const plan = this.inMemoryPlans.find((p) => p.id === planId);
     if (!plan) {
       throw new NotFoundException(`Plan with id ${planId} not found`);
@@ -469,6 +489,7 @@ export class SaasService {
    * Lists all SaaS tenants / subscribers.
    */
   async getTenants(search?: string, status?: SaaSTenantStatus): Promise<SaaSTenantDto[]> {
+    this.assertSaasTenantPersistenceAvailable('tenant listing');
     let tenants = [...this.inMemoryTenants];
 
     if (status) {
@@ -494,6 +515,7 @@ export class SaasService {
    * Returns a specific tenant by ID.
    */
   async getTenantById(id: string): Promise<SaaSTenantDto> {
+    this.assertSaasTenantPersistenceAvailable('tenant lookup');
     const tenant = this.inMemoryTenants.find((t) => t.id === id);
     if (!tenant) {
       throw new NotFoundException(`Tenant with id ${id} not found`);
@@ -505,6 +527,7 @@ export class SaasService {
    * Creates / Onboards a new tenant with automatic license generation and subscription setup.
    */
   async createTenant(dto: CreateTenantDto): Promise<SaaSTenantDto> {
+    this.assertSaasTenantPersistenceAvailable('tenant creation');
     // Check slug uniqueness
     const exists = this.inMemoryTenants.some((t) => t.slug === dto.slug);
     if (exists) {
@@ -583,6 +606,7 @@ export class SaasService {
    * Updates tenant status (ACTIVE, SUSPENDED, TERMINATED).
    */
   async updateTenantStatus(id: string, dto: UpdateTenantStatusDto): Promise<SaaSTenantDto> {
+    this.assertSaasTenantPersistenceAvailable('tenant status updates');
     const tenant = await this.getTenantById(id);
     tenant.status = dto.status;
     tenant.updatedAt = new Date().toISOString();
@@ -601,6 +625,7 @@ export class SaasService {
    * Renews or changes subscription duration for a tenant (Weekly, Monthly, Annual).
    */
   async renewSubscription(tenantId: string, dto: RenewSubscriptionDto): Promise<SaaSTenantDto> {
+    this.assertSaasTenantPersistenceAvailable('subscription renewals');
     const tenant = await this.getTenantById(tenantId);
     const plan = this.inMemoryPlans.find((p) => p.billingCycle === dto.billingCycle) || this.inMemoryPlans[1];
 
@@ -666,6 +691,7 @@ export class SaasService {
    * Retrieves all active and historical subscriptions.
    */
   async getSubscriptions(status?: SaaSSubscriptionStatus): Promise<SaaSSubscriptionDto[]> {
+    this.assertSaasTenantPersistenceAvailable('subscription listing');
     let subs = this.inMemoryTenants
       .map((t) => t.currentSubscription)
       .filter((s): s is SaaSSubscriptionDto => Boolean(s));
@@ -680,6 +706,7 @@ export class SaasService {
    * Lists SaaS billing invoices.
    */
   async getInvoices(status?: SaaSInvoiceStatus): Promise<SaaSInvoiceDto[]> {
+    this.assertSaasTenantPersistenceAvailable('invoice listing');
     if (status) {
       return this.inMemoryInvoices.filter((i) => i.status === status);
     }
@@ -690,6 +717,7 @@ export class SaasService {
    * Generates a new invoice.
    */
   async createInvoice(dto: CreateInvoiceDto): Promise<SaaSInvoiceDto> {
+    this.assertSaasTenantPersistenceAvailable('invoice creation');
     const tenant = await this.getTenantById(dto.tenantId);
     const now = new Date();
     const invoiceNumber = `INV-SAAS-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(
@@ -720,6 +748,7 @@ export class SaasService {
    * Computes SaaS business metrics (MRR, ARR, active counts, retention rate).
    */
   async getSaaSKpiDashboard(): Promise<SaaSKpiDashboardDto> {
+    this.assertSaasTenantPersistenceAvailable('billing KPIs');
     const totalTenants = this.inMemoryTenants.length;
     const activeSubscribers = this.inMemoryTenants.filter(
       (t) => t.status === SaaSTenantStatus.ACTIVE && t.currentSubscription?.status === SaaSSubscriptionStatus.ACTIVE,
@@ -776,6 +805,7 @@ export class SaasService {
    * Global system status for Super Admin.
    */
   async getSystemStatus() {
+    this.assertSaasTenantPersistenceAvailable('system status');
     return {
       status: 'OPERATIONAL',
       version: '2.5.0-saas-enterprise',
