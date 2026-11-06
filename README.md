@@ -55,6 +55,9 @@ npm run dev:admin
 # تشغيل متجر العميل (نافذة ثالثة)
 npm run dev:customer
 
+# تطبيق Flutter (من مجلد apps/mobile-customer)
+# flutter pub get && flutter run --dart-define=API_BASE_URL=http://10.0.2.2:4000/api
+
 # تشغيل بوابة SaaS المستقلة (نافذة رابعة)
 npm run dev:saas
 ```
@@ -98,6 +101,7 @@ npm run dev:saas
 ---
 
 ## 📚 التوثيق المرفق
+* 📱 [دليل ربط تطبيق Flutter وتشغيله](docs/MOBILE_APP_API_INTEGRATION.md)
 * 🏢 [دليل بوابة إدارة SaaS](docs/SAAS_ADMIN_PORTAL_GUIDE.md)
 * 📖 [دليل النشر والتشغيل (Deployment Guide)](docs/DEPLOYMENT_GUIDE.md)
 * 🛡️ [قائمة التحقق الأمني (Security Checklist)](docs/SECURITY_CHECKLIST.md)
