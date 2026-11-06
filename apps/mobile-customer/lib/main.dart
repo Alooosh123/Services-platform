@@ -154,6 +154,20 @@ class HomeScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF78350F).withOpacity(0.22),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.55)),
+              ),
+              child: const Text(
+                'نسخة واجهة تجريبية غير مرتبطة بالخادم. الأسعار والبيانات المعروضة أمثلة فقط، ولا يمكن تنفيذ الشحن أو الخصم حالياً.',
+                style: TextStyle(color: Color(0xFFFBBF24), fontSize: 12, height: 1.5),
+              ),
+            ),
             // Banner
             Container(
               width: double.infinity,
@@ -275,7 +289,6 @@ class _DynamicTopupScreenState extends State<DynamicTopupScreen> {
   final TextEditingController _playerIdCtrl = TextEditingController();
   final TextEditingController _zoneIdCtrl = TextEditingController();
   int _selectedPackageIndex = 0;
-  bool _isValidated = false;
   bool _isFulfilling = false;
 
   final List<Map<String, String>> _packages = [
@@ -334,19 +347,14 @@ class _DynamicTopupScreenState extends State<DynamicTopupScreen> {
               children: [
                 OutlinedButton(
                   onPressed: () {
-                    setState(() => _isValidated = true);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('التحقق من اسم اللاعب غير متاح بعد: لم يتم ربط التطبيق بواجهة مزود الخدمة.'),
+                      ),
+                    );
                   },
-                  child: const Text('التحقق من اسم الحساب'),
+                  child: const Text('التحقق الحي غير متاح'),
                 ),
-                const SizedBox(width: 10),
-                if (_isValidated)
-                  const Row(
-                    children: [
-                      Icon(Icons.check_circle, color: Color(0xFF10B981), size: 16),
-                      SizedBox(width: 4),
-                      Text('تم التحقق: Gamer_Verified', style: TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
               ],
             ),
             const SizedBox(height: 24),
@@ -399,38 +407,20 @@ class _DynamicTopupScreenState extends State<DynamicTopupScreen> {
                 onPressed: _isFulfilling
                     ? null
                     : () {
-                        if (_playerIdCtrl.text.isEmpty) {
+                        if (_playerIdCtrl.text.trim().isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('يرجى إدخال معرف اللاعب أولاً')),
                           );
                           return;
                         }
-                        setState(() => _isFulfilling = true);
-                        Future.delayed(const Duration(milliseconds: 800), () {
-                          setState(() => _isFulfilling = false);
-                          showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              backgroundColor: const Color(0xFF111827),
-                              title: const Text('تم تسليم الشحنة بنجاح!'),
-                              content: Text(
-                                'تم شحن الحساب ${_playerIdCtrl.text} بنجاح وتسجيل القيد في السجل المالي.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () {
-                                    Navigator.pop(ctx);
-                                    Navigator.pop(context);
-                                  },
-                                  child: const Text('إغلاق'),
-                                )
-                              ],
-                            ),
-                          );
-                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('لم يتم إرسال الطلب: التطبيق غير متصل بالخادم. لم يحدث أي خصم أو شحن.'),
+                          ),
+                        );
                       },
                 child: Text(
-                  _isFulfilling ? 'جاري شحن الحساب...' : 'تأكيد ودفع من المحفظة (${_packages[_selectedPackageIndex]['price']})',
+                  'طلب تجريبي — لن يتم تنفيذه',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                 ),
               ),
@@ -450,47 +440,15 @@ class OrdersScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('سجل طلباتي')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _orderTile('ORD-20261008-8491', 'ببجي موبايل - 660 شدة (UC)', '\$10.49', 'مكتمل (COMPLETED)'),
-          _orderTile('ORD-20261008-7712', 'فري فاير - 310 جوهرة', '\$3.15', 'مكتمل (COMPLETED)'),
-        ],
-      ),
-    );
-  }
-
-  Widget _orderTile(String orderNo, String service, String price, String status) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF111827),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.between,
-            children: [
-              Text(orderNo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF818CF8))),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(status, style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold)),
-              ),
-            ],
+      body: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'سجل الطلبات غير متاح بعد. سيظهر هنا فقط بعد ربط التطبيق بواجهة الخادم.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white70, height: 1.6),
           ),
-          const SizedBox(height: 6),
-          Text(service, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          const SizedBox(height: 4),
-          Text(price, style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 14)),
-        ],
+        ),
       ),
     );
   }
@@ -517,9 +475,11 @@ class WalletScreen extends StatelessWidget {
               ),
               child: const Column(
                 children: [
-                  Text('الرصيد المتاح والموثق بالسجل المالي', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text('رصيد المحفظة', style: TextStyle(color: Colors.white70, fontSize: 12)),
                   SizedBox(height: 8),
-                  Text('\$100.00', style: TextStyle(color: Color(0xFF10B981), fontSize: 36, fontWeight: FontWeight.bold)),
+                  Text('غير متاح', style: TextStyle(color: Color(0xFFFBBF24), fontSize: 30, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 8),
+                  Text('لم يتم تحميل رصيد حقيقي: التطبيق غير متصل بالخادم.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white60, fontSize: 12)),
                 ],
               ),
             ),
