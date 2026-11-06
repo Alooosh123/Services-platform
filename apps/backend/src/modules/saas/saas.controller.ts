@@ -28,6 +28,7 @@ import {
   UpdatePlanPriceDto,
   CreateInvoiceDto,
   MarkSaasInvoicePaidDto,
+  AssignTenantOwnerDto,
 } from './dto/saas.dto';
 
 @ApiTags('SaaS Platform & Multi-Tenant Management (Super Admin Portal)')
@@ -77,6 +78,20 @@ export class SaasController {
   @ApiOperation({ summary: 'Onboard a new SaaS tenant with license generation and subscription plan' })
   async createTenant(@Body() dto: CreateTenantDto) {
     return this.saasService.createTenant(dto);
+  }
+
+  @Post('tenants/:id/owner')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Assign the verified tenant owner to an active store',
+    description: 'Requires exact owner email and phone match plus an auditable manual identity-verification reference.',
+  })
+  async assignTenantOwner(
+    @Param('id') id: string,
+    @Body() dto: AssignTenantOwnerDto,
+    @Req() request: any,
+  ) {
+    return this.saasService.assignTenantOwner(id, dto, request.user.id);
   }
 
   @Patch('tenants/:id/status')
