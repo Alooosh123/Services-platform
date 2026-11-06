@@ -4,10 +4,12 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ProfitEngineService } from './profit-engine.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import {
   DailyCloseStatus,
   CurrencyCode,
@@ -33,6 +35,17 @@ export interface InMemoryDailyCloseRecord {
 export class DailyCloseService {
   private readonly logger = new Logger(DailyCloseService.name);
   private memoryReports: Map<string, InMemoryDailyCloseRecord> = new Map();
+
+  private memoryKey(closeDate: string): string {
+    return `${getCurrentTenantId() || 'platform'}:${closeDate}`;
+  }
+
+  private assertDurableDailyClose(error: any): void {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      this.logger.error(`Tenant daily-close persistence failed: ${error?.message || error}`);
+      throw new ServiceUnavailableException('Daily close data is unavailable from the tenant database.');
+    }
+  }
 
   constructor(
     private prisma: PrismaService,
@@ -119,7 +132,7 @@ export class DailyCloseService {
       adjustments: [],
     };
 
-    this.memoryReports.set(defaultDate, rep);
+    this.memoryReports.set(this.memoryKey(defaultDate), rep);
   }
 
   /**
@@ -201,10 +214,11 @@ export class DailyCloseService {
         },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during daily close: saving to memory engine (${err?.message})`);
+      this.assertDurableDailyClose(err);
+      this.logger.warn(`Local unscoped development daily-close fallback (${err?.message})`);
     }
 
-    this.memoryReports.set(dto.closeDate, snapshotRecord);
+    this.memoryReports.set(this.memoryKey(dto.closeDate), snapshotRecord);
     return {
       snapshot: snapshotRecord,
       isNew: true,
@@ -251,27 +265,37 @@ export class DailyCloseService {
     report.adjustments.push(adjRecord);
     report.status = DailyCloseStatus.ADJUSTED;
     report.updatedAt = new Date();
-    this.memoryReports.set(closeDate, report);
+    // Persist first; do not mutate the local snapshot if database persistence fails.
+
 
     try {
-      await this.prisma.dailyCloseAdjustment.create({
-        data: {
-          id: adjId,
-          reportId: report.id,
-          currency: adjustment.currency,
-          adjustmentType: adjustment.adjustmentType,
-          amount: adjustment.amount,
-          reason: adjustment.reason,
-          ledgerTxId: adjustment.ledgerTxId || null,
-          approvedByUserId: userId,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.dailyCloseAdjustment.create({
+          data: {
+            id: adjId,
+            reportId: report.id,
+            currency: adjustment.currency,
+            adjustmentType: adjustment.adjustmentType,
+            amount: adjustment.amount,
+            reason: adjustment.reason,
+            ledgerTxId: adjustment.ledgerTxId || null,
+            approvedByUserId: userId,
+          },
+        });
+        await tx.dailyCloseReport.update({
+          where: { id: report.id },
+          data: { status: DailyCloseStatus.ADJUSTED },
+        });
       });
-      await this.prisma.dailyCloseReport.update({
-        where: { id: report.id },
-        data: { status: DailyCloseStatus.ADJUSTED },
-      });
-    } catch {}
+    } catch (error: any) {
+      this.assertDurableDailyClose(error);
+      this.logger.warn(`Local unscoped development adjustment fallback: ${error?.message || error}`);
+    }
 
+    report.adjustments.push(adjRecord);
+    report.status = DailyCloseStatus.ADJUSTED;
+    report.updatedAt = new Date();
+    this.memoryReports.set(this.memoryKey(closeDate), report);
     return adjRecord;
   }
 
@@ -280,7 +304,7 @@ export class DailyCloseService {
    */
   async getExistingReport(closeDate: string): Promise<InMemoryDailyCloseRecord | null> {
     try {
-      const dbReport = await this.prisma.dailyCloseReport.findUnique({
+      const dbReport = await this.prisma.dailyCloseReport.findFirst({
         where: { closeDate },
         include: { adjustments: true },
       });
@@ -308,9 +332,12 @@ export class DailyCloseService {
           })),
         };
       }
-    } catch {}
+    } catch (error: any) {
+      this.assertDurableDailyClose(error);
+      this.logger.warn(`Local unscoped development report fallback: ${error?.message || error}`);
+    }
 
-    return this.memoryReports.get(closeDate) || null;
+    return this.memoryReports.get(this.memoryKey(closeDate)) || null;
   }
 
   /**
@@ -322,8 +349,7 @@ export class DailyCloseService {
         orderBy: { closeDate: 'desc' },
         include: { adjustments: true },
       });
-      if (dbReports && dbReports.length > 0) {
-        return dbReports.map((dbReport) => ({
+      return dbReports.map((dbReport) => ({
           id: dbReport.id,
           closeDate: dbReport.closeDate,
           status: dbReport.status as DailyCloseStatus,
@@ -345,12 +371,16 @@ export class DailyCloseService {
             createdAt: a.createdAt.toISOString(),
           })),
         }));
-      }
-    } catch {}
+    } catch (error: any) {
+      this.assertDurableDailyClose(error);
+      this.logger.warn(`Local unscoped development report list fallback: ${error?.message || error}`);
+    }
 
-    return Array.from(this.memoryReports.values()).sort(
-      (a, b) => b.closeDate.localeCompare(a.closeDate),
-    );
+    const prefix = `${getCurrentTenantId() || 'platform'}:`;
+    return Array.from(this.memoryReports.entries())
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, report]) => report)
+      .sort((a, b) => b.closeDate.localeCompare(a.closeDate));
   }
 
   /**
