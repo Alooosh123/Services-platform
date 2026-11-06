@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { UserRole } from '@digital-topup/shared';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { setSaaSFinanceContext } from '../../../tenant/tenant-context.store';
+import { SAAS_INVOICE_FINANCE_ACCESS_KEY } from '../../saas/decorators/saas-invoice-finance.decorator';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -34,11 +35,14 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException(`Access denied. Required roles: ${requiredRoles.join(', ')}`);
     }
 
-    // The Finance Manager may cross tenant boundaries only for the explicitly
-    // role-protected SaaS invoice confirmation handler, not for customer data.
+    // Cross-tenant SaaS billing access requires both the explicit Finance
+    // Manager role and the dedicated invoice-confirmation handler marker.
+    const isSaaSInvoiceFinanceHandler =
+      this.reflector.get<boolean>(SAAS_INVOICE_FINANCE_ACCESS_KEY, context.getHandler()) === true;
     setSaaSFinanceContext(
       user.role === UserRole.FINANCE_MANAGER &&
-      requiredRoles.includes(UserRole.FINANCE_MANAGER),
+      requiredRoles.includes(UserRole.FINANCE_MANAGER) &&
+      isSaaSInvoiceFinanceHandler,
     );
 
     return true;
