@@ -560,6 +560,7 @@ model PaymentChannelConfig {
   financeApprovalRequired Boolean                   @default(false)
   proposedByUserId        String?
   pendingAccountNumber    String?
+  pendingAccountHolderName String?
   pendingInstructionsAr   String?
   pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
   killSwitchReason        String?
