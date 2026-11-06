@@ -278,6 +278,8 @@ model Tier {
   priceRuleVersions   PriceRuleVersion[]
   dailyCloseReports   DailyCloseReport[]
   ownerEarningsWallets OwnerEarningsWallet[]
+  pinVaultItems        PinVault[]
+  providerApiLogs      ProviderApiLog[]
   productPrices ProductTierPrice[]
 
   @@index([isActive, displayOrder])
@@ -809,6 +811,7 @@ model ProductProviderMapping {
 
 model PinVault {
   id                   String         @id @default(uuid())
+  tenantId             String?
   productId            String
   orderId              String?
   serialNumber         String?
@@ -823,6 +826,7 @@ model PinVault {
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
@@ -834,6 +838,7 @@ model PinVault {
 
 model ProviderApiLog {
   id              String   @id @default(uuid())
+  tenantId        String?
   providerId      String
   orderId         String?
   operation       String
@@ -846,6 +851,7 @@ model ProviderApiLog {
   errorMessage    String?
   createdAt       DateTime @default(now())
 
+  tenant   SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   provider Provider @relation(fields: [providerId], references: [id], onDelete: Restrict)
   order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
@@ -1236,7 +1242,7 @@ model PriceRuleVersion {
 model DailyCloseReport {
   id                   String   @id @default(uuid())
   tenantId             String?
-  closeDate            String   @unique // Format: YYYY-MM-DD
+  closeDate            String   // Format: YYYY-MM-DD
   status               String   @default("CLOSED") // OPEN, PRELIMINARY, CLOSED, ADJUSTED
   totalOrdersCount     Int      @default(0)
   completedOrdersCount Int      @default(0)
