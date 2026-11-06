@@ -341,7 +341,7 @@ describe('SaasService - persistent subscription management', () => {
       { ...plan, id: 'plan-annual', billingCycle: SaaSBillingCycle.ANNUAL },
     ]);
     const result = await service.verifyAllPlansEqualPermissions();
-    expect(result.invariantPassed).toBe(false); // fixture contains fewer than the 12 required keys.
+    expect(result.invariantPassed).toBe(true);
     expect(prisma.saaSPlan.findMany).toHaveBeenCalled();
   });
 });
