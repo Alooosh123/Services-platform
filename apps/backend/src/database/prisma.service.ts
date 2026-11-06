@@ -19,6 +19,8 @@ const TENANT_DIRECT_MODELS = new Set([
   'PinVault',
   'ProviderApiLog',
   'PaymentChannelConfig',
+  'ProductPrice',
+  'ProductTierPrice',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
@@ -79,6 +81,39 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       }
 
       params.args = params.args || {};
+
+      // Product catalogue records are platform-wide, while tenant retail/tier
+      // price rows included below must always be restricted to the current tenant.
+      const applyNestedPriceScope = (node: any): void => {
+        if (!node || typeof node !== 'object') return;
+        for (const key of Object.keys(node)) {
+          const value = node[key];
+          if (
+            (key === 'prices' || key === 'tierPrices' || key === 'agentPrices') &&
+            value !== false &&
+            value !== null
+          ) {
+            const relationArgs = value === true ? {} : value;
+            const existingWhere = relationArgs.where || {};
+            const tenantRelationFilter =
+              key === 'agentPrices'
+                ? { subAgent: { is: { tenantId } } }
+                : { tenantId };
+            node[key] = {
+              ...relationArgs,
+              where: {
+                ...existingWhere,
+                AND: [...(Array.isArray(existingWhere.AND) ? existingWhere.AND : existingWhere.AND ? [existingWhere.AND] : []), tenantRelationFilter],
+              },
+            };
+            applyNestedPriceScope(node[key]);
+          } else if (value && typeof value === 'object') {
+            applyNestedPriceScope(value);
+          }
+        }
+      };
+      applyNestedPriceScope(params.args.include);
+      applyNestedPriceScope(params.args.select);
 
       if (model === 'User') {
         if (params.action === 'create') {
