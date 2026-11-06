@@ -3,9 +3,15 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { getCurrentTenantId } from '../tenant/tenant-context.store';
+import {
+  getTenantExecutionContext,
+  isPlatformAdminContext,
+  isSaaSFinanceContext,
+  isTenantResolverContext,
+} from '../tenant/tenant-context.store';
 
 const TENANT_DIRECT_MODELS = new Set([
   'LedgerAccount',
@@ -21,6 +27,8 @@ const TENANT_DIRECT_MODELS = new Set([
   'PaymentChannelConfig',
   'ProductPrice',
   'ProductTierPrice',
+  'SaaSSubscription',
+  'SaaSInvoice',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
@@ -56,12 +64,8 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   PaymentWebhookEvent: { payment: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } } },
 };
 
-const SAAS_PLATFORM_MODELS = new Set([
-  'SaaSPlan',
-  'SaaSTenant',
-  'SaaSSubscription',
-  'SaaSInvoice',
-]);
+const SAAS_GLOBAL_MODELS = new Set(['SaaSPlan']);
+const SAAS_TENANT_MODELS = new Set(['SaaSTenant', 'SaaSSubscription', 'SaaSInvoice']);
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -73,11 +77,72 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.tenantMiddlewareInstalled = true;
 
     this.$use(async (params, next) => {
-      const tenantId = getCurrentTenantId();
+      const executionContext = getTenantExecutionContext();
+      const tenantId = executionContext?.tenantId ?? null;
       const model = params.model;
+      const isPlatformAdmin = isPlatformAdminContext();
+      const isSaaSFinance = isSaaSFinanceContext();
+      const isTenantResolver = isTenantResolverContext();
 
-      if (!tenantId || !model || SAAS_PLATFORM_MODELS.has(model)) {
+      // No request is ever implicitly treated as a platform administrator.
+      // Only a verified Super Admin JWT (or the narrow SaaS finance route)
+      // enables cross-tenant access.
+      if (!model || isPlatformAdmin || SAAS_GLOBAL_MODELS.has(model)) {
         return next(params);
+      }
+
+      if (SAAS_TENANT_MODELS.has(model)) {
+        if (isTenantResolver || isSaaSFinance) {
+          return next(params);
+        }
+
+        if (model === 'SaaSTenant') {
+          const tenantScopeId = tenantId || '__NO_PLATFORM_TENANT_ACCESS__';
+          if (
+            params.action === 'create' ||
+            params.action === 'createMany' ||
+            params.action === 'upsert' ||
+            params.action === 'update' ||
+            params.action === 'updateMany' ||
+            params.action === 'delete' ||
+            params.action === 'deleteMany'
+          ) {
+            throw new ForbiddenException('Only the platform administrator can manage SaaS tenants.');
+          }
+
+          params.args = params.args || {};
+          if (params.args.where) {
+            const originalWhere = params.args.where;
+            const existingAnd = Array.isArray(originalWhere.AND)
+              ? originalWhere.AND
+              : originalWhere.AND
+                ? [originalWhere.AND]
+                : [];
+            const { AND: _ignoredAnd, ...uniqueSelector } = originalWhere;
+            params.args.where = {
+              ...uniqueSelector,
+              AND: [...existingAnd, { id: tenantScopeId }],
+            };
+          } else {
+            params.args.where = { id: tenantScopeId };
+          }
+          return next(params);
+        }
+
+        // Subscriptions and invoices carry tenantId directly. On the platform
+        // host without an authenticated platform role, NULL is the only visible
+        // scope; tenant records are never returned implicitly.
+        if (!tenantId && (
+          params.action === 'create' ||
+          params.action === 'createMany' ||
+          params.action === 'upsert' ||
+          params.action === 'update' ||
+          params.action === 'updateMany' ||
+          params.action === 'delete' ||
+          params.action === 'deleteMany'
+        )) {
+          throw new ForbiddenException('A tenant context is required for SaaS billing writes.');
+        }
       }
 
       params.args = params.args || {};
@@ -123,12 +188,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           params.args.data = rows.map((row: any) => ({ ...row, tenantId }));
         } else if (params.action === 'upsert') {
           params.args.create = { ...params.args.create, tenantId };
+          params.args.update = { ...params.args.update, tenantId };
+        } else if (params.action === 'update' || params.action === 'updateMany') {
+          params.args.data = { ...params.args.data, tenantId };
         }
 
         if (params.args.where) {
+          const originalWhere = params.args.where;
+          const existingAnd = Array.isArray(originalWhere.AND)
+            ? originalWhere.AND
+            : originalWhere.AND
+              ? [originalWhere.AND]
+              : [];
+          const { AND: _ignoredAnd, ...uniqueSelector } = originalWhere;
           params.args.where = {
-            ...params.args.where,
-            tenantId,
+            ...uniqueSelector,
+            AND: [...existingAnd, { tenantId }],
           };
         } else if (
           params.action === 'findMany' ||
@@ -153,6 +228,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           params.args.data = rows.map((row: any) => ({ ...row, tenantId }));
         } else if (params.action === 'upsert') {
           params.args.create = { ...params.args.create, tenantId };
+          params.args.update = { ...params.args.update, tenantId };
+        } else if (params.action === 'update' || params.action === 'updateMany') {
+          params.args.data = { ...params.args.data, tenantId };
         }
 
         if (params.args.where) {
