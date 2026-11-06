@@ -558,6 +558,7 @@ model PaymentChannelConfig {
   verifiedByFinanceUserId String?
   verifiedAt              DateTime?
   financeApprovalRequired Boolean                   @default(false)
+  proposedByUserId        String?
   pendingAccountNumber    String?
   pendingInstructionsAr   String?
   pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
