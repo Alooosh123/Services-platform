@@ -184,24 +184,17 @@ export class AuthService {
     }
     tenantId = resolvedTenantId || tenantId;
 
-    let registrationRole = UserRole.CUSTOMER;
+    // Public registration always creates a customer. Ownership is assigned only
+    // by the audited Super Admin tenant-owner verification workflow.
+    const registrationRole = UserRole.CUSTOMER;
     if (tenantId) {
       try {
         const tenant = await this.prisma.saaSTenant.findUnique({
           where: { id: tenantId },
-          select: { id: true, status: true, ownerEmail: true, ownerPhone: true },
+          select: { id: true, status: true },
         });
         if (!tenant || tenant.status !== 'ACTIVE') {
           throw new ForbiddenException('This store is not active for customer registration.');
-        }
-        const emailMatches =
-          !!dto.email &&
-          dto.email.trim().toLowerCase() === tenant.ownerEmail.trim().toLowerCase();
-        const phoneMatches =
-          !!dto.phone &&
-          dto.phone.trim() === tenant.ownerPhone.trim();
-        if (emailMatches && phoneMatches) {
-          registrationRole = UserRole.OWNER;
         }
       } catch (error: any) {
         if (error instanceof ForbiddenException) throw error;
