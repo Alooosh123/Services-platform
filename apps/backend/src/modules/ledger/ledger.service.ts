@@ -472,7 +472,7 @@ export class LedgerService {
     channelCode?: PaymentChannelCode;
     performedByUserId?: string;
     notes?: string;
-  }) {
+  }, existingTx?: Prisma.TransactionClient) {
     const prepaidAccountCode = this.getSupplierPrepaidAccountCode(params.currency);
     const channelAccountCode = params.channelCode
       ? this.getChannelAccountCode(params.channelCode, params.currency)
@@ -504,7 +504,7 @@ export class LedgerService {
           notes: `Credit cash/bank account for provider funding`,
         },
       ],
-    });
+    }, existingTx);
   }
 
   async recordAgentCommission(params: {
