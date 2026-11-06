@@ -132,6 +132,24 @@ describe('TenantContextMiddleware', () => {
     }
   });
 
+  it('does not treat a localhost Host header as the platform host in production', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    prisma.saaSTenant.findFirst.mockResolvedValue(null);
+    try {
+      const request: any = { hostname: 'localhost', headers: {} };
+      const next = jest.fn();
+      await middleware.use(request, {} as any, next);
+
+      expect(prisma.saaSTenant.findFirst).toHaveBeenCalled();
+      expect(request.tenantId).toBe('__UNRESOLVED_TENANT__');
+      expect(next).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   it('does not query the database for localhost development hosts', async () => {
     const request: any = { hostname: 'localhost' };
     let callbackTenantId: string | null | undefined;
