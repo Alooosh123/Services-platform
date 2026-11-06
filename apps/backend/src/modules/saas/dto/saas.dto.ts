@@ -157,7 +157,7 @@ export class MarkSaasInvoicePaidDto {
   @IsNotEmpty()
   @MinLength(4)
   @MaxLength(128)
-  @Matches(/\\S/, { message: 'referenceNumber cannot contain only whitespace' })
+  @Matches(/\S/, { message: 'referenceNumber cannot contain only whitespace' })
   referenceNumber: string;
 }
 
