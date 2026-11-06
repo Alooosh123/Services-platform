@@ -190,28 +190,37 @@ export class DepositsService {
   async getPaymentChannels(): Promise<PaymentChannelInfo[]> {
     try {
       const dbConfigs = await this.prisma.paymentChannelConfig.findMany({
-        where: {
-          tenantId: getCurrentTenantId() || null,
-          isActive: true,
-          verificationStatus: ChannelVerificationStatus.VERIFIED,
-          mode: { notIn: [PaymentChannelMode.DISABLED, PaymentChannelMode.BLOCKED_EXTERNAL] },
-        },
+        where: { tenantId: getCurrentTenantId() || null },
       });
+      const verifiedConfigs = dbConfigs.filter((config) =>
+        config.isActive &&
+        config.verificationStatus === ChannelVerificationStatus.VERIFIED &&
+        config.mode !== PaymentChannelMode.DISABLED &&
+        config.mode !== PaymentChannelMode.BLOCKED_EXTERNAL,
+      );
 
-      return dbConfigs.map((c) => ({
-        code: c.code as PaymentChannelCode,
-        name: c.name,
-        nameAr: c.nameAr,
-        accountNumber: c.accountNumber,
-        accountHolderName: c.accountHolderName,
-        instructionsAr: c.instructionsAr,
-        supportedCurrencies: c.supportedCurrencies as CurrencyCode[],
-        minAmount: Number(c.minAmount),
-        maxAmount: Number(c.maxAmount),
-        isActive: c.isActive,
-        mode: c.mode as PaymentChannelMode,
-        isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
-      }));
+      // A configured database is authoritative, including the case where every
+      // channel is intentionally disabled. Never replace disabled records with mocks.
+      if (
+        dbConfigs.length > 0 ||
+        getCurrentTenantId() ||
+        process.env.NODE_ENV === 'production'
+      ) {
+        return verifiedConfigs.map((c) => ({
+          code: c.code as PaymentChannelCode,
+          name: c.name,
+          nameAr: c.nameAr,
+          accountNumber: c.accountNumber,
+          accountHolderName: c.accountHolderName,
+          instructionsAr: c.instructionsAr,
+          supportedCurrencies: c.supportedCurrencies as CurrencyCode[],
+          minAmount: Number(c.minAmount),
+          maxAmount: Number(c.maxAmount),
+          isActive: c.isActive,
+          mode: c.mode as PaymentChannelMode,
+          isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
+        }));
+      }
     } catch (err: any) {
       if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
         this.logger.error(`Payment channel query failed: ${err?.message || err}`);
@@ -220,7 +229,8 @@ export class DepositsService {
       this.logger.warn(`Local unscoped development payment channel registry fallback (${err?.message})`);
     }
 
-    // Only unscoped local development may use the in-memory adapter registry.
+    // Mock/default adapters are visible only in local unscoped development
+    // when no persistent channel configuration exists at all.
     if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return [];
     const channels = this.adapterRegistry.getAllChannels();
     return channels.filter(
