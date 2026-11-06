@@ -269,18 +269,7 @@ model Tier {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  users               User[]
-  ledgerAccounts      LedgerAccount[]
-  ledgerTransactions  LedgerTransaction[]
-  ledgerEntries       LedgerEntry[]
-  reconciliationBatches ReconciliationBatch[]
-  supplierAccounts    SupplierAccount[]
-  priceRuleVersions   PriceRuleVersion[]
-  dailyCloseReports   DailyCloseReport[]
-  ownerEarningsWallets OwnerEarningsWallet[]
-  pinVaultItems        PinVault[]
-  providerApiLogs      ProviderApiLog[]
-  paymentChannelConfigs PaymentChannelConfig[]
+  users         User[]
   productPrices ProductTierPrice[]
 
   @@index([isActive, displayOrder])
@@ -1580,9 +1569,20 @@ model SaaSTenant {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  subscriptions SaaSSubscription[]
-  invoices      SaaSInvoice[]
-  users         User[]
+  subscriptions          SaaSSubscription[]
+  invoices               SaaSInvoice[]
+  users                  User[]
+  ledgerAccounts         LedgerAccount[]
+  ledgerTransactions     LedgerTransaction[]
+  ledgerEntries          LedgerEntry[]
+  reconciliationBatches ReconciliationBatch[]
+  supplierAccounts       SupplierAccount[]
+  priceRuleVersions      PriceRuleVersion[]
+  dailyCloseReports      DailyCloseReport[]
+  ownerEarningsWallets   OwnerEarningsWallet[]
+  pinVaultItems          PinVault[]
+  providerApiLogs        ProviderApiLog[]
+  paymentChannelConfigs  PaymentChannelConfig[]
 
   @@index([status])
   @@map("saas_tenants")
