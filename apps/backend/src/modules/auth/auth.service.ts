@@ -7,6 +7,7 @@ import {
   Logger,
   HttpException,
   HttpStatus,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../database/prisma.service';
@@ -26,6 +27,7 @@ import { TotpUtil } from './utils/totp.util';
 import { EncryptionService } from '../../security/encryption.service';
 import { RedisIdempotencyStore } from '../../security/redis-idempotency.store';
 import { createHash } from 'crypto';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 
 interface InMemoryUser {
   id: string;
@@ -35,6 +37,7 @@ interface InMemoryUser {
   fullNameAr?: string | null;
   passwordHash: string;
   role: UserRole;
+  tenantId?: string | null;
   isVerified: boolean;
   isActive: boolean;
   isTwoFactorEnabled: boolean;
@@ -175,6 +178,39 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto, tenantId?: string) {
+    const resolvedTenantId = getCurrentTenantId();
+    if (tenantId && resolvedTenantId && tenantId !== resolvedTenantId) {
+      throw new ForbiddenException('Tenant registration context is invalid.');
+    }
+    tenantId = resolvedTenantId || tenantId;
+
+    let registrationRole = UserRole.CUSTOMER;
+    if (tenantId) {
+      try {
+        const tenant = await this.prisma.saaSTenant.findUnique({
+          where: { id: tenantId },
+          select: { id: true, status: true, ownerEmail: true, ownerPhone: true },
+        });
+        if (!tenant || tenant.status !== 'ACTIVE') {
+          throw new ForbiddenException('This store is not active for customer registration.');
+        }
+        const emailMatches =
+          !!dto.email &&
+          dto.email.trim().toLowerCase() === tenant.ownerEmail.trim().toLowerCase();
+        const phoneMatches =
+          !!dto.phone &&
+          dto.phone.trim() === tenant.ownerPhone.trim();
+        if (emailMatches && phoneMatches) {
+          registrationRole = UserRole.OWNER;
+        }
+      } catch (error: any) {
+        if (error instanceof ForbiddenException) throw error;
+        this.logger.error(`Tenant registration lookup failed: ${error?.message || error}`);
+        throw new ServiceUnavailableException('Store registration is unavailable until the tenant database can be reached.');
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('Customer registration must use an active store domain.');
+    }
     if (!dto.email && !dto.phone) {
       throw new BadRequestException('Either email or phone number must be provided');
     }
@@ -194,7 +230,11 @@ export class AuthService {
       }
     } catch (err: any) {
       if (err instanceof ConflictException) throw err;
-      this.logger.warn(`Prisma offline during register: continuing with memory store (${err?.message})`);
+      if (tenantId || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Registration lookup failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Registration is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development registration fallback: ${err?.message}`);
 
       for (const u of this.memoryUsers.values()) {
         if ((dto.email && u.email === dto.email) || (dto.phone && u.phone === dto.phone)) {
@@ -215,7 +255,7 @@ export class AuthService {
           email: dto.email || null,
           phone: dto.phone || null,
           passwordHash,
-          role: UserRole.CUSTOMER,
+          role: registrationRole,
           tenantId: tenantId || null,
           verificationCode,
           isVerified: false,
@@ -230,7 +270,11 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during user.create: saving to memory (${err?.message})`);
+      if (tenantId || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Persistent account creation failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Account registration failed because the account database is unavailable.');
+      }
+      this.logger.warn(`Local unscoped development account fallback: ${err?.message}`);
 
       const newId = `user-cust-${Date.now()}`;
       const memoryUser: InMemoryUser = {
@@ -268,6 +312,7 @@ export class AuthService {
         email: createdUser.email,
         phone: createdUser.phone,
         role: createdUser.role,
+        tenantId: createdUser.tenantId || null,
         isVerified: createdUser.isVerified,
         wallets: createdUser.wallets,
       },
