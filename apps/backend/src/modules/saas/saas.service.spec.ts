@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { SaasService } from './saas.service';
 import {
   SaaSBillingCycle,
@@ -106,6 +106,10 @@ describe('SaasService - persistent subscription management', () => {
       provider: { count: jest.fn().mockResolvedValue(3) },
       paymentMethod: { count: jest.fn().mockResolvedValue(2) },
       auditLog: { create: jest.fn().mockResolvedValue({ id: 'audit-1' }) },
+      user: {
+        findUnique: jest.fn(),
+        update: jest.fn().mockImplementation(async ({ data }) => ({ id: 'owner-1', ...data })),
+      },
       $transaction: jest.fn(async (callback: any) => callback(prisma)),
     };
     service = new SaasService(prisma);
@@ -116,6 +120,75 @@ describe('SaasService - persistent subscription management', () => {
     expect(prisma.saaSPlan.findMany).toHaveBeenCalled();
     expect(result[0].priceUsd).toBe(49);
     expect(result[0].activeSubscribersCount).toBe(2);
+  });
+
+  it('assigns tenant owner only after exact contact match and audited manual verification', async () => {
+    prisma.saaSTenant.findUnique.mockResolvedValue({
+      ...tenant,
+      status: SaaSTenantStatus.ACTIVE,
+      ownerEmail: 'owner@example.test',
+      ownerPhone: '+967770000001',
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'owner-1',
+      email: 'owner@example.test',
+      phone: '+967770000001',
+      tenantId: tenant.id,
+      role: 'CUSTOMER',
+    });
+
+    const result = await service.assignTenantOwner(
+      tenant.id,
+      { userId: 'owner-1', verificationReference: 'KYC-REVIEW-2026-001' },
+      'platform-admin',
+    );
+
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'owner-1' },
+        data: expect.objectContaining({
+          tenantId: tenant.id,
+          role: 'OWNER',
+          isVerified: true,
+        }),
+      }),
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'SAAS_TENANT_OWNER_ASSIGNED',
+          entityId: tenant.id,
+          newValues: expect.objectContaining({
+            verificationReference: 'KYC-REVIEW-2026-001',
+            manualVerification: true,
+          }),
+        }),
+      }),
+    );
+    expect(result.role).toBe('OWNER');
+  });
+
+  it('rejects assigning a user whose email and phone do not match the tenant owner', async () => {
+    prisma.saaSTenant.findUnique.mockResolvedValue({
+      ...tenant,
+      status: SaaSTenantStatus.ACTIVE,
+      ownerEmail: 'owner@example.test',
+      ownerPhone: '+967770000001',
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'customer-1',
+      email: 'different@example.test',
+      phone: '+967770000009',
+      tenantId: tenant.id,
+      role: 'CUSTOMER',
+    });
+
+    await expect(service.assignTenantOwner(
+      tenant.id,
+      { userId: 'customer-1', verificationReference: 'KYC-REVIEW-2026-002' },
+      'platform-admin',
+    )).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('updates persisted plan prices rather than mutating an in-memory copy', async () => {
