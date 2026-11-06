@@ -99,8 +99,9 @@ export class SaasController {
   async updateTenantStatus(
     @Param('id') id: string,
     @Body() dto: UpdateTenantStatusDto,
+    @Req() request: any,
   ) {
-    return this.saasService.updateTenantStatus(id, dto);
+    return this.saasService.updateTenantStatus(id, dto, request.user.id);
   }
 
   @Post('tenants/:id/renew')
