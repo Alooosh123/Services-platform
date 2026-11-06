@@ -2,12 +2,12 @@ name: Yemen TopUp Platform - CI, Security & Build Gates (Deployment Not Configur
 
 on:
   push:
-    branches: [main, develop, 'release/*', production-completion]
+    branches: [main, develop, 'release/*']
   pull_request:
     branches: [main, develop]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
