@@ -54,6 +54,7 @@ services:
       PORT: 4000
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-digital_topup_db}?schema=public"
       REDIS_URL: "redis://redis:6379"
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:3001,http://localhost:3002}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in the root .env file}
     ports:
