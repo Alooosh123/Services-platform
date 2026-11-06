@@ -262,12 +262,7 @@ export class DailyCloseService {
       createdAt: new Date().toISOString(),
     };
 
-    report.adjustments.push(adjRecord);
-    report.status = DailyCloseStatus.ADJUSTED;
-    report.updatedAt = new Date();
-    // Persist first; do not mutate the local snapshot if database persistence fails.
-
-
+    // Persist first; mutate the local development snapshot only after database success.
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.dailyCloseAdjustment.create({
@@ -349,7 +344,8 @@ export class DailyCloseService {
         orderBy: { closeDate: 'desc' },
         include: { adjustments: true },
       });
-      return dbReports.map((dbReport) => ({
+      if (dbReports.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        return dbReports.map((dbReport) => ({
           id: dbReport.id,
           closeDate: dbReport.closeDate,
           status: dbReport.status as DailyCloseStatus,
@@ -371,6 +367,7 @@ export class DailyCloseService {
             createdAt: a.createdAt.toISOString(),
           })),
         }));
+      }
     } catch (error: any) {
       this.assertDurableDailyClose(error);
       this.logger.warn(`Local unscoped development report list fallback: ${error?.message || error}`);
