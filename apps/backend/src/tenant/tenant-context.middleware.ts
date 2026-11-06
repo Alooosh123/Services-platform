@@ -26,12 +26,19 @@ export class TenantContextMiddleware implements NestMiddleware {
       .toLowerCase()
       .replace(/\.$/, '');
 
-    // Platform-local hosts intentionally use the platform-wide context.
+    // Only explicitly configured platform hosts use the global context.
+    const platformHosts = new Set(
+      (process.env.PLATFORM_HOSTS || '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean),
+    );
     if (
       !host ||
       host === 'localhost' ||
       host === '127.0.0.1' ||
-      host === '::1'
+      host === '::1' ||
+      platformHosts.has(host)
     ) {
       req.tenantId = null;
       req.tenant = null;
@@ -53,11 +60,11 @@ export class TenantContextMiddleware implements NestMiddleware {
         },
       });
 
-      req.tenantId = tenant?.id ?? null;
+      // Unknown hostnames must never silently become the platform/global tenant.
+      // The sentinel scopes all tenant-aware queries to an empty context and causes
+      // JwtAuthGuard to reject platform and tenant account tokens alike.
+      req.tenantId = tenant?.id ?? '__UNRESOLVED_TENANT__';
       req.tenant = tenant ?? null;
-
-      // Unknown hosts stay in the platform context. Tenant JWTs are rejected
-      // by JwtAuthGuard unless their tenant membership matches the resolved host.
       runWithTenantContext(req.tenantId, next);
     } catch {
       next(
