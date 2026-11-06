@@ -85,6 +85,7 @@ export class AdminDepositsController {
     return this.depositsService.rejectDeposit(staffId, id, dto);
   }
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/switch-mode')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Switch channel mode safely (MANUAL, API, BLOCKED_EXTERNAL, DISABLED)' })
@@ -97,6 +98,7 @@ export class AdminDepositsController {
     return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode, actorUserId, actorUserRole);
   }
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/failover')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Trigger emergency safe failover of payment channel to MANUAL' })
@@ -121,6 +123,7 @@ export class AdminDepositsController {
     return this.depositsService.getAllChannelsForAdmin();
   }
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels')
   @ApiOperation({ summary: 'Admin: Create a new dynamic payment channel' })
   async createChannel(
@@ -131,6 +134,7 @@ export class AdminDepositsController {
     return this.depositsService.createDynamicChannel(dto, actorUserId, actorUserRole);
   }
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/propose-account')
   @ApiOperation({ summary: 'Admin: Propose new receiver account (requires finance approval)' })
   async proposeAccount(
@@ -166,6 +170,7 @@ export class AdminDepositsController {
     );
   }
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/kill-switch')
   @ApiOperation({ summary: 'Admin: Emergency Kill Switch for payment channel (AT-24)' })
   async killSwitchChannel(
