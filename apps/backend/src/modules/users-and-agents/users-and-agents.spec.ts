@@ -241,7 +241,7 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
         id: 'subagent-001',
         parentAgentId,
       });
-      mockPrisma.productPrice.findUnique.mockResolvedValue({
+      mockPrisma.productPrice.findFirst.mockResolvedValue({
         costPrice: 5.0,
         retailPrice: 6.0,
         isAvailable: true,
