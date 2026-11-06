@@ -1579,7 +1579,7 @@ model SaaSInvoice {
   subscriptionId  String?
   amount          Decimal           @db.Decimal(18, 4)
   currency        CurrencyCode      @default(USD)
-  status          SaaSInvoiceStatus @default(PAID)
+  status          SaaSInvoiceStatus @default(PENDING)
   billingCycle    SaaSBillingCycle
   paymentMethod   String?
   referenceNumber String?
@@ -1593,5 +1593,6 @@ model SaaSInvoice {
 
   @@index([tenantId])
   @@index([status])
+  @@unique([paymentMethod, referenceNumber])
   @@map("saas_invoices")
 }
