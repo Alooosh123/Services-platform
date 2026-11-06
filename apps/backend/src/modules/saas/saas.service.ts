@@ -509,15 +509,16 @@ export class SaasService {
     if (!existing) throw new NotFoundException('SaaS tenant not found');
 
     if (dto.status === SaaSTenantStatus.ACTIVE) {
-      const paidActiveSubscription = await this.prisma.saaSSubscription.findFirst({
+      const paidSubscription = await this.prisma.saaSSubscription.findFirst({
         where: {
           tenantId: id,
-          status: SaaSSubscriptionStatus.ACTIVE,
+          status: { in: [SaaSSubscriptionStatus.ACTIVE, SaaSSubscriptionStatus.SUSPENDED] },
+          startDate: { lte: now },
           endDate: { gt: now },
         },
       });
-      if (!paidActiveSubscription) {
-        throw new BadRequestException('Cannot activate a tenant without a currently paid active subscription');
+      if (!paidSubscription) {
+        throw new BadRequestException('Cannot activate a tenant without a paid, currently valid subscription.');
       }
     }
 
@@ -531,6 +532,16 @@ export class SaasService {
         await tx.saaSSubscription.updateMany({
           where: { tenantId: id, status: SaaSSubscriptionStatus.ACTIVE },
           data: { status: SaaSSubscriptionStatus.SUSPENDED },
+        });
+      } else if (dto.status === SaaSTenantStatus.ACTIVE) {
+        await tx.saaSSubscription.updateMany({
+          where: {
+            tenantId: id,
+            status: SaaSSubscriptionStatus.SUSPENDED,
+            startDate: { lte: now },
+            endDate: { gt: now },
+          },
+          data: { status: SaaSSubscriptionStatus.ACTIVE },
         });
       } else if (dto.status === SaaSTenantStatus.TERMINATED) {
         await tx.saaSSubscription.updateMany({
@@ -676,17 +687,21 @@ export class SaasService {
             throw new BadRequestException('The tenant is not eligible for activation');
           }
 
-          await tx.saaSSubscription.updateMany({
-            where: {
-              tenantId: existing.tenantId,
-              status: SaaSSubscriptionStatus.ACTIVE,
-              id: { not: subscription.id },
-            },
-            data: { status: SaaSSubscriptionStatus.EXPIRED },
-          });
-
           const startsAt =
             subscription.startDate > paidAt ? subscription.startDate : paidAt;
+          // An early renewal is queued after the current term; retain the current
+          // subscription until the queued term actually starts.
+          if (startsAt <= paidAt) {
+            await tx.saaSSubscription.updateMany({
+              where: {
+                tenantId: existing.tenantId,
+                status: SaaSSubscriptionStatus.ACTIVE,
+                id: { not: subscription.id },
+                endDate: { lte: startsAt },
+              },
+              data: { status: SaaSSubscriptionStatus.EXPIRED },
+            });
+          }
           const endsAt = new Date(startsAt.getTime() + subscription.plan.durationDays * DAY_MS);
 
           await tx.saaSSubscription.update({
@@ -788,12 +803,13 @@ export class SaasService {
         this.prisma.saaSSubscription.count({
           where: {
             status: SaaSSubscriptionStatus.ACTIVE,
+            startDate: { lte: now },
             endDate: { gt: now },
             tenant: { status: SaaSTenantStatus.ACTIVE },
           },
         }),
         this.prisma.saaSSubscription.findMany({
-          where: { status: SaaSSubscriptionStatus.ACTIVE, endDate: { gt: now } },
+          where: { status: SaaSSubscriptionStatus.ACTIVE, startDate: { lte: now }, endDate: { gt: now } },
           select: { billingCycle: true, pricePaid: true, currency: true },
         }),
         this.prisma.saaSInvoice.findMany({
