@@ -45,8 +45,13 @@ export class TenantContextMiddleware implements NestMiddleware {
     // A central API hostname may receive requests from a tenant storefront.
     // Resolve the tenant using Origin, or an explicit mobile/API tenant-domain header.
     if (!tenantLookupHost && !isLocalHost) {
-      const tenantDomainHeader = req.get('x-tenant-domain') || '';
-      const originHeader = req.get('origin') || '';
+      const header = (name: string): string => {
+        if (typeof req.get === 'function') return req.get(name) || '';
+        const value = req.headers?.[name];
+        return Array.isArray(value) ? value[0] || '' : value || '';
+      };
+      const tenantDomainHeader = header('x-tenant-domain');
+      const originHeader = header('origin');
       let originHost = '';
       if (originHeader) {
         try {
