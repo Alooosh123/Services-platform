@@ -113,10 +113,24 @@ jobs:
   # Job 3: Prisma Migration Dry-Run & Schema Safety Check
   # -------------------------------------------------------------
   migration-dryrun:
-    name: Migration Dry-Run & Safety Check
+    name: Prisma Migration Apply & Safety Check
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: "postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public"
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: digital_topup_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -132,6 +146,12 @@ jobs:
 
       - name: Prisma Schema Validation
         run: npx prisma validate --schema=packages/database/prisma/schema.prisma
+
+      - name: Apply all migrations to an empty PostgreSQL instance
+        run: npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+
+      - name: Verify deployed migration history
+        run: npx prisma migrate status --schema=packages/database/prisma/schema.prisma
 
   # -------------------------------------------------------------
   # Job 4: Build Monorepo Production Artifacts
