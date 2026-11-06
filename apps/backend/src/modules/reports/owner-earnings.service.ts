@@ -5,8 +5,11 @@ import {
   ForbiddenException,
   ConflictException,
   Logger,
+  ServiceUnavailableException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { ProfitEngineService } from './profit-engine.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { TotpUtil } from '../auth/utils/totp.util';
@@ -65,6 +68,17 @@ export interface InMemoryEarningsWallet {
 export class OwnerEarningsService {
   private readonly logger = new Logger(OwnerEarningsService.name);
 
+  private assertPlatformOwnerContext(): void {
+    if (getCurrentTenantId()) {
+      throw new ForbiddenException('Platform owner earnings are not accessible from a tenant storefront domain.');
+    }
+    if (process.env.NODE_ENV === 'production') {
+      throw new ServiceUnavailableException(
+        'Platform owner earnings are unavailable until the persistent financial wallet workflow is completed.',
+      );
+    }
+  }
+
   // In-memory state for rapid fallback / testing
   private memoryBeneficiaries: Map<string, InMemoryBeneficiary> = new Map();
   private memoryPayouts: Map<string, InMemoryOwnerPayout> = new Map();
@@ -113,10 +127,12 @@ export class OwnerEarningsService {
   }
 
   getTestTotpSecret() {
+    this.assertPlatformOwnerContext();
     return this.defaultTotpSecret;
   }
 
   generateValidTotp(): string {
+    this.assertPlatformOwnerContext();
     return TotpUtil.generateCode(this.defaultTotpSecret);
   }
 
@@ -124,6 +140,7 @@ export class OwnerEarningsService {
    * 1. Register a Payout Beneficiary with Four-Eyes principle
    */
   async createBeneficiary(
+    this.assertPlatformOwnerContext();
     userId: string,
     dto: CreatePayoutBeneficiaryDto,
   ): Promise<InMemoryBeneficiary> {
@@ -163,6 +180,7 @@ export class OwnerEarningsService {
   }
 
   async listBeneficiaries(userId: string): Promise<InMemoryBeneficiary[]> {
+    this.assertPlatformOwnerContext();
     try {
       const dbList = await this.prisma.payoutBeneficiary.findMany({
         where: { userId },
@@ -190,6 +208,7 @@ export class OwnerEarningsService {
    * 2. Get Owner Statement & Liquidity Breakdown for a currency
    */
   async getEarningsStatement(userId: string, currency: CurrencyCode) {
+    this.assertPlatformOwnerContext();
     const key = `${userId}:${currency}`;
     const wallet = this.memoryWallets.get(key) || {
       userId,
@@ -240,6 +259,7 @@ export class OwnerEarningsService {
    * 4. Atomic Hold in lockedEarnings
    */
   async requestOwnerPayout(
+    this.assertPlatformOwnerContext();
     userId: string,
     dto: OwnerPayoutRequestDto,
   ): Promise<{ success: boolean; payout: InMemoryOwnerPayout; message: string }> {
@@ -339,6 +359,7 @@ export class OwnerEarningsService {
    * 4. Approve Owner Payout by Finance (Four-Eyes Principle - AT-17)
    */
   async approveOwnerPayout(
+    this.assertPlatformOwnerContext();
     payoutId: string,
     dto: ApproveOwnerPayoutDto,
     financeUserId: string,
@@ -378,6 +399,7 @@ export class OwnerEarningsService {
    * 5. Confirm External Wire / Transfer & Post Balanced Ledger Entry (AT-17)
    */
   async confirmExternalTransfer(
+    this.assertPlatformOwnerContext();
     payoutId: string,
     externalRef: string,
     financeUserId: string,
@@ -451,6 +473,7 @@ export class OwnerEarningsService {
    * 6. Fail Payout & Release Hold (AT-18 Hold Release)
    */
   async failPayout(payoutId: string, reason: string): Promise<InMemoryOwnerPayout> {
+    this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
       throw new NotFoundException('طلب السحب غير موجود');
@@ -475,6 +498,7 @@ export class OwnerEarningsService {
   }
 
   async listOwnerPayouts(userId?: string): Promise<InMemoryOwnerPayout[]> {
+    this.assertPlatformOwnerContext();
     const list = Array.from(this.memoryPayouts.values());
     if (userId) {
       return list.filter((p) => p.userId === userId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
