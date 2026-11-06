@@ -15,6 +15,7 @@ import { SaasService } from './saas.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { SaaSInvoiceFinanceAccess } from './decorators/saas-invoice-finance.decorator';
 import {
   UserRole,
   SaaSTenantStatus,
@@ -135,6 +136,7 @@ export class SaasController {
 
   @Post('invoices/:id/mark-paid')
   @Roles(UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER)
+  @SaaSInvoiceFinanceAccess()
   @ApiOperation({
     summary: 'Confirm a SaaS invoice payment after finance verification',
     description: 'Requires a verified transfer reference. This action is audited and activates the linked subscription.',
