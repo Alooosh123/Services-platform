@@ -1019,59 +1019,356 @@ export class DepositsService {
     };
   }
 
-  /**
-   * Admin: Switch channel mode safely (MANUAL, API, BLOCKED_EXTERNAL, DISABLED)
-   */
-  switchChannelMode(channelCode: PaymentChannelCode, mode: PaymentChannelMode) {
-    return this.adapterRegistry.switchChannelMode(channelCode, mode);
+  private currentChannelTenantWhere(channelCode: PaymentChannelCode) {
+    return {
+      tenantId: getCurrentTenantId() || null,
+      code: channelCode,
+    };
   }
 
-  /**
-   * Admin: Safe failover when network/channel anomaly occurs
-   */
-  failoverChannel(channelCode: PaymentChannelCode, reason?: string) {
-    return this.adapterRegistry.failoverChannel(channelCode, reason);
+  private async auditPaymentChannelChange(
+    actorUserId: string,
+    actorUserRole: string,
+    action: string,
+    channelCode: PaymentChannelCode,
+    newValues: Record<string, any>,
+  ): Promise<void> {
+    await this.prisma.auditLog.create({
+      data: {
+        userId: actorUserId,
+        userRole: actorUserRole as any,
+        action,
+        entityName: 'PaymentChannelConfig',
+        entityId: channelCode,
+        newValues,
+      },
+    });
   }
 
-  /**
-   * Admin: Verify legal status of payment channels
-   */
-  verifyLegalAccounts() {
-    return this.adapterRegistry.verifyLegalAccounts();
+  async switchChannelMode(
+    channelCode: PaymentChannelCode,
+    mode: PaymentChannelMode,
+    actorUserId: string,
+    actorUserRole: string,
+  ) {
+    if (mode === PaymentChannelMode.API) {
+      throw new BadRequestException(
+        'API mode is disabled until a contracted provider adapter and live credentials are verified.',
+      );
+    }
+
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+
+    if (mode === PaymentChannelMode.MANUAL) {
+      if (
+        config.verificationStatus !== ChannelVerificationStatus.VERIFIED ||
+        !config.accountNumber ||
+        config.accountNumber === 'NOT_CONFIGURED'
+      ) {
+        throw new BadRequestException('Finance must verify the receiver account before enabling this channel.');
+      }
+    }
+
+    const enabled = mode === PaymentChannelMode.MANUAL;
+    const updated = await this.prisma.paymentChannelConfig.update({
+      where: { id: config.id },
+      data: {
+        mode,
+        isActive: enabled,
+        killSwitchReason: null,
+        killSwitchAt: null,
+      },
+    });
+
+    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_MODE_CHANGED', channelCode, {
+      tenantId: config.tenantId,
+      previousMode: config.mode,
+      mode,
+      isActive: enabled,
+    });
+    return updated;
   }
 
-  /**
-   * Admin: Get all channels including pending and unverified
-   */
-  getAllChannelsForAdmin() {
-    return this.adapterRegistry.getAllChannels();
+  async failoverChannel(
+    channelCode: PaymentChannelCode,
+    reason: string | undefined,
+    actorUserId: string,
+    actorUserRole: string,
+  ) {
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+
+    const manualAvailable =
+      config.verificationStatus === ChannelVerificationStatus.VERIFIED &&
+      !!config.accountNumber &&
+      config.accountNumber !== 'NOT_CONFIGURED';
+    const updated = await this.prisma.paymentChannelConfig.update({
+      where: { id: config.id },
+      data: {
+        mode: manualAvailable ? PaymentChannelMode.MANUAL : PaymentChannelMode.BLOCKED_EXTERNAL,
+        isActive: manualAvailable,
+        killSwitchReason: reason?.trim() || 'Emergency failover requested.',
+        killSwitchAt: new Date(),
+      },
+    });
+    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_FAILOVER', channelCode, {
+      tenantId: config.tenantId,
+      mode: updated.mode,
+      isActive: updated.isActive,
+      reason: reason?.trim() || null,
+    });
+    return updated;
   }
 
-  /**
-   * Admin: Create a new dynamic payment channel
-   */
-  createDynamicChannel(dto: CreateDynamicChannelDto) {
-    return this.adapterRegistry.createDynamicChannel(dto);
+  async verifyLegalAccounts() {
+    const channels = await this.prisma.paymentChannelConfig.findMany({
+      where: { tenantId: getCurrentTenantId() || null },
+      orderBy: { code: 'asc' },
+    });
+    const verifiedCount = channels.filter(
+      (channel) =>
+        channel.verificationStatus === ChannelVerificationStatus.VERIFIED &&
+        !!channel.accountNumber &&
+        channel.accountNumber !== 'NOT_CONFIGURED',
+    ).length;
+    return {
+      tenantId: getCurrentTenantId(),
+      totalChannels: channels.length,
+      verifiedCount,
+      pendingCount: channels.filter((channel) => channel.verificationStatus === ChannelVerificationStatus.PENDING_REVIEW).length,
+      rejectedCount: channels.filter((channel) => channel.verificationStatus === ChannelVerificationStatus.REJECTED).length,
+      allVerified: channels.length > 0 && verifiedCount === channels.length,
+      channels: channels.map((channel) => ({
+        code: channel.code,
+        name: channel.name,
+        isActive: channel.isActive,
+        mode: channel.mode,
+        verificationStatus: channel.verificationStatus,
+        hasReceiverAccount: !!channel.accountNumber && channel.accountNumber !== 'NOT_CONFIGURED',
+        verifiedAt: channel.verifiedAt,
+        verifiedByFinanceUserId: channel.verifiedByFinanceUserId,
+      })),
+    };
   }
 
-  /**
-   * Admin: Propose account number change (triggers Four-Eyes Principle / Finance Review)
-   */
-  proposeChannelAccountChange(channelCode: PaymentChannelCode, newAccountNumber: string, feePercentage?: number) {
-    return this.adapterRegistry.proposeChannelAccountChange(channelCode, newAccountNumber, feePercentage);
+  async getAllChannelsForAdmin() {
+    return this.prisma.paymentChannelConfig.findMany({
+      where: { tenantId: getCurrentTenantId() || null },
+      orderBy: { code: 'asc' },
+    });
   }
 
-  /**
-   * Finance Manager: Dual Approval for channel account change (AT-15)
-   */
-  approveChannelFinanceReview(adminUserId: string, channelCode: PaymentChannelCode, dto: ApproveChannelChangeDto) {
-    return this.adapterRegistry.approveChannelFinanceReview(adminUserId, channelCode, dto);
+  async createDynamicChannel(dto: CreateDynamicChannelDto, actorUserId: string, actorUserRole: string) {
+    if (!Object.values(PaymentChannelCode).includes(dto.code)) {
+      throw new BadRequestException('Channel code is not supported by the current database enum.');
+    }
+    if (!dto.accountNumber?.trim() || !dto.accountHolderName?.trim()) {
+      throw new BadRequestException('Receiver account number and account holder are required.');
+    }
+    if (!dto.supportedCurrencies?.length) {
+      throw new BadRequestException('At least one supported currency is required.');
+    }
+    if (
+      !Number.isFinite(dto.minAmount) ||
+      !Number.isFinite(dto.maxAmount) ||
+      dto.minAmount < 0 ||
+      dto.maxAmount <= dto.minAmount
+    ) {
+      throw new BadRequestException('Payment channel amount limits are invalid.');
+    }
+
+    const existing = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(dto.code),
+    });
+    if (existing) throw new ConflictException('This payment channel is already configured for this store.');
+
+    const config = await this.prisma.paymentChannelConfig.create({
+      data: {
+        code: dto.code,
+        name: dto.name.trim(),
+        nameAr: dto.nameAr.trim(),
+        accountNumber: 'NOT_CONFIGURED',
+        accountHolderName: 'بانتظار اعتماد بيانات حساب الاستقبال',
+        instructionsAr: 'قناة غير مفعلة حتى اعتماد بيانات الاستقبال من مسؤول مالي مستقل.',
+        supportedCurrencies: dto.supportedCurrencies,
+        minAmount: new Prisma.Decimal(dto.minAmount),
+        maxAmount: new Prisma.Decimal(dto.maxAmount),
+        mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+        financeApprovalRequired: true,
+        proposedByUserId: actorUserId,
+        pendingAccountNumber: dto.accountNumber.trim(),
+        pendingAccountHolderName: dto.accountHolderName.trim(),
+        pendingInstructionsAr: dto.instructionsAr.trim(),
+        isActive: false,
+      },
+    });
+
+    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_CREATED_PENDING_REVIEW', dto.code, {
+      tenantId: config.tenantId,
+      channelId: config.id,
+      proposedReceiverAccount: dto.accountNumber.trim(),
+    });
+    return config;
   }
 
-  /**
-   * Admin: Emergency Kill Switch for payment channel (AT-24)
-   */
-  triggerChannelKillSwitch(adminUserId: string, channelCode: PaymentChannelCode, reason: string) {
-    return this.adapterRegistry.triggerChannelKillSwitch(adminUserId, channelCode, reason);
+  async proposeChannelAccountChange(
+    channelCode: PaymentChannelCode,
+    newAccountNumber: string,
+    feePercentage: number | undefined,
+    actorUserId: string,
+    actorUserRole: string,
+  ) {
+    const accountNumber = newAccountNumber?.trim();
+    if (!accountNumber) throw new BadRequestException('A proposed receiver account number is required.');
+    if (feePercentage !== undefined && (!Number.isFinite(feePercentage) || feePercentage < 0 || feePercentage > 100)) {
+      throw new BadRequestException('Channel fee percentage must be between 0 and 100.');
+    }
+
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+
+    const updated = await this.prisma.paymentChannelConfig.update({
+      where: { id: config.id },
+      data: {
+        pendingAccountNumber: accountNumber,
+        pendingFeePercentage: feePercentage === undefined ? config.pendingFeePercentage : new Prisma.Decimal(feePercentage),
+        proposedByUserId: actorUserId,
+        financeApprovalRequired: true,
+        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+        isActive: false,
+        mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+      },
+    });
+
+    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_ACCOUNT_CHANGE_PROPOSED', channelCode, {
+      tenantId: config.tenantId,
+      proposedAccountNumber: accountNumber,
+      feePercentage: feePercentage ?? null,
+      previousAccountNumber: config.accountNumber,
+    });
+    return updated;
+  }
+
+  async approveChannelFinanceReview(
+    adminUserId: string,
+    adminUserRole: string,
+    channelCode: PaymentChannelCode,
+    dto: ApproveChannelChangeDto,
+  ) {
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+    if (!config.financeApprovalRequired || config.verificationStatus !== ChannelVerificationStatus.PENDING_REVIEW) {
+      throw new ConflictException('There is no pending finance approval for this payment channel.');
+    }
+    if (!config.proposedByUserId || config.proposedByUserId === adminUserId) {
+      throw new BadRequestException('A different Finance Manager must approve this receiver-account change.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findFirst({
+        where: {
+          id: config.id,
+          tenantId: getCurrentTenantId() || null,
+          financeApprovalRequired: true,
+          verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+          proposedByUserId: { not: adminUserId },
+        },
+      });
+      if (!current || !current.proposedByUserId) {
+        throw new ConflictException('The payment channel approval state changed or the approver is not independent.');
+      }
+
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: dto.approved
+          ? {
+              accountNumber: current.pendingAccountNumber || current.accountNumber,
+              accountHolderName: current.pendingAccountHolderName || current.accountHolderName,
+              instructionsAr: current.pendingInstructionsAr || current.instructionsAr,
+              pendingAccountNumber: null,
+              pendingAccountHolderName: null,
+              pendingInstructionsAr: null,
+              pendingFeePercentage: null,
+              proposedByUserId: null,
+              financeApprovalRequired: false,
+              verificationStatus: ChannelVerificationStatus.VERIFIED,
+              verifiedByFinanceUserId: adminUserId,
+              verifiedAt: new Date(),
+              isActive: false,
+              mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+              killSwitchReason: null,
+              killSwitchAt: null,
+            }
+          : {
+              pendingAccountNumber: null,
+              pendingAccountHolderName: null,
+              pendingInstructionsAr: null,
+              pendingFeePercentage: null,
+              proposedByUserId: null,
+              financeApprovalRequired: false,
+              verificationStatus: ChannelVerificationStatus.REJECTED,
+              verifiedByFinanceUserId: null,
+              verifiedAt: null,
+              isActive: false,
+              mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+            },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: adminUserId,
+          userRole: adminUserRole as any,
+          action: dto.approved ? 'PAYMENT_CHANNEL_ACCOUNT_CHANGE_APPROVED' : 'PAYMENT_CHANNEL_ACCOUNT_CHANGE_REJECTED',
+          entityName: 'PaymentChannelConfig',
+          entityId: current.id,
+          newValues: {
+            channelCode,
+            tenantId: current.tenantId,
+            approved: dto.approved,
+            financeNotes: dto.financeNotes || null,
+            proposerUserId: current.proposedByUserId,
+          },
+        },
+      });
+      return updated;
+    });
+  }
+
+  async triggerChannelKillSwitch(
+    adminUserId: string,
+    adminUserRole: string,
+    channelCode: PaymentChannelCode,
+    reason: string,
+  ) {
+    if (!reason?.trim()) throw new BadRequestException('A mandatory kill-switch reason is required.');
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+
+    const updated = await this.prisma.paymentChannelConfig.update({
+      where: { id: config.id },
+      data: {
+        isActive: false,
+        mode: PaymentChannelMode.DISABLED,
+        killSwitchReason: reason.trim(),
+        killSwitchAt: new Date(),
+      },
+    });
+    await this.auditPaymentChannelChange(adminUserId, adminUserRole, 'PAYMENT_CHANNEL_KILL_SWITCH', channelCode, {
+      tenantId: config.tenantId,
+      reason: reason.trim(),
+    });
+    return updated;
   }
 }
