@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { SaasService } from './saas.service';
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -133,5 +134,32 @@ describe('SaasService & Equal Permissions Invariant', () => {
     expect(kpis.monthlyRecurringRevenueUsd).toBeGreaterThan(0);
     expect(kpis.annualRunRateUsd).toBeGreaterThan(0);
     expect(kpis.equalPermissionsPolicyEnforced).toBe(true);
+  });
+
+  describe('production safety boundary', () => {
+    it('refuses in-memory tenant and invoice operations in production', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        await expect(service.getTenants()).rejects.toBeInstanceOf(ServiceUnavailableException);
+        await expect(service.getInvoices()).rejects.toBeInstanceOf(ServiceUnavailableException);
+        await expect(service.getSubscriptions()).rejects.toBeInstanceOf(ServiceUnavailableException);
+        await expect(service.getSaaSKpiDashboard()).rejects.toBeInstanceOf(ServiceUnavailableException);
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousNodeEnv;
+      }
+    });
+
+    it('does not return fabricated fallback plans when the production database is empty', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        await expect(service.getPlans()).rejects.toBeInstanceOf(ServiceUnavailableException);
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousNodeEnv;
+      }
+    });
   });
 });
