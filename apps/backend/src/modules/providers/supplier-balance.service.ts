@@ -231,6 +231,7 @@ export class SupplierBalanceService {
         });
         if (!provider) throw new NotFoundException(`Provider ${dto.providerId} was not found`);
 
+        const actualProviderCode = provider.code.toUpperCase();
         const existing = await tx.supplierAccount.findFirst({
           where: { providerId: provider.id, currency: dto.currency, tenantId: tenantId || null },
         });
@@ -265,7 +266,7 @@ export class SupplierBalanceService {
         }
 
         const ledgerResult = await this.ledgerService.recordSupplierFunding({
-          providerCode,
+          providerCode: actualProviderCode,
           currency: dto.currency,
           amount: dto.amount,
           referenceNumber: dto.referenceNumber,
