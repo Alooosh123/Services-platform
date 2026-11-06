@@ -446,28 +446,26 @@ export class SupplierBalanceService {
 
   async getSupplierTransactions(providerCode?: string): Promise<InMemorySupplierTransaction[]> {
     try {
-      const where = providerCode
-        ? { account: { provider: { code: providerCode.toUpperCase() } } }
-        : undefined;
       const rows = await this.prisma.supplierTransaction.findMany({
-        where,
         orderBy: { createdAt: 'desc' },
         include: { account: { include: { provider: true } } },
         take: 500,
       });
-      return rows.map((row) => ({
-        id: row.id,
-        providerCode: row.account.provider.code,
-        type: row.type,
-        currency: row.currency as CurrencyCode,
-        amount: Number(row.amount),
-        balanceBefore: Number(row.balanceBefore),
-        balanceAfter: Number(row.balanceAfter),
-        referenceId: row.referenceId,
-        ledgerTxId: row.ledgerTxId,
-        notes: row.notes,
-        createdAt: row.createdAt,
-      }));
+      return rows
+        .filter((row) => !providerCode || row.account.provider.code === providerCode.toUpperCase())
+        .map((row) => ({
+          id: row.id,
+          providerCode: row.account.provider.code,
+          type: row.type,
+          currency: row.currency as CurrencyCode,
+          amount: Number(row.amount),
+          balanceBefore: Number(row.balanceBefore),
+          balanceAfter: Number(row.balanceAfter),
+          referenceId: row.referenceId,
+          ledgerTxId: row.ledgerTxId,
+          notes: row.notes,
+          createdAt: row.createdAt,
+        }));
     } catch (error: any) {
       if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
         this.logger.error(`Supplier transaction listing failed: ${error?.message || error}`);
