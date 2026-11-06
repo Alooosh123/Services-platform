@@ -130,7 +130,8 @@ export default function SaaSPage() {
   async function createTenant(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
-      await api('/saas/tenants', token, { method: 'POST', body: JSON.stringify(form) });
+      const payload = { ...form, domain: form.domain.trim() || undefined, notes: form.notes.trim() || undefined };
+      await api('/saas/tenants', token, { method: 'POST', body: JSON.stringify(payload) });
       setNotice('تم إنشاء المتجر وإصدار فاتورته الأولية. لم يتم تفعيل أي قناة دفع تلقائياً.');
       setCreateOpen(false);
       setForm({ name: '', slug: '', ownerName: '', ownerEmail: '', ownerPhone: '', billingCycle: 'MONTHLY', currency: 'USD', domain: '', notes: '' });
@@ -158,6 +159,24 @@ export default function SaaSPage() {
       await api('/saas/invoices/' + invoice.id + '/mark-paid', token, { method: 'POST', body: JSON.stringify({ paymentMethod, referenceNumber }) });
       setNotice('تم تأكيد الفاتورة عبر الخادم.'); await load(token);
     } catch (e) { setError(e instanceof Error ? e.message : 'تعذر تأكيد الفاتورة'); }
+    finally { setBusy(false); }
+  }
+
+  async function editPlan(plan: Row) {
+    const usd = window.prompt('السعر بالدولار USD:', String(plan.priceUsd ?? ''));
+    if (usd === null) return;
+    const yer = window.prompt('السعر بالريال اليمني YER:', String(plan.priceYer ?? ''));
+    if (yer === null) return;
+    const sar = window.prompt('السعر بالريال السعودي SAR:', String(plan.priceSar ?? ''));
+    if (sar === null) return;
+    const values = [Number(usd), Number(yer), Number(sar)];
+    if (values.some(v => !Number.isFinite(v) || v < 0)) { setError('أدخل أسعاراً رقمية صحيحة غير سالبة.'); return; }
+    setBusy(true); setError('');
+    try {
+      await api('/saas/plans/' + plan.id + '/price', token, { method: 'PUT', body: JSON.stringify({ priceUsd: values[0], priceYer: values[1], priceSar: values[2] }) });
+      setNotice('تم تحديث أسعار الخطة. الأسعار التاريخية للطلبات والاشتراكات لا تتغير.');
+      await load(token);
+    } catch (e) { setError(e instanceof Error ? e.message : 'تعذر تحديث الأسعار'); }
     finally { setBusy(false); }
   }
 
@@ -202,7 +221,7 @@ export default function SaaSPage() {
         <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-right text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">المتجر</th><th className="p-3">المالك</th><th className="p-3">الاشتراك</th><th className="p-3">الحالة</th><th className="p-3">الإنشاء</th><th className="p-3">تغيير الحالة</th></tr></thead><tbody>{filtered.map(t => <tr key={t.id} className="border-t border-slate-800"><td className="p-3"><b>{t.name}</b><div className="text-xs text-slate-500">{t.slug} · {t.domain || 'بدون نطاق'}</div></td><td className="p-3">{t.ownerName}<div className="text-xs text-slate-500">{t.ownerEmail}</div></td><td className="p-3">{t.currentSubscription?.planName || t.currentSubscription?.billingCycle || '—'}</td><td className="p-3"><Badge value={t.status}/></td><td className="p-3">{fmtDate(t.createdAt)}</td><td className="p-3"><select value={t.status} onChange={e => void changeStatus(t, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs"><option value="ACTIVE">نشط</option><option value="SUSPENDED">تعليق</option><option value="TERMINATED">إنهاء</option></select></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-8 text-center text-sm text-slate-500">لا توجد متاجر مطابقة.</p>}</div></section>}
       {tab === 'subscriptions' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6"><h3 className="mb-4 text-lg font-bold">الاشتراكات</h3><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-right text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">المتجر</th><th className="p-3">الدورة</th><th className="p-3">القيمة</th><th className="p-3">البداية</th><th className="p-3">النهاية</th><th className="p-3">الحالة</th></tr></thead><tbody>{subscriptions.map(s => <tr key={s.id} className="border-t border-slate-800"><td className="p-3">{s.tenantName || s.tenantId}</td><td className="p-3">{s.billingCycle}</td><td className="p-3">{fmtMoney(s.pricePaid, s.currency)}</td><td className="p-3">{fmtDate(s.startDate)}</td><td className="p-3">{fmtDate(s.endDate)}</td><td className="p-3"><Badge value={s.status}/></td></tr>)}</tbody></table>{subscriptions.length === 0 && <p className="p-8 text-center text-slate-500">لا توجد اشتراكات.</p>}</div></section>}
       {tab === 'invoices' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6"><h3 className="mb-4 text-lg font-bold">فواتير الاشتراكات</h3><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-right text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">رقم الفاتورة</th><th className="p-3">المتجر</th><th className="p-3">المبلغ</th><th className="p-3">الاستحقاق</th><th className="p-3">الحالة</th><th className="p-3">الإجراء</th></tr></thead><tbody>{invoices.map(i => <tr key={i.id} className="border-t border-slate-800"><td className="p-3 font-mono text-xs">{i.invoiceNumber}</td><td className="p-3">{i.tenantName || i.tenantId}</td><td className="p-3 font-bold">{fmtMoney(i.amount, i.currency)}</td><td className="p-3">{fmtDate(i.dueDate)}</td><td className="p-3"><Badge value={i.status}/></td><td className="p-3">{['PENDING', 'OVERDUE'].includes(i.status) ? <button onClick={() => void markPaid(i)} disabled={busy} className="rounded-lg bg-emerald-600/15 px-3 py-2 text-xs font-bold text-emerald-300">تأكيد بعد المطابقة</button> : '—'}</td></tr>)}</tbody></table>{invoices.length === 0 && <p className="p-8 text-center text-slate-500">لا توجد فواتير.</p>}</div><p className="mt-4 text-xs leading-5 text-amber-300">لا تؤكد الفاتورة إلا بعد التحقق من وصول الحوالة فعلياً ومطابقة مرجعها. الخادم يطبق الصلاحيات ويسجل العملية.</p></section>}
-      {tab === 'plans' && <section className="grid gap-4 md:grid-cols-3">{plans.map(p => <article key={p.id} className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><div className="flex items-center justify-between"><h3 className="font-bold">{p.nameAr || p.name}</h3><Badge value={p.isActive ? 'ACTIVE' : 'SUSPENDED'}/></div><p className="mt-2 text-xs text-slate-400">{p.durationDays} يوم · {p.activeSubscribersCount || 0} مشترك</p><div className="mt-5 space-y-2 text-sm"><p>USD: <b>{fmtMoney(p.priceUsd, 'USD')}</b></p><p>YER: <b>{fmtMoney(p.priceYer, 'YER')}</b></p><p>SAR: <b>{fmtMoney(p.priceSar, 'SAR')}</b></p></div><p className="mt-4 text-xs text-slate-500">{p.descriptionAr || 'صلاحيات المنصة الكاملة وفق سياسة الخطط الموحدة.'}</p></article>)}{plans.length === 0 && <p className="text-sm text-slate-500">لا توجد خطط.</p>}</section>}
+      {tab === 'plans' && <section className="grid gap-4 md:grid-cols-3">{plans.map(p => <article key={p.id} className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><div className="flex items-center justify-between"><h3 className="font-bold">{p.nameAr || p.name}</h3><Badge value={p.isActive ? 'ACTIVE' : 'SUSPENDED'}/></div><p className="mt-2 text-xs text-slate-400">{p.durationDays} يوم · {p.activeSubscribersCount || 0} مشترك</p><div className="mt-5 space-y-2 text-sm"><p>USD: <b>{fmtMoney(p.priceUsd, 'USD')}</b></p><p>YER: <b>{fmtMoney(p.priceYer, 'YER')}</b></p><p>SAR: <b>{fmtMoney(p.priceSar, 'SAR')}</b></p></div><p className="mt-4 text-xs text-slate-500">{p.descriptionAr || 'صلاحيات المنصة الكاملة وفق سياسة الخطط الموحدة.'}</p><button onClick={() => void editPlan(p)} disabled={busy} className="mt-5 w-full rounded-xl border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm font-bold text-violet-200 hover:bg-violet-500/20">تعديل أسعار العملات الثلاث</button></article>)}{plans.length === 0 && <p className="text-sm text-slate-500">لا توجد خطط.</p>}</section>}
       <footer className="mt-8 flex flex-wrap justify-between gap-2 border-t border-slate-800 pt-4 text-xs text-slate-500"><span>آخر تحديث: {fmtDate(kpi?.timestamp)}</span><span>واجهة مستقلة · الصلاحيات مفروضة من الخادم</span></footer>
     </div>
   </main>;
