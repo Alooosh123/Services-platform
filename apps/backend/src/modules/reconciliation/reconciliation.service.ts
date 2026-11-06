@@ -3,8 +3,10 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { LedgerService } from '../ledger/ledger.service';
 import { DepositsService } from '../deposits/deposits.service';
 import { PayoutsService } from '../payouts/payouts.service';
@@ -55,6 +57,13 @@ export interface InMemoryReconciliationBatch {
 @Injectable()
 export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
+
+  private failClosedForTenant(error: any): void {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      this.logger.error(`Reconciliation persistence failed: ${error?.message || error}`);
+      throw new ServiceUnavailableException('Reconciliation data is unavailable from the tenant database.');
+    }
+  }
   private memoryBatches: Map<string, InMemoryReconciliationBatch> = new Map();
 
   constructor(
@@ -298,7 +307,8 @@ export class ReconciliationService {
         },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during runDailyReconciliation (${err?.message})`);
+      this.failClosedForTenant(err);
+      this.logger.warn(`Local unscoped development reconciliation fallback (${err?.message})`);
     }
 
     // Save in memory
@@ -359,8 +369,7 @@ export class ReconciliationService {
         orderBy: { statementDate: 'desc' },
         include: { items: true },
       });
-      if (dbBatches && dbBatches.length > 0) {
-        return dbBatches.map((b) => ({
+      return dbBatches.map((b) => ({
           id: b.id,
           batchNumber: b.batchNumber,
           channelCode: b.channelCode as PaymentChannelCode,
@@ -391,9 +400,9 @@ export class ReconciliationService {
             createdAt: it.createdAt,
           })),
         }));
-      }
-    } catch {
-      // fallback
+    } catch (error: any) {
+      this.failClosedForTenant(error);
+      this.logger.warn(`Local unscoped development reconciliation listing fallback: ${error?.message || error}`);
     }
 
     return Array.from(this.memoryBatches.values()).sort(
@@ -423,6 +432,11 @@ export class ReconciliationService {
     notes: string,
     action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
   ): Promise<{ success: boolean; message: string }> {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      throw new ServiceUnavailableException(
+        'Discrepancy resolution is disabled until the resolution workflow is fully database-backed.',
+      );
+    }
     for (const batch of this.memoryBatches.values()) {
       const item = batch.items.find((i) => i.id === itemId);
       if (item) {
