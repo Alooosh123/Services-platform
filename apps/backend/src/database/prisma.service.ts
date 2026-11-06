@@ -64,6 +64,89 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   PaymentWebhookEvent: { payment: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } } },
 };
 
+const TENANT_WRITE_REFERENCES: Record<
+  string,
+  Array<{ field: string; relation?: string; delegate: string }>
+> = {
+  Wallet: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  UserDevice: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  MerchantApiCredential: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  Session: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  CurrencyExchange: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  WalletLedgerEntry: [{ field: 'walletId', relation: 'wallet', delegate: 'wallet' }],
+  DepositRequest: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'walletId', relation: 'wallet', delegate: 'wallet' },
+    { field: 'reviewedByUserId', relation: 'reviewedBy', delegate: 'user' },
+  ],
+  DepositStatusHistory: [
+    { field: 'depositRequestId', relation: 'depositRequest', delegate: 'depositRequest' },
+    { field: 'changedByUserId', relation: 'changedByUser', delegate: 'user' },
+  ],
+  WalletTopup: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'walletId', relation: 'wallet', delegate: 'wallet' },
+  ],
+  Payment: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'orderId', relation: 'order', delegate: 'order' },
+    { field: 'verifiedByUserId', relation: 'verifiedBy', delegate: 'user' },
+  ],
+  PaymentWebhookEvent: [{ field: 'paymentId', relation: 'payment', delegate: 'payment' }],
+  Order: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'agentParentUserId', relation: 'agentCommissionRecipient', delegate: 'user' },
+  ],
+  OrderStatusHistory: [{ field: 'orderId', relation: 'order', delegate: 'order' }],
+  ManualFulfillment: [
+    { field: 'orderId', relation: 'order', delegate: 'order' },
+    { field: 'assignedOperatorId', relation: 'assignedOperator', delegate: 'user' },
+  ],
+  AuditLog: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  PayoutRequest: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'walletId', relation: 'wallet', delegate: 'wallet' },
+    { field: 'approvedByUserId', relation: 'approvedBy', delegate: 'user' },
+  ],
+  ServiceRequest: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'reviewedByUserId', relation: 'reviewedByUser', delegate: 'user' },
+  ],
+  PayoutBeneficiary: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'financeApprovedBy', delegate: 'user' },
+  ],
+  OwnerPayoutTransaction: [
+    { field: 'userId', delegate: 'user' },
+    { field: 'beneficiaryId', relation: 'beneficiary', delegate: 'payoutBeneficiary' },
+    { field: 'approvedByUserId', delegate: 'user' },
+  ],
+  SupportTicket: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'orderId', delegate: 'order' },
+    { field: 'depositId', delegate: 'depositRequest' },
+    { field: 'assignedToUserId', delegate: 'user' },
+  ],
+  TicketMessage: [
+    { field: 'ticketId', relation: 'ticket', delegate: 'supportTicket' },
+    { field: 'senderUserId', delegate: 'user' },
+  ],
+  Notification: [{ field: 'userId', relation: 'user', delegate: 'user' }],
+  AgentProductPrice: [
+    { field: 'subAgentUserId', relation: 'subAgent', delegate: 'user' },
+  ],
+  SupplierTransaction: [{ field: 'accountId', relation: 'account', delegate: 'supplierAccount' }],
+  DailyCloseReport: [{ field: 'closedByUserId', delegate: 'user' }],
+  DailyCloseAdjustment: [{ field: 'reportId', relation: 'report', delegate: 'dailyCloseReport' }],
+  OwnerEarningsWallet: [{ field: 'userId', delegate: 'user' }],
+  LedgerTransaction: [{ field: 'createdByUserId', delegate: 'user' }],
+  LedgerEntry: [
+    { field: 'accountId', relation: 'account', delegate: 'ledgerAccount' },
+    { field: 'walletId', relation: 'wallet', delegate: 'wallet' },
+  ],
+  ProviderApiLog: [{ field: 'orderId', relation: 'order', delegate: 'order' }],
+};
+
 const SAAS_GLOBAL_MODELS = new Set(['SaaSPlan']);
 const SAAS_TENANT_MODELS = new Set(['SaaSTenant', 'SaaSSubscription', 'SaaSInvoice']);
 
@@ -146,6 +229,48 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       }
 
       params.args = params.args || {};
+
+      // A where-clause on reads is not enough: reject writes that attach a
+      // tenant-owned record to a user/order/wallet/parent belonging to another
+      // tenant. The parent lookup itself passes through this same tenant scope.
+      const writeReferences = TENANT_WRITE_REFERENCES[model] || [];
+      const writeData: any[] = [];
+      if (params.action === 'create' || params.action === 'update' || params.action === 'updateMany') {
+        if (params.args.data) writeData.push(params.args.data);
+      } else if (params.action === 'createMany') {
+        const rows = Array.isArray(params.args.data) ? params.args.data : [params.args.data];
+        writeData.push(...rows);
+      } else if (params.action === 'upsert') {
+        if (params.args.create) writeData.push(params.args.create);
+        if (params.args.update) writeData.push(params.args.update);
+      }
+
+      for (const row of writeData) {
+        for (const reference of writeReferences) {
+          let referenceId = row?.[reference.field];
+          if (referenceId && typeof referenceId === 'object') {
+            referenceId = referenceId.connect?.id ?? referenceId.set ?? null;
+          }
+          if (
+            (referenceId === undefined || referenceId === null) &&
+            reference.relation
+          ) {
+            referenceId = row?.[reference.relation]?.connect?.id ?? null;
+          }
+          if (referenceId === undefined || referenceId === null) continue;
+
+          const delegate = (this as any)[reference.delegate];
+          const parent = await delegate.findFirst({
+            where: { id: referenceId },
+            select: { id: true },
+          });
+          if (!parent) {
+            throw new ForbiddenException(
+              `Cannot associate ${model} with a record outside the active tenant scope.`,
+            );
+          }
+        }
+      }
 
       // Product catalogue records are platform-wide, while tenant retail/tier
       // price rows included below must always be restricted to the current tenant.
