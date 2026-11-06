@@ -329,6 +329,9 @@ model User {
   reviewedServiceRequests  ServiceRequest[]       @relation("UserReviewedServiceRequests")
   priceRuleVersions        PriceRuleVersion[]
   commissionsEarned        Order[]                @relation("AgentCommissionRecipient")
+  supportTickets          SupportTicket[]
+  notifications            Notification[]
+  payoutBeneficiaries      PayoutBeneficiary[]
 
   @@index([parentAgentId])
   @@index([tenantId, role, status])
@@ -751,6 +754,7 @@ model Product {
 
 model ProductPrice {
   id          String       @id @default(uuid())
+  tenantId    String?
   productId   String
   currency    CurrencyCode
   retailPrice Decimal      @db.Decimal(18, 4)
@@ -758,14 +762,16 @@ model ProductPrice {
   isAvailable Boolean      @default(true)
   updatedAt   DateTime     @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, currency])
+  @@unique([tenantId, productId, currency])
   @@map("product_prices")
 }
 
 model ProductTierPrice {
   id                     String       @id @default(uuid())
+  tenantId               String?
   productId              String
   tierId                 String
   currency               CurrencyCode
@@ -775,11 +781,12 @@ model ProductTierPrice {
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  tier    Tier    @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tier    Tier         @relation(fields: [tierId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, tierId, currency])
-  @@index([tierId, isActive])
+  @@unique([tenantId, productId, tierId, currency])
+  @@index([tenantId, tierId, isActive])
   @@map("product_tier_prices")
 }
 
@@ -1285,6 +1292,7 @@ model PayoutBeneficiary {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
+  user    User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   payouts OwnerPayoutTransaction[]
 
   @@index([userId])
@@ -1353,6 +1361,7 @@ model SupportTicket {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages TicketMessage[]
 
   @@index([userId])
@@ -1390,6 +1399,8 @@ model Notification {
   channel   String    @default("IN_APP") // IN_APP, SMS, EMAIL
   readAt    DateTime?
   createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
@@ -1583,6 +1594,8 @@ model SaaSTenant {
   pinVaultItems          PinVault[]
   providerApiLogs        ProviderApiLog[]
   paymentChannelConfigs  PaymentChannelConfig[]
+  productPrices          ProductPrice[]
+  productTierPrices      ProductTierPrice[]
 
   @@index([status])
   @@map("saas_tenants")
