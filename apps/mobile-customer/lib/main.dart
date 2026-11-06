@@ -141,9 +141,9 @@ class HomeScreen extends StatelessWidget {
             ),
             child: const Row(
               children: [
-                Icon(Icons.circle, size: 8, color: Color(0xFF10B981)),
+                Icon(Icons.info_outline, size: 14, color: Color(0xFFFBBF24)),
                 SizedBox(width: 6),
-                Text('\$100.00', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF10B981))),
+                Text('نسخة تجريبية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFFFBBF24))),
               ],
             ),
           )
