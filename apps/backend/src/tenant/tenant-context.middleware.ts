@@ -32,19 +32,22 @@ export class TenantContextMiddleware implements NestMiddleware {
         .map(normalizeHost)
         .filter(Boolean),
     );
-    const isLocalHost =
-      !requestHost ||
-      requestHost === 'localhost' ||
-      requestHost === '127.0.0.1' ||
-      requestHost === '::1';
+    const isLocalDevelopmentHost =
+      process.env.NODE_ENV !== 'production' &&
+      (
+        !requestHost ||
+        requestHost === 'localhost' ||
+        requestHost === '127.0.0.1' ||
+        requestHost === '::1'
+      );
 
-    let tenantLookupHost = isLocalHost || platformHosts.has(requestHost)
+    let tenantLookupHost = isLocalDevelopmentHost || platformHosts.has(requestHost)
       ? ''
       : requestHost;
 
     // A central API hostname may receive requests from a tenant storefront.
     // Resolve the tenant using Origin, or an explicit mobile/API tenant-domain header.
-    if (!tenantLookupHost && !isLocalHost) {
+    if (!tenantLookupHost && !isLocalDevelopmentHost) {
       const header = (name: string): string => {
         if (typeof req.get === 'function') return req.get(name) || '';
         const value = req.headers?.[name];
