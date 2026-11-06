@@ -76,3 +76,14 @@ flutter run --dart-define=API_BASE_URL=https://api.example.com/api
 ```
 
 لا تضع مفاتيح أو أسرار الخادم داخل `--dart-define`؛ عنوان API فقط.
+
+## فحص Docker Desktop على Windows
+
+يوجد سكربت تشخيص للقراءة فقط في `scripts/check-docker-desktop.ps1`. من PowerShell في جذر المستودع شغّله:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\check-docker-desktop.ps1
+```
+
+يفحص وجود مجلد التثبيت وملف Docker Desktop وCLI وDocker Engine وCompose وحالة WSL. لا يقوم بتثبيت Docker أو تشغيله أو تغيير إعدادات Windows. أرسل مخرجاته عند الحاجة إلى تشخيص أدق.
