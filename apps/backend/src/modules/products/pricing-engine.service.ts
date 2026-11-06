@@ -336,7 +336,7 @@ export class PricingEngineService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (dbRules && dbRules.length > 0) {
+      if (dbRules.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
         return dbRules.map((r) => ({
           id: r.id,
           version: r.version,
