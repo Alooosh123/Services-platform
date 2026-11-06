@@ -55,14 +55,14 @@ class _CatalogPageState extends State<CatalogPage>{
 }
 class CheckoutPage extends StatefulWidget{final Map<String,dynamic> service,product;const CheckoutPage({super.key,required this.service,required this.product});@override State<CheckoutPage> createState()=>_CheckoutPageState();}
 class _CheckoutPageState extends State<CheckoutPage>{
- final values=<String,TextEditingController>{};final pin=TextEditingController();String currency='YER';bool busy=false;String? error;
+ final values=<String,TextEditingController>{};final pin=TextEditingController();final idempotencyKey=const Uuid().v4();String currency='YER';bool busy=false;String? error;
  List<Map<String,dynamic>> get prices=>rows(widget.product['prices']);List<Map<String,dynamic>> get schema=>rows(widget.service['fields']);
  @override void initState(){super.initState();if(prices.isNotEmpty)currency=prices.first['currency']?.toString()??'YER';for(final f in schema){final k=(f['fieldKey']??f['key']??'').toString();if(k.isNotEmpty)values[k]=TextEditingController();}}
  @override void dispose(){for(final x in values.values){x.dispose();}pin.dispose();super.dispose();}
  Future<void> buy()async{
- if(values.values.any((x)=>x.text.trim().isEmpty)){setState(()=>error='أكمل بيانات المستفيد.');return;}if(!RegExp(r'^[0-9]{6}$').hasMatch(pin.text)){setState(()=>error='أدخل رمز المعاملة من 6 أرقام.');return;}
+ if(schema.any((f)=>(f['required']??true)==true && (values[(f['fieldKey']??f['key']).toString()]?.text.trim().isEmpty??true))){setState(()=>error='أكمل بيانات المستفيد المطلوبة.');return;}if(!RegExp(r'^[0-9]{6}$').hasMatch(pin.text)){setState(()=>error='أدخل رمز المعاملة من 6 أرقام.');return;}
  setState(()=>{busy=true,error=null});try{
- await ApiClient.instance.post('/orders/checkout',headers:{'x-transaction-pin':pin.text},body:{'productId':widget.product['id'],'currency':currency,'paymentMethod':'WALLET','playerFields':{for(final e in values.entries)e.key:e.value.text.trim()},'idempotencyKey':const Uuid().v4()});
+ await ApiClient.instance.post('/orders/checkout',headers:{'x-transaction-pin':pin.text},body:{'productId':widget.product['id'],'currency':currency,'paymentMethod':'WALLET','playerFields':{for(final e in values.entries)e.key:e.value.text.trim()},'idempotencyKey':idempotencyKey});
  if(mounted){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم إرسال الطلب. تابع حالته في طلباتي.')));Navigator.pop(context);}
  }catch(e){if(mounted)setState(()=>error=e.toString());}finally{if(mounted)setState(()=>busy=false);}
  }
