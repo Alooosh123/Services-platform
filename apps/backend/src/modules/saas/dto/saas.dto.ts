@@ -5,6 +5,10 @@ import {
   IsOptional,
   IsString,
   Min,
+  Matches,
+  MaxLength,
+  IsFQDN,
+  MinLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
@@ -23,11 +27,17 @@ export class CreateTenantDto {
   @ApiProperty({ description: 'المعرف الفريد (Slug)', example: 'falcon-topup' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(48)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i, {
+    message: 'slug must contain only letters, numbers and single hyphen separators',
+  })
   slug: string;
 
   @ApiPropertyOptional({ description: 'النطاق المخصص أو الفرعي', example: 'topup.falcon.ye' })
   @IsString()
   @IsOptional()
+  @IsFQDN({ require_tld: true, allow_underscores: false })
+  @MaxLength(253)
   domain?: string;
 
   @ApiProperty({ description: 'اسم مالك المتجر / المسؤول', example: 'م. أحمد الحميري' })
@@ -145,6 +155,9 @@ export class MarkSaasInvoicePaidDto {
   @ApiProperty({ description: 'رقم مرجع الحوالة أو إيصال الدفع', example: 'TX-2026-000123' })
   @IsString()
   @IsNotEmpty()
+  @MinLength(4)
+  @MaxLength(128)
+  @Matches(/\\S/, { message: 'referenceNumber cannot contain only whitespace' })
   referenceNumber: string;
 }
 
