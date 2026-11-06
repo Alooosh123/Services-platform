@@ -1558,7 +1558,7 @@ model SaaSTenant {
   name           String
   slug           String           @unique
   domain         String?          @unique
-  customDomain   String?
+  customDomain   String?          @unique
   ownerName      String
   ownerEmail     String
   ownerPhone     String
