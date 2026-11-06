@@ -1,6 +1,10 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { UserRole } from '@digital-topup/shared';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import {
+  isPlatformAdminContext,
+  runWithTenantContext,
+} from '../../../tenant/tenant-context.store';
 
 describe('JwtAuthGuard tenant boundary', () => {
   const guard = new JwtAuthGuard();
@@ -48,5 +52,22 @@ describe('JwtAuthGuard tenant boundary', () => {
   it('allows platform Super Admin on the configured global platform host', () => {
     const user = { id: 'root', role: UserRole.SUPER_ADMIN, tenantId: null };
     expect(guard.handleRequest(null, user, null, contextFor(null))).toBe(user);
+  });
+
+  it('grants platform query bypass only after validating a global Super Admin JWT', () => {
+    const user = { id: 'root', role: UserRole.SUPER_ADMIN, tenantId: null };
+    runWithTenantContext(null, () => {
+      expect(isPlatformAdminContext()).toBe(false);
+      guard.handleRequest(null, user, null, contextFor(null));
+      expect(isPlatformAdminContext()).toBe(true);
+    });
+  });
+
+  it('does not grant platform query bypass to tenant administrators', () => {
+    const user = { id: 'owner-a', role: UserRole.OWNER, tenantId: 'tenant-a' };
+    runWithTenantContext('tenant-a', () => {
+      guard.handleRequest(null, user, null, contextFor('tenant-a'));
+      expect(isPlatformAdminContext()).toBe(false);
+    });
   });
 });
