@@ -89,7 +89,7 @@ describe('PrismaService tenant query scope', () => {
         where: { AND: [{ tenantId: 'tenant-alpha' }] },
       });
       expect(productParams.args.include.tierPrices).toEqual({
-        where: { tenantId: 'tenant-alpha', AND: [] },
+        where: { AND: [{ tenantId: 'tenant-alpha' }] },
       });
       expect(productParams.args.include.agentPrices).toEqual({
         where: { AND: [{ subAgent: { is: { tenantId: 'tenant-alpha' } } }] },
