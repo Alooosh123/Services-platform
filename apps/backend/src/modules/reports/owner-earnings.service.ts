@@ -6,7 +6,6 @@ import {
   ConflictException,
   Logger,
   ServiceUnavailableException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
