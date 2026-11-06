@@ -34,15 +34,20 @@ class ApiClient {
   }
   Future<dynamic> get(String path)=>_send('GET',path);
   Future<dynamic> post(String path,{Object? body,Map<String,String>? headers})=>_send('POST',path,body:body,headers:headers);
+  Future<void> _clearSession() async {
+    accessToken=null;refreshToken=null;
+    await storage.delete(key:'access_token');
+    await storage.delete(key:'refresh_token');
+  }
   Future<void> logout() async {
     try{if(authenticated)await post('/auth/logout');}catch(_){}
-    accessToken=null;refreshToken=null;await storage.delete(key:'access_token');await storage.delete(key:'refresh_token');
+    await _clearSession();
   }
   Future<bool> _refresh() async {
     if(refreshToken==null||refreshToken!.isEmpty)return false;
     try{
       final r=await client.post(Uri.parse(baseUrl+'/auth/refresh'),headers:{'Content-Type':'application/json'},body:jsonEncode({'refreshToken':refreshToken}));
-      if(r.statusCode!=200){await logout();return false;}
+      if(r.statusCode!=200){await _clearSession();return false;}
       final d=jsonDecode(r.body);await save(d is Map&&d['tokens'] is Map?d['tokens'] as Map:d as Map);return true;
     }catch(_){return false;}
   }
