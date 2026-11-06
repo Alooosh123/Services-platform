@@ -118,6 +118,7 @@ export class SaasController {
   }
 
   @Post('invoices/:id/mark-paid')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({
     summary: 'Confirm a SaaS invoice payment after finance verification',
     description: 'Requires a verified transfer reference. This action is audited and activates the linked subscription.',
@@ -127,7 +128,7 @@ export class SaasController {
     @Body() dto: MarkSaasInvoicePaidDto,
     @Req() request: any,
   ) {
-    return this.saasService.markInvoicePaid(id, dto, request.user.id);
+    return this.saasService.markInvoicePaid(id, dto, request.user.id, request.user.role);
   }
 
   @Get('kpis')
