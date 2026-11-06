@@ -369,7 +369,8 @@ export class ReconciliationService {
         orderBy: { statementDate: 'desc' },
         include: { items: true },
       });
-      return dbBatches.map((b) => ({
+      if (dbBatches.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        return dbBatches.map((b) => ({
           id: b.id,
           batchNumber: b.batchNumber,
           channelCode: b.channelCode as PaymentChannelCode,
@@ -400,6 +401,7 @@ export class ReconciliationService {
             createdAt: it.createdAt,
           })),
         }));
+      }
     } catch (error: any) {
       this.failClosedForTenant(error);
       this.logger.warn(`Local unscoped development reconciliation listing fallback: ${error?.message || error}`);
