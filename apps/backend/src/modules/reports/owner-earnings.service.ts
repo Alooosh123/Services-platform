@@ -140,10 +140,10 @@ export class OwnerEarningsService {
    * 1. Register a Payout Beneficiary with Four-Eyes principle
    */
   async createBeneficiary(
-    this.assertPlatformOwnerContext();
     userId: string,
     dto: CreatePayoutBeneficiaryDto,
   ): Promise<InMemoryBeneficiary> {
+    this.assertPlatformOwnerContext();
     if (!dto.beneficiaryName || !dto.accountNumber) {
       throw new BadRequestException('اسم المستفيد ورقم الحساب مطلوبان');
     }
@@ -259,10 +259,10 @@ export class OwnerEarningsService {
    * 4. Atomic Hold in lockedEarnings
    */
   async requestOwnerPayout(
-    this.assertPlatformOwnerContext();
     userId: string,
     dto: OwnerPayoutRequestDto,
   ): Promise<{ success: boolean; payout: InMemoryOwnerPayout; message: string }> {
+    this.assertPlatformOwnerContext();
     // A. Idempotency Check (AT-18)
     if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
       throw new BadRequestException('مفتاح عدم التكرار (idempotencyKey) مطلوب إجبارياً');
@@ -359,11 +359,11 @@ export class OwnerEarningsService {
    * 4. Approve Owner Payout by Finance (Four-Eyes Principle - AT-17)
    */
   async approveOwnerPayout(
-    this.assertPlatformOwnerContext();
     payoutId: string,
     dto: ApproveOwnerPayoutDto,
     financeUserId: string,
   ): Promise<InMemoryOwnerPayout> {
+    this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
       throw new NotFoundException('طلب السحب غير موجود');
@@ -399,11 +399,11 @@ export class OwnerEarningsService {
    * 5. Confirm External Wire / Transfer & Post Balanced Ledger Entry (AT-17)
    */
   async confirmExternalTransfer(
-    this.assertPlatformOwnerContext();
     payoutId: string,
     externalRef: string,
     financeUserId: string,
   ): Promise<InMemoryOwnerPayout> {
+    this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
       throw new NotFoundException('طلب السحب غير موجود');
