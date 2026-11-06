@@ -269,10 +269,15 @@ model Tier {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  users             User[]
-  ledgerAccounts    LedgerAccount[]
-  ledgerTransactions LedgerTransaction[]
-  ledgerEntries     LedgerEntry[]
+  users               User[]
+  ledgerAccounts      LedgerAccount[]
+  ledgerTransactions  LedgerTransaction[]
+  ledgerEntries       LedgerEntry[]
+  reconciliationBatches ReconciliationBatch[]
+  supplierAccounts    SupplierAccount[]
+  priceRuleVersions   PriceRuleVersion[]
+  dailyCloseReports   DailyCloseReport[]
+  ownerEarningsWallets OwnerEarningsWallet[]
   productPrices ProductTierPrice[]
 
   @@index([isActive, displayOrder])
@@ -1091,6 +1096,7 @@ model PayoutRequest {
 
 model ReconciliationBatch {
   id                    String              @id @default(uuid())
+  tenantId              String?
   batchNumber           String              @unique // E.g. "REC-20261010-001"
   channelCode           PaymentChannelCode?
   statementDate         DateTime
@@ -1104,6 +1110,8 @@ model ReconciliationBatch {
   notes                 String?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
+
+  tenant SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   items ReconciliationItem[]
 
@@ -1134,6 +1142,7 @@ model ReconciliationItem {
 
 model SupplierAccount {
   id               String              @id @default(uuid())
+  tenantId         String?
   providerId       String
   currency         CurrencyCode        @default(USD)
   balance          Decimal             @default(0.0000) @db.Decimal(18, 4)
@@ -1143,10 +1152,11 @@ model SupplierAccount {
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
+  tenant       SaaSTenant?           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   provider     Provider              @relation(fields: [providerId], references: [id], onDelete: Cascade)
   transactions SupplierTransaction[]
 
-  @@unique([providerId, currency])
+  @@unique([tenantId, providerId, currency])
   @@map("supplier_accounts")
 }
 
@@ -1195,6 +1205,7 @@ model ServiceRequest {
 
 model PriceRuleVersion {
   id              String         @id @default(uuid())
+  tenantId        String?
   version         Int            @default(1)
   scope           PriceRuleScope
   targetId        String?
@@ -1211,9 +1222,11 @@ model PriceRuleVersion {
   createdByUserId String?
   createdAt       DateTime       @default(now())
 
+  tenant        SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdByUser User? @relation(fields: [createdByUserId], references: [id])
 
   @@index([scope, targetId])
+  @@index([tenantId, scope, targetId])
   @@map("price_rule_versions")
 }
 
@@ -1222,6 +1235,7 @@ model PriceRuleVersion {
 // ----------------------------------------------------
 model DailyCloseReport {
   id                   String   @id @default(uuid())
+  tenantId             String?
   closeDate            String   @unique // Format: YYYY-MM-DD
   status               String   @default("CLOSED") // OPEN, PRELIMINARY, CLOSED, ADJUSTED
   totalOrdersCount     Int      @default(0)
@@ -1235,8 +1249,10 @@ model DailyCloseReport {
   closedAt             DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
+  tenant      SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   adjustments DailyCloseAdjustment[]
 
+  @@unique([tenantId, closeDate])
   @@map("daily_close_reports")
 }
 
@@ -1301,6 +1317,7 @@ model OwnerPayoutTransaction {
 
 model OwnerEarningsWallet {
   id                String       @id @default(uuid())
+  tenantId          String?
   userId            String
   currency          CurrencyCode
   realizedEarnings  Decimal      @default(0.0000) @db.Decimal(18, 4)
@@ -1308,7 +1325,9 @@ model OwnerEarningsWallet {
   withdrawnEarnings Decimal      @default(0.0000) @db.Decimal(18, 4)
   updatedAt         DateTime     @updatedAt
 
-  @@unique([userId, currency])
+  tenant SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, currency])
   @@map("owner_earnings_wallets")
 }
 
