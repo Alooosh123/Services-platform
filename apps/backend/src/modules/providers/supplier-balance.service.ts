@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  ConflictException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -12,6 +14,7 @@ import {
   SupplierDepositDto,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 
 export interface InMemorySupplierAccount {
   id: string;
@@ -28,7 +31,7 @@ export interface InMemorySupplierAccount {
 export interface InMemorySupplierTransaction {
   id: string;
   providerCode: string;
-  type: string; // PREPAID_TOPUP, ORDER_FULFILLMENT, REFUND, ADJUSTMENT
+  type: string;
   currency: CurrencyCode;
   amount: number;
   balanceBefore: number;
@@ -49,15 +52,17 @@ export class SupplierBalanceService {
     private prisma: PrismaService,
     private ledgerService: LedgerService,
   ) {
-    this.seedDefaultAccounts();
+    // Seed mock balances for local demo only. Tenant requests never share this store.
+    if (process.env.NODE_ENV !== 'production') {
+      this.seedDefaultAccounts();
+    }
   }
 
   private seedDefaultAccounts() {
-    // Initial balances for standard providers
-    this.seedAccount('MOCK', 'prov-mock', CurrencyCode.USD, 10000.0, 5000.0);
-    this.seedAccount('MANUAL', 'prov-manual', CurrencyCode.USD, 999999.0, 0.0);
-    this.seedAccount('EXTERNAL_API', 'prov-ext', CurrencyCode.USD, 1450.5, 2000.0);
-    this.seedAccount('MOCK', 'prov-mock-yer', CurrencyCode.YER, 5000000.0, 1000000.0);
+    this.seedAccount('MOCK', 'prov-mock', CurrencyCode.USD, 10000, 5000);
+    this.seedAccount('MANUAL', 'prov-manual', CurrencyCode.USD, 999999, 0);
+    this.seedAccount('EXTERNAL_API', 'prov-ext', CurrencyCode.USD, 1450.5, 2000);
+    this.seedAccount('MOCK', 'prov-mock-yer', CurrencyCode.YER, 5000000, 1000000);
   }
 
   private seedAccount(
@@ -84,190 +89,193 @@ export class SupplierBalanceService {
     return `${providerCode.toUpperCase()}_${currency}`;
   }
 
-  /**
-   * Get all supplier accounts and their current commercial balances
-   */
+  private assertDatabaseForFinancialOperation(): void {
+    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      throw new ServiceUnavailableException(
+        'Supplier commercial balances require an available tenant-scoped database.',
+      );
+    }
+  }
+
   async getAllSupplierAccounts(): Promise<InMemorySupplierAccount[]> {
     try {
       const dbAccounts = await this.prisma.supplierAccount.findMany({
         include: { provider: true },
+        orderBy: [{ provider: { code: 'asc' } }, { currency: 'asc' }],
       });
-      if (dbAccounts && dbAccounts.length > 0) {
-        return dbAccounts.map((a) => ({
-          id: a.id,
-          providerId: a.providerId,
-          providerCode: a.provider.code,
-          currency: a.currency as CurrencyCode,
-          balance: Number(a.balance),
-          creditLimit: Number(a.creditLimit),
-          accountType: a.accountType as SupplierAccountType,
-          lastReconciledAt: a.lastReconciledAt,
-          updatedAt: a.updatedAt,
-        }));
+      return dbAccounts.map((account) => ({
+        id: account.id,
+        providerId: account.providerId,
+        providerCode: account.provider.code,
+        currency: account.currency as CurrencyCode,
+        balance: Number(account.balance),
+        creditLimit: Number(account.creditLimit),
+        accountType: account.accountType as SupplierAccountType,
+        lastReconciledAt: account.lastReconciledAt,
+        updatedAt: account.updatedAt,
+      }));
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        this.logger.error(`Supplier account listing failed: ${error?.message || error}`);
+        this.assertDatabaseForFinancialOperation();
       }
-    } catch (err: any) {
-      this.logger.warn(`Prisma offline during getAllSupplierAccounts (${err?.message})`);
+      this.logger.warn(`Local development supplier accounts fallback: ${error?.message || error}`);
+      return Array.from(this.memoryAccounts.values());
     }
-
-    return Array.from(this.memoryAccounts.values());
   }
 
-  /**
-   * Get commercial balance for a specific provider and currency
-   */
   async getSupplierBalance(
     providerCode: string,
     currency: CurrencyCode,
   ): Promise<{ balance: number; creditLimit: number; available: number }> {
-    const key = this.getAccountKey(providerCode, currency);
-
+    const tenantId = getCurrentTenantId();
     try {
       const provider = await this.prisma.provider.findUnique({
         where: { code: providerCode.toUpperCase() },
-        include: { supplierAccounts: { where: { currency } } },
       });
+      if (!provider) throw new NotFoundException(`Provider ${providerCode} was not found`);
 
-      if (provider) {
-        const acc = provider.supplierAccounts[0];
-        if (acc) {
-          const bal = Number(acc.balance);
-          const credit = Number(acc.creditLimit);
-          return { balance: bal, creditLimit: credit, available: bal + credit };
-        }
-        // Fallback to legacy provider.balance if currency matches
-        if (provider.currency === currency) {
-          const bal = Number(provider.balance);
-          return { balance: bal, creditLimit: 0, available: bal };
-        }
+      const account = await this.prisma.supplierAccount.findFirst({
+        where: { providerId: provider.id, currency },
+      });
+      if (account) {
+        const balance = Number(account.balance);
+        const creditLimit = Number(account.creditLimit);
+        return { balance, creditLimit, available: balance + creditLimit };
       }
-    } catch (err: any) {
-      this.logger.warn(`Prisma offline during getSupplierBalance (${err?.message})`);
-    }
 
-    const mem = this.memoryAccounts.get(key);
-    if (mem) {
-      return {
-        balance: mem.balance,
-        creditLimit: mem.creditLimit,
-        available: mem.balance + mem.creditLimit,
-      };
-    }
+      // Legacy provider.balance is platform-wide and must never be used by a tenant.
+      if (!tenantId && provider.currency === currency) {
+        const balance = Number(provider.balance);
+        return { balance, creditLimit: 0, available: balance };
+      }
 
-    return { balance: 0, creditLimit: 0, available: 0 };
+      if (tenantId) return { balance: 0, creditLimit: 0, available: 0 };
+
+      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
+      if (memory) {
+        return {
+          balance: memory.balance,
+          creditLimit: memory.creditLimit,
+          available: memory.balance + memory.creditLimit,
+        };
+      }
+      return { balance: 0, creditLimit: 0, available: 0 };
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'production' || tenantId) {
+        this.logger.error(`Supplier balance read failed: ${error?.message || error}`);
+        throw error instanceof NotFoundException
+          ? error
+          : new ServiceUnavailableException('Supplier commercial balance is unavailable.');
+      }
+
+      this.logger.warn(`Local development supplier balance fallback: ${error?.message || error}`);
+      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
+      return memory
+        ? {
+            balance: memory.balance,
+            creditLimit: memory.creditLimit,
+            available: memory.balance + memory.creditLimit,
+          }
+        : { balance: 0, creditLimit: 0, available: 0 };
+    }
   }
 
-  /**
-   * P05 Fulfillment Gating:
-   * Checks whether the provider's commercial balance + credit limit is sufficient to cover order cost price.
-   * If insufficient, blocks automatic fulfillment and alerts for manual review / funding.
-   */
   async checkFulfillmentGating(
     providerCode: string,
     currency: CurrencyCode,
     costPrice: number,
   ): Promise<{ allowed: boolean; availableBalance: number; requiredAmount: number; message?: string }> {
-    // If cost price is 0 or negative, allow
-    if (costPrice <= 0) {
+    if (!Number.isFinite(costPrice) || costPrice < 0) {
+      return {
+        allowed: false,
+        availableBalance: 0,
+        requiredAmount: costPrice,
+        message: 'Invalid supplier cost.',
+      };
+    }
+    if (costPrice === 0) {
       return { allowed: true, availableBalance: 999999, requiredAmount: 0 };
     }
 
     const { available, balance } = await this.getSupplierBalance(providerCode, currency);
-
     if (available < costPrice) {
       this.logger.warn(
-        `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode}. Available: ${available} ${currency}, Required cost: ${costPrice} ${currency}`,
+        `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode} in tenant ${getCurrentTenantId() || 'platform'}.`,
       );
       return {
         allowed: false,
         availableBalance: balance,
         requiredAmount: costPrice,
-        message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ لتغطية تكلفة الشحن. المتاح: ${available} ${currency}، المطلوب: ${costPrice} ${currency}.`,
+        message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ. المتاح: ${available} ${currency}، المطلوب: ${costPrice} ${currency}.`,
       };
     }
-
     return { allowed: true, availableBalance: balance, requiredAmount: costPrice };
   }
 
-  /**
-   * P05 / AT-16: Cash Movement - Fund Supplier Commercial Prepaid Account
-   * Posts strict balanced double-entry ledger transaction:
-   * Debit: Supplier Prepaid Asset Account (e.g. 1030-SUPPLIER-PREPAID-USD)
-   * Credit: Bank / Cash Channel Account (Asset)
-   * This is cash movement between platform assets, NOT an operational expense!
-   */
   async fundSupplierBalance(
     staffUserId: string,
     dto: SupplierDepositDto,
   ): Promise<{ success: boolean; newBalance: number; ledgerTxId: string; transaction: any }> {
-    if (dto.amount <= 0) {
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
       throw new BadRequestException('مبلغ التغذية يجب أن يكون أكبر من صفر');
     }
 
     const providerCode = dto.providerId.toUpperCase();
-    const key = this.getAccountKey(providerCode, dto.currency);
-
-    // 1. Post Double-Entry Ledger Cash Movement Transaction
-    let ledgerResult: any;
-    try {
-      ledgerResult = await this.ledgerService.recordSupplierFunding({
-        providerCode,
-        currency: dto.currency,
-        amount: dto.amount,
-        referenceNumber: dto.referenceNumber,
-        performedByUserId: staffUserId,
-        notes: dto.notes || `تغذية الرصيد التجاري للمزود ${providerCode}`,
-      });
-    } catch (err: any) {
-      this.logger.warn(`Ledger database offline during recordSupplierFunding: generating simulated record (${err?.message})`);
-      ledgerResult = {
-        transaction: {
-          id: `LTX-SUP-${Date.now()}`,
-          txNumber: `LTX-SUP-${dto.referenceNumber}`,
-          status: 'POSTED',
-        },
-      };
-    }
-
-    const ledgerTxId = ledgerResult?.transaction?.id || `LTX-SUP-${Date.now()}`;
-
-    // 2. Update DB balance or in-memory fallback
-    let balanceBefore = 0;
-    let balanceAfter = dto.amount;
+    const tenantId = getCurrentTenantId();
 
     try {
-      const provider = await this.prisma.provider.findFirst({
-        where: { OR: [{ id: dto.providerId }, { code: providerCode }] },
-      });
-
-      if (provider) {
-        const currentBal = Number(provider.balance);
-        balanceBefore = currentBal;
-        balanceAfter = currentBal + dto.amount;
-
-        await this.prisma.provider.update({
-          where: { id: provider.id },
-          data: { balance: new Prisma.Decimal(balanceAfter) },
+      const result = await this.prisma.$transaction(async (tx) => {
+        const provider = await tx.provider.findFirst({
+          where: { OR: [{ id: dto.providerId }, { code: providerCode }] },
         });
+        if (!provider) throw new NotFoundException(`Provider ${dto.providerId} was not found`);
 
-        // Upsert SupplierAccount
-        const supAccount = await this.prisma.supplierAccount.upsert({
-          where: { providerId_currency: { providerId: provider.id, currency: dto.currency } },
-          create: {
-            providerId: provider.id,
-            currency: dto.currency,
-            balance: new Prisma.Decimal(balanceAfter),
-            creditLimit: new Prisma.Decimal(0),
-            accountType: SupplierAccountType.PREPAID,
-          },
-          update: {
-            balance: new Prisma.Decimal(balanceAfter),
-          },
+        const existing = await tx.supplierAccount.findFirst({
+          where: { providerId: provider.id, currency: dto.currency },
         });
+        const balanceBefore = existing ? Number(existing.balance) : 0;
+        const balanceAfter = balanceBefore + dto.amount;
 
-        // Insert SupplierTransaction
-        await this.prisma.supplierTransaction.create({
+        const account = existing
+          ? await tx.supplierAccount.update({
+              where: { id: existing.id },
+              data: { balance: new Prisma.Decimal(balanceAfter) },
+            })
+          : await tx.supplierAccount.create({
+              data: {
+                providerId: provider.id,
+                currency: dto.currency,
+                balance: new Prisma.Decimal(balanceAfter),
+                creditLimit: new Prisma.Decimal(0),
+                accountType: SupplierAccountType.PREPAID,
+              },
+            });
+
+        // Legacy platform account balance is retained only for platform-scope operations.
+        if (!tenantId) {
+          await tx.provider.update({
+            where: { id: provider.id },
+            data: { balance: new Prisma.Decimal(balanceAfter) },
+          });
+        }
+
+        const ledgerResult = await this.ledgerService.recordSupplierFunding({
+          providerCode,
+          currency: dto.currency,
+          amount: dto.amount,
+          referenceNumber: dto.referenceNumber,
+          channelCode: undefined,
+          performedByUserId: staffUserId,
+          notes: dto.notes || `تغذية الرصيد التجاري للمزود ${providerCode}`,
+        }, tx);
+
+        const ledgerTxId = ledgerResult?.transaction?.id;
+        if (!ledgerTxId) throw new ConflictException('Supplier funding ledger entry was not created');
+
+        const transaction = await tx.supplierTransaction.create({
           data: {
-            accountId: supAccount.id,
+            accountId: account.id,
             type: 'PREPAID_TOPUP',
             currency: dto.currency,
             amount: new Prisma.Decimal(dto.amount),
@@ -278,148 +286,196 @@ export class SupplierBalanceService {
             notes: dto.notes || `تغذية رصيد تجاري عبر السند ${dto.referenceNumber}`,
           },
         });
+
+        return { account, transaction, ledgerTxId, balanceAfter };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+      return {
+        success: true,
+        newBalance: result.balanceAfter,
+        ledgerTxId: result.ledgerTxId,
+        transaction: result.transaction,
+      };
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'production' || tenantId) {
+        this.logger.error(`Supplier funding failed: ${error?.message || error}`);
+        throw error;
       }
-    } catch (dbErr: any) {
-      this.logger.warn(`Prisma offline during fundSupplierBalance DB update (${dbErr?.message})`);
+      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
+        throw error;
+      }
+
+      // Local unscoped mock-only development fallback.
+      const key = this.getAccountKey(providerCode, dto.currency);
+      const memory = this.memoryAccounts.get(key) || {
+        id: `sa-${key.toLowerCase()}`,
+        providerId: dto.providerId,
+        providerCode,
+        currency: dto.currency,
+        balance: 0,
+        creditLimit: 0,
+        accountType: SupplierAccountType.PREPAID,
+        updatedAt: new Date(),
+      };
+      const balanceBefore = memory.balance;
+      memory.balance += dto.amount;
+      memory.updatedAt = new Date();
+      this.memoryAccounts.set(key, memory);
+      const transaction: InMemorySupplierTransaction = {
+        id: `stx-${Date.now()}`,
+        providerCode,
+        type: 'PREPAID_TOPUP',
+        currency: dto.currency,
+        amount: dto.amount,
+        balanceBefore,
+        balanceAfter: memory.balance,
+        referenceId: dto.referenceNumber,
+        notes: dto.notes || `Local demo funding ${dto.referenceNumber}`,
+        createdAt: new Date(),
+      };
+      this.memoryTransactions.unshift(transaction);
+      return {
+        success: true,
+        newBalance: memory.balance,
+        ledgerTxId: 'LOCAL-DEMO-ONLY',
+        transaction,
+      };
     }
-
-    // Update in-memory state
-    const mem = this.memoryAccounts.get(key) || {
-      id: `sa-${key.toLowerCase()}`,
-      providerId: dto.providerId,
-      providerCode,
-      currency: dto.currency,
-      balance: 0,
-      creditLimit: 0,
-      accountType: SupplierAccountType.PREPAID,
-      updatedAt: new Date(),
-    };
-
-    balanceBefore = mem.balance;
-    mem.balance += dto.amount;
-    balanceAfter = mem.balance;
-    mem.updatedAt = new Date();
-    this.memoryAccounts.set(key, mem);
-
-    const memTx: InMemorySupplierTransaction = {
-      id: `stx-${Date.now()}`,
-      providerCode,
-      type: 'PREPAID_TOPUP',
-      currency: dto.currency,
-      amount: dto.amount,
-      balanceBefore,
-      balanceAfter,
-      referenceId: dto.referenceNumber,
-      ledgerTxId,
-      notes: dto.notes || `تغذية رصيد تجاري عبر السند ${dto.referenceNumber}`,
-      createdAt: new Date(),
-    };
-    this.memoryTransactions.unshift(memTx);
-
-    this.logger.log(
-      `[SupplierFundingSuccess] Provider ${providerCode} funded with ${dto.amount} ${dto.currency}. New balance: ${balanceAfter}. LedgerTx: ${ledgerTxId}`,
-    );
-
-    return {
-      success: true,
-      newBalance: balanceAfter,
-      ledgerTxId,
-      transaction: memTx,
-    };
   }
 
-  /**
-   * P05 / AT-16: Deducts fulfillment cost from provider commercial balance upon order completion.
-   */
   async deductOrderFulfillmentCost(
     orderId: string,
     providerCode: string,
     currency: CurrencyCode,
     costPrice: number,
   ): Promise<{ success: boolean; newBalance: number }> {
-    if (costPrice <= 0) {
-      return { success: true, newBalance: 0 };
+    if (!Number.isFinite(costPrice) || costPrice < 0) {
+      throw new BadRequestException('Supplier fulfillment cost is invalid.');
     }
+    if (costPrice === 0) return { success: true, newBalance: 0 };
 
-    const key = this.getAccountKey(providerCode, currency);
-    let balanceBefore = 0;
-    let balanceAfter = 0;
-
+    const tenantId = getCurrentTenantId();
     try {
-      const provider = await this.prisma.provider.findUnique({
-        where: { code: providerCode.toUpperCase() },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        const provider = await tx.provider.findUnique({
+          where: { code: providerCode.toUpperCase() },
+        });
+        if (!provider) throw new NotFoundException(`Provider ${providerCode} was not found`);
 
-      if (provider) {
-        balanceBefore = Number(provider.balance);
-        balanceAfter = balanceBefore - costPrice;
-
-        await this.prisma.provider.update({
-          where: { id: provider.id },
-          data: { balance: new Prisma.Decimal(balanceAfter) },
+        const account = await tx.supplierAccount.findFirst({
+          where: { providerId: provider.id, currency },
         });
 
-        const supAccount = await this.prisma.supplierAccount.findUnique({
-          where: { providerId_currency: { providerId: provider.id, currency } },
-        });
-
-        if (supAccount) {
-          await this.prisma.supplierAccount.update({
-            where: { id: supAccount.id },
+        if (!account) {
+          if (tenantId) {
+            throw new NotFoundException('Tenant supplier account has not been funded.');
+          }
+          const balanceBefore = Number(provider.balance);
+          const balanceAfter = balanceBefore - costPrice;
+          if (balanceAfter < 0) throw new BadRequestException('Supplier balance is insufficient.');
+          await tx.provider.update({
+            where: { id: provider.id },
             data: { balance: new Prisma.Decimal(balanceAfter) },
           });
-
-          await this.prisma.supplierTransaction.create({
-            data: {
-              accountId: supAccount.id,
-              type: 'ORDER_FULFILLMENT',
-              currency,
-              amount: new Prisma.Decimal(costPrice),
-              balanceBefore: new Prisma.Decimal(balanceBefore),
-              balanceAfter: new Prisma.Decimal(balanceAfter),
-              referenceId: orderId,
-              notes: `خصم تكلفة تنفيذ الطلب ${orderId}`,
-            },
-          });
+          return { success: true, newBalance: balanceAfter };
         }
+
+        const balanceBefore = Number(account.balance);
+        const balanceAfter = balanceBefore - costPrice;
+        if (balanceAfter + Number(account.creditLimit) < 0) {
+          throw new BadRequestException('Supplier commercial balance and credit limit are insufficient.');
+        }
+
+        const update = await tx.supplierAccount.updateMany({
+          where: {
+            id: account.id,
+            balance: { gte: new Prisma.Decimal(costPrice) },
+          },
+          data: { balance: { decrement: new Prisma.Decimal(costPrice) } },
+        });
+        if (update.count !== 1) {
+          throw new ConflictException('Supplier balance changed concurrently. Retry the fulfillment.');
+        }
+
+        await tx.supplierTransaction.create({
+          data: {
+            accountId: account.id,
+            type: 'ORDER_FULFILLMENT',
+            currency,
+            amount: new Prisma.Decimal(costPrice),
+            balanceBefore: new Prisma.Decimal(balanceBefore),
+            balanceAfter: new Prisma.Decimal(balanceAfter),
+            referenceId: orderId,
+            notes: `خصم تكلفة تنفيذ الطلب ${orderId}`,
+          },
+        });
+        return { success: true, newBalance: balanceAfter };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'production' || tenantId) {
+        this.logger.error(`Supplier fulfillment deduction failed: ${error?.message || error}`);
+        throw error;
       }
-    } catch (err: any) {
-      this.logger.warn(`Prisma offline during deductOrderFulfillmentCost (${err?.message})`);
-    }
-
-    // Update in-memory
-    const mem = this.memoryAccounts.get(key);
-    if (mem) {
-      balanceBefore = mem.balance;
-      mem.balance -= costPrice;
-      balanceAfter = mem.balance;
-      mem.updatedAt = new Date();
-
-      this.memoryTransactions.unshift({
+      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
+        throw error;
+      }
+      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
+      if (!memory) return { success: true, newBalance: 0 };
+      if (memory.balance + memory.creditLimit < costPrice) {
+        throw new BadRequestException('Local mock supplier balance is insufficient.');
+      }
+      const balanceBefore = memory.balance;
+      memory.balance -= costPrice;
+      memory.updatedAt = new Date();
+      const transaction: InMemorySupplierTransaction = {
         id: `stx-${Date.now()}`,
         providerCode: providerCode.toUpperCase(),
         type: 'ORDER_FULFILLMENT',
         currency,
         amount: costPrice,
         balanceBefore,
-        balanceAfter,
+        balanceAfter: memory.balance,
         referenceId: orderId,
-        notes: `خصم تكلفة تنفيذ الطلب ${orderId}`,
+        notes: `Local mock fulfillment cost ${orderId}`,
         createdAt: new Date(),
-      });
+      };
+      this.memoryTransactions.unshift(transaction);
+      return { success: true, newBalance: memory.balance };
     }
-
-    return { success: true, newBalance: balanceAfter };
   }
 
-  /**
-   * Get transaction history for supplier commercial balances
-   */
   async getSupplierTransactions(providerCode?: string): Promise<InMemorySupplierTransaction[]> {
-    if (providerCode) {
-      const p = providerCode.toUpperCase();
-      return this.memoryTransactions.filter((t) => t.providerCode === p);
+    try {
+      const where = providerCode
+        ? { account: { provider: { code: providerCode.toUpperCase() } } }
+        : undefined;
+      const rows = await this.prisma.supplierTransaction.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { account: { include: { provider: true } } },
+        take: 500,
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        providerCode: row.account.provider.code,
+        type: row.type,
+        currency: row.currency as CurrencyCode,
+        amount: Number(row.amount),
+        balanceBefore: Number(row.balanceBefore),
+        balanceAfter: Number(row.balanceAfter),
+        referenceId: row.referenceId,
+        ledgerTxId: row.ledgerTxId,
+        notes: row.notes,
+        createdAt: row.createdAt,
+      }));
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        this.logger.error(`Supplier transaction listing failed: ${error?.message || error}`);
+        this.assertDatabaseForFinancialOperation();
+      }
+      return providerCode
+        ? this.memoryTransactions.filter((row) => row.providerCode === providerCode.toUpperCase())
+        : this.memoryTransactions;
     }
-    return this.memoryTransactions;
   }
 }
