@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { NextFunction, Request, Response } from 'express';
 import { PrismaService } from '../database/prisma.service';
-import { runWithTenantContext } from './tenant-context.store';
+import { runWithTenantContext, runWithTenantResolverContext } from './tenant-context.store';
 
 export interface TenantAwareRequest extends Request {
   tenantId?: string | null;
@@ -77,18 +77,20 @@ export class TenantContextMiddleware implements NestMiddleware {
     }
 
     try {
-      const tenant = await this.prisma.saaSTenant.findFirst({
-        where: {
-          status: 'ACTIVE',
-          OR: [{ domain: tenantLookupHost }, { customDomain: tenantLookupHost }],
-        },
-        select: {
-          id: true,
-          slug: true,
-          domain: true,
-          customDomain: true,
-        },
-      });
+      const tenant = await runWithTenantResolverContext(() =>
+        this.prisma.saaSTenant.findFirst({
+          where: {
+            status: 'ACTIVE',
+            OR: [{ domain: tenantLookupHost }, { customDomain: tenantLookupHost }],
+          },
+          select: {
+            id: true,
+            slug: true,
+            domain: true,
+            customDomain: true,
+          },
+        }),
+      );
 
       // Unknown hostnames must never silently become the platform/global tenant.
       // The sentinel scopes all tenant-aware queries to an empty context and causes
