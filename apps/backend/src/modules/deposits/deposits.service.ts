@@ -191,6 +191,7 @@ export class DepositsService {
     try {
       const dbConfigs = await this.prisma.paymentChannelConfig.findMany({
         where: {
+          tenantId: getCurrentTenantId() || null,
           isActive: true,
           verificationStatus: ChannelVerificationStatus.VERIFIED,
           mode: { notIn: [PaymentChannelMode.DISABLED, PaymentChannelMode.BLOCKED_EXTERNAL] },
