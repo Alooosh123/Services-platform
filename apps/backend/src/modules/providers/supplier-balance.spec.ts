@@ -32,7 +32,12 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
       findUnique: jest.fn(),
       create: jest.fn().mockResolvedValue(supplierAccountRecord),
       update: jest.fn().mockImplementation(async ({ data }: any) => Object.assign(supplierAccountRecord, data)),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      updateMany: jest.fn().mockImplementation(async ({ data }: any) => {
+        if (data?.balance?.decrement !== undefined) {
+          supplierAccountRecord.balance = new Prisma.Decimal(supplierAccountRecord.balance).minus(data.balance.decrement);
+        }
+        return { count: 1 };
+      }),
     },
     supplierTransaction: {
       create: jest.fn().mockResolvedValue({ id: 'supplier-tx-1' }),
