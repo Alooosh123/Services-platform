@@ -159,9 +159,9 @@ class HomeScreen extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 16),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFF78350F).withOpacity(0.22),
+                color: const Color(0xFF78350F).withValues(alpha: 0.22),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.55)),
+                border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.55)),
               ),
               child: const Text(
                 'نسخة واجهة تجريبية غير مرتبطة بالخادم. الأسعار والبيانات المعروضة أمثلة فقط، ولا يمكن تنفيذ الشحن أو الخصم حالياً.',
@@ -179,7 +179,7 @@ class HomeScreen extends StatelessWidget {
                   end: Alignment.bottomLeft,
                 ),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.3)),
+                border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
               ),
               child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -242,7 +242,7 @@ class HomeScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         CircleAvatar(
-                          backgroundColor: (game['color'] as Color).withOpacity(0.15),
+                          backgroundColor: (game['color'] as Color).withValues(alpha: 0.15),
                           child: Icon(game['icon'] as IconData, color: game['color'] as Color),
                         ),
                         Column(
@@ -378,7 +378,7 @@ class _DynamicTopupScreenState extends State<DynamicTopupScreen> {
                       borderRadius: BorderRadius.circular(12),
                       side: BorderSide(color: isSelected ? const Color(0xFF6366F1) : Colors.white10),
                     ),
-                    tileColor: isSelected ? const Color(0xFF6366F1).withOpacity(0.15) : const Color(0xFF111827),
+                    tileColor: isSelected ? const Color(0xFF6366F1).withValues(alpha: 0.15) : const Color(0xFF111827),
                     leading: Icon(
                       isSelected ? Icons.check_circle : Icons.circle_outlined,
                       color: isSelected ? const Color(0xFF6366F1) : Colors.grey,
