@@ -199,7 +199,7 @@ describe('PrismaService tenant query scope', () => {
     });
   });
 
-  it('does not apply tenant scoping to SaaS platform management records', async () => {
+  it('restricts tenant users to their own SaaS tenant metadata', async () => {
     await runWithTenantContext('tenant-alpha', async () => {
       const params: any = {
         model: 'SaaSTenant',
@@ -207,7 +207,10 @@ describe('PrismaService tenant query scope', () => {
         args: { where: { status: 'ACTIVE' } },
       };
       await middleware(params, async (value) => value);
-      expect(params.args.where).toEqual({ status: 'ACTIVE' });
+      expect(params.args.where).toEqual({
+        status: 'ACTIVE',
+        AND: [{ id: 'tenant-alpha' }],
+      });
     });
   });
 });
