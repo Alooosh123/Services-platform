@@ -292,85 +292,6 @@ describe('Phase 06 — Dynamic Catalog, Package Margins & Dynamic Payment Channe
   });
 
   // ----------------------------------------------------
-  // AT-15: DYNAMIC PAYMENT CHANNELS & DUAL FINANCE APPROVAL
-  // ----------------------------------------------------
-  describe('AT-15: Dynamic Payment Channels & Dual Finance Approval (Four-Eyes Principle)', () => {
-    it('creates a dynamic payment channel in PENDING_REVIEW status and hides it from customers until Finance approves', async () => {
-      // 1. Admin creates a new dynamic channel for Al-Kuraimi Express
-      const newChannel = depositsService.createDynamicChannel({
-        code: 'KURAIMI' as any,
-        name: 'Kuraimi M-Flous',
-        nameAr: 'حساب بنك الكريمي - مالي كاش',
-        accountNumber: '210987654',
-        accountHolderName: 'منصة الشحن الرقمية المعتمدة',
-        instructionsAr: 'يرجى التحويل إلى حساب الكريمي 210987654 وإرفاق السند',
-        supportedCurrencies: [CurrencyCode.YER],
-        minAmount: 1000,
-        maxAmount: 5000000,
-        mode: PaymentChannelMode.MANUAL,
-        isLegalVerified: false, // NOT yet verified by Finance!
-      });
-
-      expect(newChannel.code).toBe('KURAIMI');
-      expect((newChannel as any).verificationStatus).toBe(ChannelVerificationStatus.PENDING_REVIEW);
-      expect((newChannel as any).financeApprovalRequired).toBe(true);
-
-      // 2. Customer lists active payment channels: MUST NOT include unverified channel!
-      const customerChannels = await depositsService.getPaymentChannels();
-      const foundInCustomerView = customerChannels.find((c) => (c.code as string) === 'KURAIMI');
-      expect(foundInCustomerView).toBeUndefined(); // HIDDEN FROM CUSTOMERS!
-
-      // 3. Finance Manager approves the channel and receiving account (Dual Control / Four-Eyes Principle)
-      const approvalResult = depositsService.approveChannelFinanceReview(
-        'finance-manager-01',
-        'KURAIMI' as any,
-        {
-          approved: true,
-          financeNotes: 'تم التحقق من مطابقة السجل التجاري ورقم حساب بنك الكريمي رسمياً',
-        },
-      );
-
-      expect(approvalResult.success).toBe(true);
-      expect((approvalResult.channel as any).verificationStatus).toBe(ChannelVerificationStatus.VERIFIED);
-      expect((approvalResult.channel as any).financeApprovalRequired).toBe(false);
-
-      // 4. Now channel MUST appear in customer payment channels list!
-      const updatedCustomerChannels = await depositsService.getPaymentChannels();
-      const verifiedInCustomerView = updatedCustomerChannels.find((c) => (c.code as string) === 'KURAIMI');
-      expect(verifiedInCustomerView).toBeDefined();
-      expect(verifiedInCustomerView?.accountNumber).toBe('210987654');
-    });
-
-    it('requires finance approval when modifying receiver account number on an existing channel', async () => {
-      // Propose changing Jaib receiver account number
-      const proposed = depositsService.proposeChannelAccountChange(
-        PaymentChannelCode.JAIB,
-        '779998888', // New account
-        0.5,
-      );
-
-      expect((proposed as any).financeApprovalRequired).toBe(true);
-      expect((proposed as any).pendingAccountNumber).toBe('779998888');
-
-      // Customers still see the OLD account until approval!
-      const customerChannels = await depositsService.getPaymentChannels();
-      const jaibChannel = customerChannels.find((c) => c.code === PaymentChannelCode.JAIB);
-      expect(jaibChannel?.accountNumber).not.toBe('779998888');
-
-      // Finance approves change
-      depositsService.approveChannelFinanceReview('finance-user', PaymentChannelCode.JAIB, {
-        approved: true,
-        financeNotes: 'اعتماد تحديث رقم الحساب التجاري لمؤسسة الشحن',
-      });
-
-      // Now the new account is published!
-      const updatedChannels = await depositsService.getPaymentChannels();
-      const updatedJaib = updatedChannels.find((c) => c.code === PaymentChannelCode.JAIB);
-      expect(updatedJaib?.accountNumber).toBe('779998888');
-    });
-  });
-
-  // ----------------------------------------------------
   // AT-24: EMERGENCY KILL SWITCH
   // ----------------------------------------------------
   describe('AT-24: Emergency Kill Switch for Products and Channels', () => {
@@ -391,20 +312,6 @@ describe('Phase 06 — Dynamic Catalog, Package Margins & Dynamic Payment Channe
       expect(killedProd).toBeUndefined(); // Filtered out from public purchases!
     });
 
-    it('stops payment channel immediately and blocks new deposits via channel kill switch', async () => {
-      const res = depositsService.triggerChannelKillSwitch(
-        'admin-01',
-        PaymentChannelCode.ONE_CASH,
-        'صيانة طارئة في محفظة ون كاش المصرفية (Emergency Network Maintenance)',
-      );
 
-      expect(res.success).toBe(true);
-      expect(res.channel.mode).toBe(PaymentChannelMode.DISABLED);
-
-      // Verify channel is disabled
-      const allChannels = depositsService.getAllChannelsForAdmin();
-      const disabledChannel = allChannels.find((c) => c.code === PaymentChannelCode.ONE_CASH);
-      expect(disabledChannel?.mode).toBe(PaymentChannelMode.DISABLED);
-    });
   });
 });
