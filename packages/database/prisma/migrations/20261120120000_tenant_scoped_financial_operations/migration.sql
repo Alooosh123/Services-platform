@@ -41,6 +41,7 @@ CREATE UNIQUE INDEX "owner_earnings_wallets_platform_user_currency_key"
   ON "owner_earnings_wallets"("userId", "currency") WHERE "tenantId" IS NULL;
 
 DROP INDEX IF EXISTS "daily_close_reports_closeDate_key";
+DROP INDEX IF EXISTS "daily_close_reports_closeDate_key";
 CREATE UNIQUE INDEX "daily_close_reports_tenantId_closeDate_key"
   ON "daily_close_reports"("tenantId", "closeDate");
 CREATE UNIQUE INDEX "daily_close_reports_platform_closeDate_key"
