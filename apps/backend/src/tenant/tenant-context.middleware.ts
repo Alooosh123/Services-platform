@@ -22,24 +22,46 @@ export class TenantContextMiddleware implements NestMiddleware {
   constructor(private readonly prisma: PrismaService) {}
 
   async use(req: TenantAwareRequest, _res: Response, next: NextFunction): Promise<void> {
-    const host = (req.hostname || '')
-      .toLowerCase()
-      .replace(/\.$/, '');
+    const normalizeHost = (value: string): string =>
+      value.trim().toLowerCase().replace(/^[a-z]+:\/\//, '').split('/')[0].split(':')[0].replace(/\.$/, '');
 
-    // Only explicitly configured platform hosts use the global context.
+    const requestHost = normalizeHost(req.hostname || '');
     const platformHosts = new Set(
       (process.env.PLATFORM_HOSTS || '')
         .split(',')
-        .map((value) => value.trim().toLowerCase())
+        .map(normalizeHost)
         .filter(Boolean),
     );
-    if (
-      !host ||
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '::1' ||
-      platformHosts.has(host)
-    ) {
+    const isLocalHost =
+      !requestHost ||
+      requestHost === 'localhost' ||
+      requestHost === '127.0.0.1' ||
+      requestHost === '::1';
+
+    let tenantLookupHost = isLocalHost || platformHosts.has(requestHost)
+      ? ''
+      : requestHost;
+
+    // A central API hostname may receive requests from a tenant storefront.
+    // Resolve the tenant using Origin, or an explicit mobile/API tenant-domain header.
+    if (!tenantLookupHost && !isLocalHost) {
+      const tenantDomainHeader = req.get('x-tenant-domain') || '';
+      const originHeader = req.get('origin') || '';
+      let originHost = '';
+      if (originHeader) {
+        try {
+          originHost = normalizeHost(new URL(originHeader).hostname);
+        } catch {
+          originHost = '';
+        }
+      }
+      const candidate = normalizeHost(tenantDomainHeader) || originHost;
+      if (candidate && !platformHosts.has(candidate)) {
+        tenantLookupHost = candidate;
+      }
+    }
+
+    if (!tenantLookupHost) {
       req.tenantId = null;
       req.tenant = null;
       runWithTenantContext(null, next);
@@ -50,7 +72,7 @@ export class TenantContextMiddleware implements NestMiddleware {
       const tenant = await this.prisma.saaSTenant.findFirst({
         where: {
           status: 'ACTIVE',
-          OR: [{ domain: host }, { customDomain: host }],
+          OR: [{ domain: tenantLookupHost }, { customDomain: tenantLookupHost }],
         },
         select: {
           id: true,
