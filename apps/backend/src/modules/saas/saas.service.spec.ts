@@ -108,6 +108,14 @@ describe('SaasService - persistent subscription management', () => {
       auditLog: { create: jest.fn().mockResolvedValue({ id: 'audit-1' }) },
       user: {
         findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'owner-1',
+          email: 'owner@example.test',
+          phone: '+967770000001',
+          role: 'OWNER',
+        }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         update: jest.fn().mockImplementation(async ({ data }) => ({ id: 'owner-1', ...data })),
       },
       $transaction: jest.fn(async (callback: any) => callback(prisma)),
@@ -143,15 +151,25 @@ describe('SaasService - persistent subscription management', () => {
       'platform-admin',
     );
 
-    expect(prisma.user.update).toHaveBeenCalledWith(
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'owner-1' },
+        where: expect.objectContaining({
+          id: 'owner-1',
+          tenantId: tenant.id,
+          role: 'CUSTOMER',
+          email: 'owner@example.test',
+          phone: '+967770000001',
+        }),
         data: expect.objectContaining({
           tenantId: tenant.id,
           role: 'OWNER',
           isVerified: true,
         }),
       }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' },
     );
     expect(prisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -188,7 +206,7 @@ describe('SaasService - persistent subscription management', () => {
       { userId: 'customer-1', verificationReference: 'KYC-REVIEW-2026-002' },
       'platform-admin',
     )).rejects.toBeInstanceOf(BadRequestException);
-    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 
   it('updates persisted plan prices rather than mutating an in-memory copy', async () => {
@@ -269,6 +287,46 @@ describe('SaasService - persistent subscription management', () => {
       ownerPhone: '+967770000002',
       billingCycle: SaaSBillingCycle.MONTHLY,
     })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects reactivation of a terminated tenant', async () => {
+    prisma.saaSTenant.findUnique.mockResolvedValue({
+      ...tenant,
+      status: SaaSTenantStatus.TERMINATED,
+    });
+
+    await expect(service.updateTenantStatus(tenant.id, {
+      status: SaaSTenantStatus.ACTIVE,
+      reason: 'attempted reactivation',
+    })).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.saaSTenant.update).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending invoices when a tenant is terminated', async () => {
+    prisma.saaSTenant.findUnique.mockResolvedValue({
+      ...tenant,
+      status: SaaSTenantStatus.SUSPENDED,
+    });
+    prisma.saaSSubscription.findFirst.mockResolvedValue(null);
+
+    await service.updateTenantStatus(tenant.id, {
+      status: SaaSTenantStatus.TERMINATED,
+      reason: 'contract ended',
+    }, 'super-admin');
+
+    expect(prisma.saaSInvoice.updateMany).toHaveBeenCalledWith({
+      where: {
+        tenantId: tenant.id,
+        status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+      },
+      data: { status: SaaSInvoiceStatus.CANCELLED },
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'SAAS_TENANT_STATUS_UPDATED' }),
+      }),
+    );
   });
 
   it('does not activate a tenant before an invoice is paid', async () => {
