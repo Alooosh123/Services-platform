@@ -1,0 +1,100 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800;900&family=Tajawal:wght@400;500;700;800&display=swap');
+@import '../asaas-ui/styles/tokens.css';
+@import '../asaas-ui/styles/glass.css';
+@import '../asaas-ui/styles/assistant.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0b0f19;
+  --foreground: #f8fafc;
+  --card-bg: #161f30;
+  --card-border: #1e293b;
+  --accent-cyan: #38bdf8;
+  --accent-indigo: #6366f1;
+  --glass-rim: rgba(56, 189, 248, 0.4);
+  --glass-rim-low: rgba(255, 255, 255, 0.05);
+  --glass-tint: rgba(22, 31, 48, 0.7);
+  --glass-tint-strong: rgba(22, 31, 48, 0.9);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+  direction: rtl;
+}
+
+/* Custom sleek dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #38bdf8;
+}
+
+/* Liquid Glass (Asaas UI Standard) */
+.glass {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(165deg, var(--glass-tint-strong) 0%, var(--glass-tint) 100%);
+  -webkit-backdrop-filter: blur(24px) saturate(175%);
+  backdrop-filter: blur(24px) saturate(175%);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.glass-panel {
+  background: rgba(22, 31, 48, 0.75);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(30, 41, 59, 0.8);
+}
+
+.glow-card {
+  transition: all 0.25s ease-in-out;
+}
+
+.glow-card:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  box-shadow: 0 0 24px -4px rgba(56, 189, 248, 0.25);
+  transform: translateY(-2px);
+}
+
+/* Ambient glow orbs */
+.ambient-glow-cyan {
+  position: absolute;
+  width: 350px;
+  height: 350px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.12) 0%, transparent 70%);
+  pointer-events: none;
+  filter: blur(40px);
+}
+
+.ambient-glow-indigo {
+  position: absolute;
+  width: 350px;
+  height: 350px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, transparent 70%);
+  pointer-events: none;
+  filter: blur(40px);
+}
