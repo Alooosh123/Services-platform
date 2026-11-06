@@ -62,7 +62,7 @@ describe('AuthService tenant registration', () => {
     );
   });
 
-  it('claims the registered tenant owner only when both registered contacts match', async () => {
+  it('creates the matching tenant owner contact as a customer pending Super Admin verification', async () => {
     await runWithTenantContext('tenant-alpha', () =>
       auth.register({
         fullName: 'Store Owner',
@@ -73,7 +73,7 @@ describe('AuthService tenant registration', () => {
     );
 
     expect(createdData.tenantId).toBe('tenant-alpha');
-    expect(createdData.role).toBe(UserRole.OWNER);
+    expect(createdData.role).toBe(UserRole.CUSTOMER);
   });
 
   it('registers other customers as customers within the resolved tenant', async () => {
