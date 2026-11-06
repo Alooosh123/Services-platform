@@ -9,6 +9,7 @@ import {
   DepositStatus,
   PaymentChannelMode,
   ChannelVerificationStatus,
+  SaaSBillingCycle,
 } from '@prisma/client';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
@@ -34,6 +35,73 @@ async function seedTiers() {
     await prisma.tier.upsert({
       where: { code: tier.code },
       create: { ...tier, defaultDiscountPercent: 0 },
+      update: {},
+    });
+  }
+}
+
+const defaultSaasFeatures = [
+  { key: 'INSTANT_TOPUP_UNLIMITED', name: 'Instant Top-Up Engine', nameAr: 'محرك الشحن', included: true, descriptionAr: 'إتاحة خدمات الشحن ضمن حدود التشغيل المعتمدة.' },
+  { key: 'PROVIDER_API_INTEGRATIONS', name: 'Provider Integrations', nameAr: 'تكاملات المزودين', included: true, descriptionAr: 'إتاحة تكاملات المزودين بعد التعاقد والتهيئة.' },
+  { key: 'IMMUTABLE_DOUBLE_ENTRY_LEDGER', name: 'Double-Entry Ledger', nameAr: 'دفتر الأستاذ بالقيد المزدوج', included: true, descriptionAr: 'إتاحة الوظائف المحاسبية وسجل التدقيق.' },
+  { key: 'ALL_PAYMENT_GATEWAYS', name: 'Payment Channels', nameAr: 'قنوات الدفع', included: true, descriptionAr: 'إتاحة إدارة قنوات الدفع مع اعتماد كل قناة قبل التفعيل.' },
+  { key: 'CUSTOMER_WALLETS_SYSTEM', name: 'Multi-Currency Wallets', nameAr: 'المحافظ متعددة العملات', included: true, descriptionAr: 'دعم YER وUSD وSAR مع فصل الأرصدة.' },
+  { key: 'DYNAMIC_FORMS_ENGINE', name: 'Dynamic Forms', nameAr: 'النماذج الديناميكية', included: true, descriptionAr: 'تهيئة حقول الخدمات.' },
+  { key: 'AI_RISK_AND_ANTIFRAUD', name: 'Risk Controls', nameAr: 'ضوابط المخاطر', included: true, descriptionAr: 'ضوابط تقييم المخاطر ومكافحة الاحتيال.' },
+  { key: 'FULL_SUPPORT_TICKETING', name: 'Support Ticketing', nameAr: 'تذاكر الدعم', included: true, descriptionAr: 'إدارة تذاكر الدعم.' },
+  { key: 'FINANCIAL_REPORTS_RECONCILIATION', name: 'Financial Reports', nameAr: 'التقارير المالية', included: true, descriptionAr: 'التقارير والمطابقة المالية.' },
+  { key: 'CUSTOM_DOMAIN_AND_BRANDING', name: 'Custom Domain', nameAr: 'النطاق والهوية', included: true, descriptionAr: 'تهيئة النطاق والهوية بعد التحقق.' },
+  { key: 'AUTOMATED_BACKUPS_AND_SLA', name: 'Backups and Monitoring', nameAr: 'النسخ الاحتياطي والمراقبة', included: true, descriptionAr: 'إعداد النسخ الاحتياطية والمراقبة بحسب بيئة الاستضافة.' },
+  { key: 'REST_APIS_AND_WEBHOOKS', name: 'REST API and Webhooks', nameAr: 'واجهات API وWebhooks', included: true, descriptionAr: 'إتاحة أدوات الربط البرمجي.' },
+];
+
+async function seedSaasPlans() {
+  const plans = [
+    {
+      billingCycle: SaaSBillingCycle.WEEKLY,
+      name: 'Weekly Full-Access Plan',
+      nameAr: 'الباقة الأسبوعية الشاملة',
+      durationDays: 7,
+      priceUsd: 15,
+      priceYer: 10000,
+      priceSar: 55,
+      descriptionAr: 'اشتراك أسبوعي بكامل المزايا الوظيفية.',
+      sortOrder: 1,
+    },
+    {
+      billingCycle: SaaSBillingCycle.MONTHLY,
+      name: 'Monthly Full-Access Plan',
+      nameAr: 'الباقة الشهرية الشاملة',
+      durationDays: 30,
+      priceUsd: 49,
+      priceYer: 35000,
+      priceSar: 185,
+      descriptionAr: 'اشتراك شهري بكامل المزايا الوظيفية.',
+      sortOrder: 2,
+    },
+    {
+      billingCycle: SaaSBillingCycle.ANNUAL,
+      name: 'Annual Full-Access Plan',
+      nameAr: 'الباقة السنوية الشاملة',
+      durationDays: 365,
+      priceUsd: 450,
+      priceYer: 320000,
+      priceSar: 1690,
+      descriptionAr: 'اشتراك سنوي بكامل المزايا الوظيفية.',
+      sortOrder: 3,
+    },
+  ];
+
+  for (const plan of plans) {
+    await prisma.saaSPlan.upsert({
+      where: { billingCycle: plan.billingCycle },
+      create: {
+        ...plan,
+        hasFullPermissions: true,
+        featuresJson: defaultSaasFeatures,
+        isActive: true,
+      },
+      // Preserve administrator-managed prices and feature flags on existing plans.
       update: {},
     });
   }
@@ -87,8 +155,11 @@ async function main() {
   const existingUsers = await prisma.user.count();
   const existingCurrencies = await prisma.currency.count();
 
+  // Idempotently ensure SaaS plan records exist even in an already initialized database.
+  await seedTiers();
+  await seedSaasPlans();
+
   if (!resetSeedData && (existingUsers > 0 || existingCurrencies > 0)) {
-    await seedTiers();
     await ensureSuperAdmin();
     console.log('Existing application data preserved; identity tiers and bootstrap administrator are ready.');
     return;
