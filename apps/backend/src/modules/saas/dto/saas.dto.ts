@@ -11,7 +11,6 @@ import {
   SaaSBillingCycle,
   SaaSSubscriptionStatus,
   SaaSTenantStatus,
-  SaaSInvoiceStatus,
   CurrencyCode,
 } from '@digital-topup/shared';
 
@@ -84,20 +83,10 @@ export class RenewSubscriptionDto {
   @IsEnum(SaaSBillingCycle)
   billingCycle: SaaSBillingCycle;
 
-  @ApiPropertyOptional({ description: 'العملة المسدد بها', enum: CurrencyCode, default: CurrencyCode.USD })
+  @ApiPropertyOptional({ description: 'عملة الفاتورة', enum: CurrencyCode, default: CurrencyCode.USD })
   @IsEnum(CurrencyCode)
   @IsOptional()
   currency?: CurrencyCode;
-
-  @ApiPropertyOptional({ description: 'طريقة الدفع (كريمي، جيب، تحويل بنكي، USDT، بطاقة)', example: 'JAIB' })
-  @IsString()
-  @IsOptional()
-  paymentMethod?: string;
-
-  @ApiPropertyOptional({ description: 'رقم إشعار أو مرجع الحوالة' })
-  @IsString()
-  @IsOptional()
-  referenceNumber?: string;
 }
 
 export class UpdatePlanPriceDto {
