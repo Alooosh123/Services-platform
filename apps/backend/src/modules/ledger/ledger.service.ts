@@ -147,8 +147,8 @@ export class LedgerService {
 
           account = await tx.ledgerAccount.create({
             data: {
-              code: item.accountCode,
-              name: item.notes || item.accountCode,
+              code: scopedAccountCode,
+              name: item.notes || scopedAccountCode,
               type: accType,
               currency: item.currency,
               description: 'Auto-provisioned ledger account',
