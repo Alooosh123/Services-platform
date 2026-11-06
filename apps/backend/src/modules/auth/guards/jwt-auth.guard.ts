@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '@digital-topup/shared';
+import { setPlatformAdminContext } from '../../../tenant/tenant-context.store';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -25,6 +26,15 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         'This account is not a member of the tenant resolved for this domain.',
       );
     }
+
+    // Cross-tenant database visibility is granted only after JWT validation,
+    // only to the platform Super Admin, and only on an explicitly configured
+    // platform host (resolvedTenantId === null).
+    setPlatformAdminContext(
+      user.role === UserRole.SUPER_ADMIN &&
+      accountTenantId === null &&
+      resolvedTenantId === null,
+    );
 
     return user;
   }
