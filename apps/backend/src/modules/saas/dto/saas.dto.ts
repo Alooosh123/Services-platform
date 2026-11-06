@@ -118,7 +118,7 @@ export class UpdatePlanPriceDto {
 }
 
 export class CreateInvoiceDto {
-  @ApiProperty({ description: 'معرف المشترك/المتجر' })
+  @ApiProperty({ description: 'معرف المتجر' })
   @IsString()
   @IsNotEmpty()
   tenantId: string;
@@ -136,18 +136,20 @@ export class CreateInvoiceDto {
   @IsEnum(SaaSBillingCycle)
   billingCycle: SaaSBillingCycle;
 
-  @ApiPropertyOptional({ enum: SaaSInvoiceStatus, default: SaaSInvoiceStatus.PAID })
-  @IsEnum(SaaSInvoiceStatus)
-  @IsOptional()
-  status?: SaaSInvoiceStatus;
-
-  @ApiPropertyOptional({ example: 'KURIMI' })
+  @ApiPropertyOptional({ description: 'معرف الاشتراك المرتبط بالفاتورة' })
   @IsString()
   @IsOptional()
-  paymentMethod?: string;
+  subscriptionId?: string;
+}
 
-  @ApiPropertyOptional({ example: 'TX-99887722' })
+export class MarkSaasInvoicePaidDto {
+  @ApiProperty({ description: 'قناة أو طريقة الدفع المستخدمة', example: 'JAIB_MANUAL' })
   @IsString()
-  @IsOptional()
-  referenceNumber?: string;
+  @IsNotEmpty()
+  paymentMethod: string;
+
+  @ApiProperty({ description: 'رقم مرجع الحوالة أو إيصال الدفع', example: 'TX-2026-000123' })
+  @IsString()
+  @IsNotEmpty()
+  referenceNumber: string;
 }
