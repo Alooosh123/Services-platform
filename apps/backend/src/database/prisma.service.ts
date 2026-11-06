@@ -150,7 +150,9 @@ const TENANT_WRITE_REFERENCES: Record<
   PriceRuleVersion: [{ field: 'createdByUserId', delegate: 'user' }],
   PilotRunAudit: [
     { field: 'userId', delegate: 'user' },
+    { field: 'depositTxId', delegate: 'ledgerTransaction' },
     { field: 'orderId', delegate: 'order' },
+    { field: 'supplierSettlementTxId', delegate: 'ledgerTransaction' },
     { field: 'dailyCloseReportId', delegate: 'dailyCloseReport' },
     { field: 'payoutRequestId', delegate: 'payoutRequest' },
   ],
