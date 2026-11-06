@@ -358,7 +358,7 @@ export class SaasService {
     const currency = dto.currency || CurrencyCode.USD;
     const now = new Date();
     const invoiceDueDate = new Date(now.getTime() + 7 * DAY_MS);
-    const plannedStartDate = invoiceDueDate;
+    const plannedStartDate = now;
     const plannedEndDate = new Date(plannedStartDate.getTime() + plan.durationDays * DAY_MS);
     const licenseKey =
       `LIC-SAAS-${dto.slug.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
@@ -548,6 +548,7 @@ export class SaasService {
     invoiceId: string,
     dto: MarkSaasInvoicePaidDto,
     actorUserId: string,
+    actorUserRole: string = 'SUPER_ADMIN',
   ): Promise<SaaSInvoiceDto> {
     const paymentMethod = dto.paymentMethod.trim();
     const referenceNumber = dto.referenceNumber.trim();
@@ -629,7 +630,7 @@ export class SaasService {
         await tx.auditLog.create({
           data: {
             userId: actorUserId,
-            userRole: 'SUPER_ADMIN',
+            userRole: actorUserRole,
             action: 'SAAS_INVOICE_MARKED_PAID',
             entityName: 'SaaSInvoice',
             entityId: invoiceId,
@@ -650,7 +651,7 @@ export class SaasService {
       });
       return this.mapInvoice(invoice);
     } catch (error: any) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      if (error?.code === 'P2002') {
         throw new ConflictException('This payment reference has already been used');
       }
       throw error;
