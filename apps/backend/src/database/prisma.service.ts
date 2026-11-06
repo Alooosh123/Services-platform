@@ -7,6 +7,8 @@ import {
 import { PrismaClient } from '@prisma/client';
 import { getCurrentTenantId } from '../tenant/tenant-context.store';
 
+const TENANT_DIRECT_MODELS = new Set(['LedgerAccount', 'LedgerTransaction', 'LedgerEntry']);
+
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   Wallet: { user: { is: { tenantId: '__TENANT_ID__' } } },
   UserDevice: { user: { is: { tenantId: '__TENANT_ID__' } } },
@@ -73,6 +75,41 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             ...params.args.where,
             tenantId,
           };
+        }
+        return next(params);
+      }
+
+      if (TENANT_DIRECT_MODELS.has(model)) {
+        if (params.action === 'create') {
+          params.args.data = { ...params.args.data, tenantId };
+        } else if (params.action === 'createMany') {
+          const rows = Array.isArray(params.args.data) ? params.args.data : [params.args.data];
+          params.args.data = rows.map((row: any) => ({ ...row, tenantId }));
+        } else if (params.action === 'upsert') {
+          params.args.create = { ...params.args.create, tenantId };
+        }
+
+        if (params.args.where) {
+          const originalWhere = params.args.where;
+          const existingAnd = Array.isArray(originalWhere.AND)
+            ? originalWhere.AND
+            : originalWhere.AND
+              ? [originalWhere.AND]
+              : [];
+          const { AND: _ignoredAnd, ...uniqueSelector } = originalWhere;
+          params.args.where = {
+            ...uniqueSelector,
+            AND: [...existingAnd, { tenantId }],
+          };
+        } else if (
+          params.action === 'findMany' ||
+          params.action === 'findFirst' ||
+          params.action === 'findFirstOrThrow' ||
+          params.action === 'count' ||
+          params.action === 'aggregate' ||
+          params.action === 'groupBy'
+        ) {
+          params.args.where = { tenantId };
         }
         return next(params);
       }
