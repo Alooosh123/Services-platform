@@ -127,7 +127,7 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
 
     it('should upsert tier product price successfully when valid', async () => {
       mockPrisma.tier.findUnique.mockResolvedValue({ id: 't1', isActive: true });
-      mockPrisma.productPrice.findUnique.mockResolvedValue({
+      mockPrisma.productPrice.findFirst.mockResolvedValue({
         costPrice: 10,
         retailPrice: 12,
         isAvailable: true,
