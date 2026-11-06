@@ -45,6 +45,11 @@ export class CreateTenantDto {
   @IsNotEmpty()
   ownerPhone: string;
 
+  @ApiPropertyOptional({ description: 'عملة الفاتورة والاشتراك (افتراضياً USD)', enum: CurrencyCode, default: CurrencyCode.USD })
+  @IsEnum(CurrencyCode)
+  @IsOptional()
+  currency?: CurrencyCode;
+
   @ApiProperty({
     description: 'دورة الاشتراك المختارة (WEEKLY: أسبوعي، MONTHLY: شهري، ANNUAL: سنوي)',
     enum: SaaSBillingCycle,
