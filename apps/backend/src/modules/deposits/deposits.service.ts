@@ -575,7 +575,7 @@ export class DepositsService {
    */
   async approveAndCredit(staffUserId: string, depositId: string, dto?: ReviewDepositDto) {
     if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      throw new NotFoundException('Deposit approval must use a persisted tenant-owned request.');
+      throw new ServiceUnavailableException('Deposit approval must use a persisted tenant-owned request.');
     }
     if (process.env.NODE_ENV === 'test' && this.memoryDeposits.has(depositId)) {
       const deposit = this.memoryDeposits.get(depositId)!;
