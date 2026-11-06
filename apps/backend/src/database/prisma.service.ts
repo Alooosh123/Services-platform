@@ -36,7 +36,7 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   Payment: { user: { is: { tenantId: '__TENANT_ID__' } } },
   Order: { user: { is: { tenantId: '__TENANT_ID__' } } },
   OrderStatusHistory: { order: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } } },
-  ManualFulfillment: { order: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } },
+  ManualFulfillment: { order: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } } },
   AuditLog: { user: { is: { tenantId: '__TENANT_ID__' } } },
   PayoutRequest: { user: { is: { tenantId: '__TENANT_ID__' } } },
   ServiceRequest: { user: { is: { tenantId: '__TENANT_ID__' } } },
