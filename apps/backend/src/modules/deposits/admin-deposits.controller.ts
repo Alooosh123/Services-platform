@@ -91,8 +91,9 @@ export class AdminDepositsController {
   async switchChannelMode(
     @Param('channel') channel: string,
     @Body('mode') mode: PaymentChannelMode,
+    @CurrentUser('id') actorUserId: string,
   ) {
-    return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode);
+    return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode, actorUserId);
   }
 
   @Post('channels/:channel/failover')
@@ -100,9 +101,10 @@ export class AdminDepositsController {
   @ApiOperation({ summary: 'Admin/Finance: Trigger emergency safe failover of payment channel to MANUAL' })
   async failoverChannel(
     @Param('channel') channel: string,
-    @Body('reason') reason?: string,
+    @Body('reason') reason: string | undefined,
+    @CurrentUser('id') actorUserId: string,
   ) {
-    return this.depositsService.failoverChannel(channel.toUpperCase() as PaymentChannelCode, reason);
+    return this.depositsService.failoverChannel(channel.toUpperCase() as PaymentChannelCode, reason, actorUserId);
   }
 
   @Get('channels/legal-verification')
@@ -119,8 +121,8 @@ export class AdminDepositsController {
 
   @Post('channels')
   @ApiOperation({ summary: 'Admin: Create a new dynamic payment channel' })
-  async createChannel(@Body() dto: any) {
-    return this.depositsService.createDynamicChannel(dto);
+  async createChannel(@Body() dto: any, @CurrentUser('id') actorUserId: string) {
+    return this.depositsService.createDynamicChannel(dto, actorUserId);
   }
 
   @Post('channels/:channel/propose-account')
@@ -128,16 +130,19 @@ export class AdminDepositsController {
   async proposeAccount(
     @Param('channel') channel: string,
     @Body('accountNumber') accountNumber: string,
-    @Body('feePercentage') feePercentage?: number,
+    @Body('feePercentage') feePercentage: number | undefined,
+    @CurrentUser('id') actorUserId: string,
   ) {
     return this.depositsService.proposeChannelAccountChange(
       channel.toUpperCase() as PaymentChannelCode,
       accountNumber,
       feePercentage,
+      actorUserId,
     );
   }
 
   @Post('channels/:channel/finance-approval')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @ApiOperation({ summary: 'Finance Manager: Dual control approval for channel account change (AT-15)' })
   async approveChannelFinance(
     @CurrentUser('id') adminUserId: string,
