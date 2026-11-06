@@ -38,8 +38,15 @@ describe('JwtAuthGuard tenant boundary', () => {
     ).toThrow(ForbiddenException);
   });
 
-  it('allows only platform Super Admin to cross tenant domains', () => {
+  it('rejects platform Super Admin on a tenant storefront host', () => {
     const user = { id: 'root', role: UserRole.SUPER_ADMIN, tenantId: null };
-    expect(guard.handleRequest(null, user, null, contextFor('tenant-a'))).toBe(user);
+    expect(() =>
+      guard.handleRequest(null, user, null, contextFor('tenant-a')),
+    ).toThrow(ForbiddenException);
+  });
+
+  it('allows platform Super Admin on the configured global platform host', () => {
+    const user = { id: 'root', role: UserRole.SUPER_ADMIN, tenantId: null };
+    expect(guard.handleRequest(null, user, null, contextFor(null))).toBe(user);
   });
 });
