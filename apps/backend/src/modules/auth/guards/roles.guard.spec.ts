@@ -54,7 +54,7 @@ describe('RolesGuard tenant-scope permissions', () => {
   it('does not grant SaaS finance scope to a tenant owner even when a handler is marked', () => {
     const guard = buildGuard(true);
     runWithTenantContext('tenant-alpha', () => {
-      expect(guard.canActivate(buildContext(UserRole.OWNER))).toBe(false);
+      expect(() => guard.canActivate(buildContext(UserRole.OWNER))).toThrow('Access denied');
     });
   });
 });
