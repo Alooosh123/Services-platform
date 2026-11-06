@@ -206,6 +206,10 @@ jobs:
         working-directory: apps/mobile-customer
         run: flutter analyze
 
+      - name: Run Flutter Unit Tests
+        working-directory: apps/mobile-customer
+        run: flutter test
+
   # No staging/production deployment jobs are defined yet.
   # This workflow is CI-only until a real host, DNS, TLS, protected secrets,
   # deployment action and endpoint-based health/restore verification are configured.
