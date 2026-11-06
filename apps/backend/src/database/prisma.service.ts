@@ -7,7 +7,18 @@ import {
 import { PrismaClient } from '@prisma/client';
 import { getCurrentTenantId } from '../tenant/tenant-context.store';
 
-const TENANT_DIRECT_MODELS = new Set(['LedgerAccount', 'LedgerTransaction', 'LedgerEntry']);
+const TENANT_DIRECT_MODELS = new Set([
+  'LedgerAccount',
+  'LedgerTransaction',
+  'LedgerEntry',
+  'ReconciliationBatch',
+  'SupplierAccount',
+  'PriceRuleVersion',
+  'DailyCloseReport',
+  'OwnerEarningsWallet',
+  'PinVault',
+  'ProviderApiLog',
+]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   Wallet: { user: { is: { tenantId: '__TENANT_ID__' } } },
@@ -32,6 +43,14 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   SupportTicket: { user: { is: { tenantId: '__TENANT_ID__' } } },
   TicketMessage: { ticket: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } } },
   Notification: { user: { is: { tenantId: '__TENANT_ID__' } } },
+  AgentProductPrice: { subAgent: { is: { tenantId: '__TENANT_ID__' } } },
+  SupplierTransaction: { account: { is: { tenantId: '__TENANT_ID__' } } },
+  ReconciliationItem: { batch: { is: { tenantId: '__TENANT_ID__' } } },
+  DailyCloseAdjustment: { report: { is: { tenantId: '__TENANT_ID__' } } },
+  OwnerPayoutTransaction: {
+    beneficiary: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } },
+  },
+  PaymentWebhookEvent: { payment: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } } },
 };
 
 const SAAS_PLATFORM_MODELS = new Set([
