@@ -92,8 +92,9 @@ export class AdminDepositsController {
     @Param('channel') channel: string,
     @Body('mode') mode: PaymentChannelMode,
     @CurrentUser('id') actorUserId: string,
+    @CurrentUser('role') actorUserRole: string,
   ) {
-    return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode, actorUserId);
+    return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode, actorUserId, actorUserRole);
   }
 
   @Post('channels/:channel/failover')
@@ -103,8 +104,9 @@ export class AdminDepositsController {
     @Param('channel') channel: string,
     @Body('reason') reason: string | undefined,
     @CurrentUser('id') actorUserId: string,
+    @CurrentUser('role') actorUserRole: string,
   ) {
-    return this.depositsService.failoverChannel(channel.toUpperCase() as PaymentChannelCode, reason, actorUserId);
+    return this.depositsService.failoverChannel(channel.toUpperCase() as PaymentChannelCode, reason, actorUserId, actorUserRole);
   }
 
   @Get('channels/legal-verification')
@@ -121,8 +123,12 @@ export class AdminDepositsController {
 
   @Post('channels')
   @ApiOperation({ summary: 'Admin: Create a new dynamic payment channel' })
-  async createChannel(@Body() dto: any, @CurrentUser('id') actorUserId: string) {
-    return this.depositsService.createDynamicChannel(dto, actorUserId);
+  async createChannel(
+    @Body() dto: any,
+    @CurrentUser('id') actorUserId: string,
+    @CurrentUser('role') actorUserRole: string,
+  ) {
+    return this.depositsService.createDynamicChannel(dto, actorUserId, actorUserRole);
   }
 
   @Post('channels/:channel/propose-account')
@@ -132,12 +138,14 @@ export class AdminDepositsController {
     @Body('accountNumber') accountNumber: string,
     @Body('feePercentage') feePercentage: number | undefined,
     @CurrentUser('id') actorUserId: string,
+    @CurrentUser('role') actorUserRole: string,
   ) {
     return this.depositsService.proposeChannelAccountChange(
       channel.toUpperCase() as PaymentChannelCode,
       accountNumber,
       feePercentage,
       actorUserId,
+      actorUserRole,
     );
   }
 
@@ -146,11 +154,13 @@ export class AdminDepositsController {
   @ApiOperation({ summary: 'Finance Manager: Dual control approval for channel account change (AT-15)' })
   async approveChannelFinance(
     @CurrentUser('id') adminUserId: string,
+    @CurrentUser('role') adminUserRole: string,
     @Param('channel') channel: string,
     @Body() dto: any,
   ) {
     return this.depositsService.approveChannelFinanceReview(
       adminUserId,
+      adminUserRole,
       channel.toUpperCase() as PaymentChannelCode,
       dto,
     );
@@ -160,11 +170,13 @@ export class AdminDepositsController {
   @ApiOperation({ summary: 'Admin: Emergency Kill Switch for payment channel (AT-24)' })
   async killSwitchChannel(
     @CurrentUser('id') adminUserId: string,
+    @CurrentUser('role') adminUserRole: string,
     @Param('channel') channel: string,
     @Body('reason') reason: string,
   ) {
     return this.depositsService.triggerChannelKillSwitch(
       adminUserId,
+      adminUserRole,
       channel.toUpperCase() as PaymentChannelCode,
       reason,
     );
