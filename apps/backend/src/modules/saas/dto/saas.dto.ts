@@ -147,3 +147,18 @@ export class MarkSaasInvoicePaidDto {
   @IsNotEmpty()
   referenceNumber: string;
 }
+
+export class AssignTenantOwnerDto {
+  @ApiProperty({ description: 'معرف حساب المستخدم الذي تمت مراجعة هويته' })
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
+
+  @ApiProperty({
+    description: 'مرجع التحقق الإداري (رقم عقد/محضر مراجعة/تذكرة تحقق)',
+    example: 'OWNER-KYC-2026-0001',
+  })
+  @IsString()
+  @IsNotEmpty()
+  verificationReference: string;
+}
