@@ -174,7 +174,7 @@ export class AuthService {
     return secret || defaultPlaceholder;
   }
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, tenantId?: string) {
     if (!dto.email && !dto.phone) {
       throw new BadRequestException('Either email or phone number must be provided');
     }
@@ -216,6 +216,7 @@ export class AuthService {
           phone: dto.phone || null,
           passwordHash,
           role: UserRole.CUSTOMER,
+          tenantId: tenantId || null,
           verificationCode,
           isVerified: false,
           wallets: {
@@ -598,6 +599,7 @@ export class AuthService {
           phone: dto.phone || null,
           passwordHash,
           role: dto.role,
+          tenantId: caller.tenantId || null,
           isVerified: true,
           emailVerifiedAt: new Date(),
           phoneVerifiedAt: new Date(),
