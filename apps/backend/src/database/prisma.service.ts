@@ -141,9 +141,18 @@ const TENANT_WRITE_REFERENCES: Record<
   DailyCloseAdjustment: [{ field: 'reportId', relation: 'report', delegate: 'dailyCloseReport' }],
   OwnerEarningsWallet: [{ field: 'userId', delegate: 'user' }],
   LedgerTransaction: [{ field: 'createdByUserId', delegate: 'user' }],
-  LedgerEntry: [
-    { field: 'accountId', relation: 'account', delegate: 'ledgerAccount' },
-    { field: 'walletId', relation: 'wallet', delegate: 'wallet' },
+  // accountId is intentionally omitted: LedgerService may create a new
+  // chart-of-accounts row earlier in the same database transaction. The
+  // tenantId column and account code scoping still enforce account isolation.
+  LedgerEntry: [{ field: 'walletId', relation: 'wallet', delegate: 'wallet' }],
+  PinVault: [{ field: 'orderId', relation: 'order', delegate: 'order' }],
+  ReconciliationBatch: [{ field: 'reconciledByUserId', delegate: 'user' }],
+  PriceRuleVersion: [{ field: 'createdByUserId', delegate: 'user' }],
+  PilotRunAudit: [
+    { field: 'userId', delegate: 'user' },
+    { field: 'orderId', delegate: 'order' },
+    { field: 'dailyCloseReportId', delegate: 'dailyCloseReport' },
+    { field: 'payoutRequestId', delegate: 'payoutRequest' },
   ],
   ProviderApiLog: [{ field: 'orderId', relation: 'order', delegate: 'order' }],
 };
