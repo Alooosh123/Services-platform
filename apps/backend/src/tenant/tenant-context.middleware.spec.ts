@@ -58,6 +58,59 @@ describe('TenantContextMiddleware', () => {
     expect(callbackTenantId).toBe('__UNRESOLVED_TENANT__');
   });
 
+  it('resolves the storefront Origin when requests arrive through the central API host', async () => {
+    const previousHosts = process.env.PLATFORM_HOSTS;
+    process.env.PLATFORM_HOSTS = 'api.example.test,admin.example.test';
+    try {
+      const request: any = {
+        hostname: 'api.example.test',
+        get: (name: string) => name.toLowerCase() === 'origin' ? 'https://alpha.example.test' : undefined,
+      };
+      let callbackTenantId: string | null | undefined;
+      const next = jest.fn(() => {
+        callbackTenantId = getCurrentTenantId();
+      });
+
+      await middleware.use(request, {} as any, next);
+
+      expect(prisma.saaSTenant.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [{ domain: 'alpha.example.test' }, { customDomain: 'alpha.example.test' }],
+          }),
+        }),
+      );
+      expect(request.tenantId).toBe('tenant-alpha');
+      expect(callbackTenantId).toBe('tenant-alpha');
+    } finally {
+      if (previousHosts === undefined) delete process.env.PLATFORM_HOSTS;
+      else process.env.PLATFORM_HOSTS = previousHosts;
+    }
+  });
+
+  it('resolves the explicit tenant domain header for native mobile API calls', async () => {
+    const previousHosts = process.env.PLATFORM_HOSTS;
+    process.env.PLATFORM_HOSTS = 'api.example.test';
+    try {
+      const request: any = {
+        hostname: 'api.example.test',
+        get: (name: string) => name.toLowerCase() === 'x-tenant-domain' ? 'alpha.example.test' : undefined,
+      };
+      let callbackTenantId: string | null | undefined;
+      const next = jest.fn(() => {
+        callbackTenantId = getCurrentTenantId();
+      });
+
+      await middleware.use(request, {} as any, next);
+
+      expect(request.tenantId).toBe('tenant-alpha');
+      expect(callbackTenantId).toBe('tenant-alpha');
+    } finally {
+      if (previousHosts === undefined) delete process.env.PLATFORM_HOSTS;
+      else process.env.PLATFORM_HOSTS = previousHosts;
+    }
+  });
+
   it('uses global scope only for explicitly configured platform hosts', async () => {
     const previousHosts = process.env.PLATFORM_HOSTS;
     process.env.PLATFORM_HOSTS = 'admin.example.test,api.example.test';
