@@ -75,6 +75,7 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
     },
     productTierPrice: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
     },
     agentProductPrice: {
       findUnique: jest.fn(),
@@ -105,7 +106,7 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
       parentAgentCommissionPercent: 0,
       parentAgent: null,
     });
-    mockPrisma.productTierPrice.findUnique.mockResolvedValue(null);
+    mockPrisma.productTierPrice.findFirst.mockResolvedValue(null);
     mockPrisma.agentProductPrice.findUnique.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -252,7 +253,7 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
         retailPrice: new Prisma.Decimal(700),
         isActive: true,
       });
-      mockPrisma.productTierPrice.findUnique.mockResolvedValue({
+      mockPrisma.productTierPrice.findFirst.mockResolvedValue({
         retailPrice: new Prisma.Decimal(550),
         isActive: true,
       });
