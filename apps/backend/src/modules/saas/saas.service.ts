@@ -6,7 +6,7 @@ import {
   ConflictException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Prisma, PrismaClientKnownRequestError } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import {
   SaaSBillingCycle,
