@@ -192,7 +192,14 @@ export class SaasService {
   }
 
   private mapTenant(tenant: any): SaaSTenantDto {
-    const latestSubscription = tenant.subscriptions?.[0];
+    const now = new Date();
+    const latestSubscription =
+      tenant.subscriptions?.find(
+        (subscription: any) =>
+          subscription.status === SaaSSubscriptionStatus.ACTIVE &&
+          new Date(subscription.startDate) <= now &&
+          new Date(subscription.endDate) > now,
+      ) || tenant.subscriptions?.[0];
     return {
       id: tenant.id,
       name: tenant.name,
@@ -330,7 +337,7 @@ export class SaasService {
       include: {
         subscriptions: {
           orderBy: { createdAt: 'desc' },
-          take: 1,
+          take: 5,
           include: { plan: true },
         },
       },
@@ -411,7 +418,7 @@ export class SaasService {
           include: {
             subscriptions: {
               orderBy: { createdAt: 'desc' },
-              take: 1,
+              take: 5,
               include: { plan: true },
             },
           },
