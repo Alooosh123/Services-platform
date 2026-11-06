@@ -183,10 +183,10 @@ jobs:
         run: npm run build
 
   # -------------------------------------------------------------
-  # Job 5: Flutter static analysis (the app is not yet API-integrated)
+  # Job 5: Flutter API-connected mobile static analysis and tests
   # -------------------------------------------------------------
   mobile-quality:
-    name: Flutter Customer App Analysis
+    name: Flutter Customer App Analysis & Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
