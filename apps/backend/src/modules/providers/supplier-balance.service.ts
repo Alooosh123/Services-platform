@@ -136,7 +136,7 @@ export class SupplierBalanceService {
       if (!provider) throw new NotFoundException(`Provider ${providerCode} was not found`);
 
       const account = await this.prisma.supplierAccount.findFirst({
-        where: { providerId: provider.id, currency },
+        where: { providerId: provider.id, currency, tenantId: tenantId || null },
       });
       if (account) {
         const balance = Number(account.balance);
@@ -232,7 +232,7 @@ export class SupplierBalanceService {
         if (!provider) throw new NotFoundException(`Provider ${dto.providerId} was not found`);
 
         const existing = await tx.supplierAccount.findFirst({
-          where: { providerId: provider.id, currency: dto.currency },
+          where: { providerId: provider.id, currency: dto.currency, tenantId: tenantId || null },
         });
         const balanceBefore = existing ? Number(existing.balance) : 0;
         const balanceAfter = balanceBefore + dto.amount;
@@ -363,7 +363,7 @@ export class SupplierBalanceService {
         if (!provider) throw new NotFoundException(`Provider ${providerCode} was not found`);
 
         const account = await tx.supplierAccount.findFirst({
-          where: { providerId: provider.id, currency },
+          where: { providerId: provider.id, currency, tenantId: tenantId || null },
         });
 
         if (!account) {
