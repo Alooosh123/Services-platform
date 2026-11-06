@@ -1479,6 +1479,7 @@ model PilotConfig {
 
 model PilotRunAudit {
   id                     String   @id @default(uuid())
+  tenantId               String?
   cycleName              String
   userId                 String
   depositTxId            String
@@ -1495,6 +1496,7 @@ model PilotRunAudit {
   status                 String   @default("PASSED")
   detailsJson            Json?
   executedBy             String   @default("SYSTEM_PILOT_RUNNER")
+  tenant                 SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt              DateTime @default(now())
 
   @@index([status])
@@ -1598,6 +1600,7 @@ model SaaSTenant {
   paymentChannelConfigs  PaymentChannelConfig[]
   productPrices          ProductPrice[]
   productTierPrices      ProductTierPrice[]
+  pilotRunAudits          PilotRunAudit[]
 
   @@index([status])
   @@map("saas_tenants")
