@@ -140,7 +140,7 @@ export class SaasService {
       hasFullPermissions: plan.hasFullPermissions,
       descriptionAr: plan.descriptionAr,
       features: Array.isArray(plan.featuresJson)
-        ? (plan.featuresJson as unknown as unknown as SaaSFeatureItem[])
+        ? (plan.featuresJson as unknown as SaaSFeatureItem[])
         : [],
       isActive: plan.isActive,
       sortOrder: plan.sortOrder,
@@ -471,9 +471,24 @@ export class SaasService {
         throw new BadRequestException('The account email and phone must both match the tenant owner records.');
       }
 
-      // A platform Super Admin is making an explicit manual identity-verification decision.
-      const updatedUser = await tx.user.update({
-        where: { id: user.id },
+      const existingOwner = await tx.user.findFirst({
+        where: { tenantId, role: 'OWNER' },
+        select: { id: true },
+      });
+      if (existingOwner && existingOwner.id !== user.id) {
+        throw new ConflictException('This tenant already has an assigned owner account.');
+      }
+
+      // Compare-and-set prevents the same customer from being claimed by two
+      // tenants concurrently after the initial ownership/email/phone checks.
+      const claimed = await tx.user.updateMany({
+        where: {
+          id: user.id,
+          tenantId: user.tenantId ?? null,
+          role: user.role,
+          email: user.email,
+          phone: user.phone,
+        },
         data: {
           tenantId,
           role: 'OWNER',
@@ -482,6 +497,14 @@ export class SaasService {
           phoneVerifiedAt: new Date(),
           verificationCode: null,
         },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('This owner account changed while it was being assigned. Reload and retry.');
+      }
+
+      const updatedUser = await tx.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: { id: true, email: true, phone: true, role: true },
       });
 
       await tx.auditLog.create({
@@ -507,134 +530,182 @@ export class SaasService {
         role: updatedUser.role,
         verificationReference,
       };
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
-  async updateTenantStatus(id: string, dto: UpdateTenantStatusDto): Promise<SaaSTenantDto> {
+  async updateTenantStatus(
+    id: string,
+    dto: UpdateTenantStatusDto,
+    actorUserId?: string,
+  ): Promise<SaaSTenantDto> {
     const now = new Date();
-    const existing = await this.prisma.saaSTenant.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('SaaS tenant not found');
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.saaSTenant.findUnique({ where: { id } });
+        if (!existing) throw new NotFoundException('SaaS tenant not found');
+        if (
+          existing.status === SaaSTenantStatus.TERMINATED &&
+          dto.status !== SaaSTenantStatus.TERMINATED
+        ) {
+          throw new BadRequestException('A terminated tenant cannot be reactivated.');
+        }
 
-    if (dto.status === SaaSTenantStatus.ACTIVE) {
-      const paidSubscription = await this.prisma.saaSSubscription.findFirst({
-        where: {
-          tenantId: id,
-          status: { in: [SaaSSubscriptionStatus.ACTIVE, SaaSSubscriptionStatus.SUSPENDED] },
-          startDate: { lte: now },
-          endDate: { gt: now },
-        },
-      });
-      if (!paidSubscription) {
-        throw new BadRequestException('Cannot activate a tenant without a paid, currently valid subscription.');
-      }
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.saaSTenant.update({
-        where: { id },
-        data: { status: dto.status },
-      });
-
-      if (dto.status === SaaSTenantStatus.SUSPENDED) {
-        await tx.saaSSubscription.updateMany({
-          where: { tenantId: id, status: SaaSSubscriptionStatus.ACTIVE },
-          data: { status: SaaSSubscriptionStatus.SUSPENDED },
-        });
-      } else if (dto.status === SaaSTenantStatus.ACTIVE) {
-        await tx.saaSSubscription.updateMany({
-          where: {
-            tenantId: id,
-            status: SaaSSubscriptionStatus.SUSPENDED,
-            startDate: { lte: now },
-            endDate: { gt: now },
-          },
-          data: { status: SaaSSubscriptionStatus.ACTIVE },
-        });
-      } else if (dto.status === SaaSTenantStatus.TERMINATED) {
-        await tx.saaSSubscription.updateMany({
-          where: {
-            tenantId: id,
-            status: {
-              in: [
-                SaaSSubscriptionStatus.ACTIVE,
-                SaaSSubscriptionStatus.TRIAL,
-                SaaSSubscriptionStatus.PENDING_PAYMENT,
-              ],
+        if (dto.status === SaaSTenantStatus.ACTIVE) {
+          const paidSubscription = await tx.saaSSubscription.findFirst({
+            where: {
+              tenantId: id,
+              status: { in: [SaaSSubscriptionStatus.ACTIVE, SaaSSubscriptionStatus.SUSPENDED] },
+              startDate: { lte: now },
+              endDate: { gt: now },
             },
-          },
-          data: { status: SaaSSubscriptionStatus.CANCELLED, autoRenew: false },
+          });
+          if (!paidSubscription) {
+            throw new BadRequestException('Cannot activate a tenant without a paid, currently valid subscription.');
+          }
+        }
+
+        await tx.saaSTenant.update({
+          where: { id },
+          data: { status: dto.status },
         });
+
+        if (dto.status === SaaSTenantStatus.SUSPENDED) {
+          await tx.saaSSubscription.updateMany({
+            where: { tenantId: id, status: SaaSSubscriptionStatus.ACTIVE },
+            data: { status: SaaSSubscriptionStatus.SUSPENDED },
+          });
+        } else if (dto.status === SaaSTenantStatus.ACTIVE) {
+          await tx.saaSSubscription.updateMany({
+            where: {
+              tenantId: id,
+              status: SaaSSubscriptionStatus.SUSPENDED,
+              startDate: { lte: now },
+              endDate: { gt: now },
+            },
+            data: { status: SaaSSubscriptionStatus.ACTIVE },
+          });
+        } else if (dto.status === SaaSTenantStatus.TERMINATED) {
+          await tx.saaSSubscription.updateMany({
+            where: {
+              tenantId: id,
+              status: {
+                in: [
+                  SaaSSubscriptionStatus.ACTIVE,
+                  SaaSSubscriptionStatus.SUSPENDED,
+                  SaaSSubscriptionStatus.TRIAL,
+                  SaaSSubscriptionStatus.PENDING_PAYMENT,
+                ],
+              },
+            },
+            data: { status: SaaSSubscriptionStatus.CANCELLED, autoRenew: false },
+          });
+          await tx.saaSInvoice.updateMany({
+            where: {
+              tenantId: id,
+              status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+            },
+            data: { status: SaaSInvoiceStatus.CANCELLED },
+          });
+        }
+
+        if (actorUserId) {
+          await tx.auditLog.create({
+            data: {
+              userId: actorUserId,
+              userRole: 'SUPER_ADMIN',
+              action: 'SAAS_TENANT_STATUS_UPDATED',
+              entityName: 'SaaSTenant',
+              entityId: id,
+              oldValues: { status: existing.status },
+              newValues: {
+                status: dto.status,
+                reason: dto.reason?.trim() || null,
+              },
+            },
+          });
+        }
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error: any) {
+      if (error?.code === 'P2034') {
+        throw new ConflictException('Tenant status changed concurrently. Reload the tenant and retry.');
       }
-    });
+      throw error;
+    }
 
     return this.getTenantById(id);
   }
 
   async renewSubscription(tenantId: string, dto: RenewSubscriptionDto): Promise<SaaSTenantDto> {
-    const [tenant, plan] = await Promise.all([
-      this.prisma.saaSTenant.findUnique({ where: { id: tenantId } }),
-      this.getActivePlan(dto.billingCycle),
-    ]);
-    if (!tenant) throw new NotFoundException('SaaS tenant not found');
-    if (tenant.status === SaaSTenantStatus.TERMINATED) {
-      throw new BadRequestException('A terminated tenant cannot be renewed');
-    }
-
+    const plan = await this.getActivePlan(dto.billingCycle);
     const currency = dto.currency || CurrencyCode.USD;
     const now = new Date();
-    const activeSubscription = await this.prisma.saaSSubscription.findFirst({
-      where: {
-        tenantId,
-        status: SaaSSubscriptionStatus.ACTIVE,
-        endDate: { gt: now },
-      },
-      orderBy: { endDate: 'desc' },
-    });
-    const startDate =
-      activeSubscription && activeSubscription.endDate > now
-        ? activeSubscription.endDate
-        : now;
-    const endDate = new Date(startDate.getTime() + plan.durationDays * DAY_MS);
     const dueDate = new Date(now.getTime() + 7 * DAY_MS);
 
-    await this.prisma.$transaction(async (tx) => {
-      const pending = await tx.saaSInvoice.count({
-        where: {
-          tenantId,
-          status: { in: ['PENDING', 'OVERDUE'] },
-        },
-      });
-      if (pending > 0) {
-        throw new ConflictException('This tenant already has an unpaid SaaS invoice');
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const tenant = await tx.saaSTenant.findUnique({ where: { id: tenantId } });
+        if (!tenant) throw new NotFoundException('SaaS tenant not found');
+        if (tenant.status === SaaSTenantStatus.TERMINATED) {
+          throw new BadRequestException('A terminated tenant cannot be renewed');
+        }
+
+        const pending = await tx.saaSInvoice.count({
+          where: {
+            tenantId,
+            status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+          },
+        });
+        if (pending > 0) {
+          throw new ConflictException('This tenant already has an unpaid SaaS invoice');
+        }
+
+        const activeSubscription = await tx.saaSSubscription.findFirst({
+          where: {
+            tenantId,
+            status: SaaSSubscriptionStatus.ACTIVE,
+            endDate: { gt: now },
+          },
+          orderBy: { endDate: 'desc' },
+        });
+        const startDate =
+          activeSubscription && activeSubscription.endDate > now
+            ? activeSubscription.endDate
+            : now;
+        const endDate = new Date(startDate.getTime() + plan.durationDays * DAY_MS);
+
+        const subscription = await tx.saaSSubscription.create({
+          data: {
+            tenantId,
+            planId: plan.id,
+            billingCycle: plan.billingCycle,
+            pricePaid: this.planPrice(plan, currency),
+            currency,
+            startDate,
+            endDate,
+            autoRenew: false,
+            status: SaaSSubscriptionStatus.PENDING_PAYMENT,
+          },
+        });
+
+        await tx.saaSInvoice.create({
+          data: {
+            invoiceNumber: this.createInvoiceNumber(),
+            tenantId,
+            subscriptionId: subscription.id,
+            amount: this.planPrice(plan, currency),
+            currency,
+            status: SaaSInvoiceStatus.PENDING,
+            billingCycle: plan.billingCycle,
+            dueDate,
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error: any) {
+      if (error?.code === 'P2034' || error?.code === 'P2002') {
+        throw new ConflictException('A pending renewal invoice already exists or this tenant was renewed concurrently.');
       }
-
-      const subscription = await tx.saaSSubscription.create({
-        data: {
-          tenantId,
-          planId: plan.id,
-          billingCycle: plan.billingCycle,
-          pricePaid: this.planPrice(plan, currency),
-          currency,
-          startDate,
-          endDate,
-          autoRenew: false,
-          status: SaaSSubscriptionStatus.PENDING_PAYMENT,
-        },
-      });
-
-      await tx.saaSInvoice.create({
-        data: {
-          invoiceNumber: this.createInvoiceNumber(),
-          tenantId,
-          subscriptionId: subscription.id,
-          amount: this.planPrice(plan, currency),
-          currency,
-          status: SaaSInvoiceStatus.PENDING,
-          billingCycle: plan.billingCycle,
-          dueDate,
-        },
-      });
-    });
+      throw error;
+    }
 
     return this.getTenantById(tenantId);
   }
