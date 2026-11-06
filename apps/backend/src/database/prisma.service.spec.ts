@@ -46,6 +46,35 @@ describe('PrismaService tenant query scope', () => {
     });
   });
 
+  it('rejects writes that reference a user from another tenant', async () => {
+    await runWithTenantContext('tenant-alpha', async () => {
+      jest.spyOn(prisma.user, 'findFirst').mockResolvedValue(null as any);
+      const params: any = {
+        model: 'Wallet',
+        action: 'create',
+        args: { data: { userId: 'user-from-tenant-beta', currency: 'YER' } },
+      };
+      await expect(
+        middleware(params, async (value) => value),
+      ).rejects.toThrow('outside the active tenant scope');
+    });
+  });
+
+  it('allows writes that reference a user in the active tenant', async () => {
+    await runWithTenantContext('tenant-alpha', async () => {
+      jest.spyOn(prisma.user, 'findFirst').mockResolvedValue({ id: 'user-from-tenant-alpha' } as any);
+      const params: any = {
+        model: 'Wallet',
+        action: 'create',
+        args: { data: { userId: 'user-from-tenant-alpha', currency: 'YER' } },
+      };
+      await middleware(params, async (value) => value);
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'user-from-tenant-alpha' } }),
+      );
+    });
+  });
+
   it('adds mandatory relation filters to user-owned records', async () => {
     await runWithTenantContext('tenant-alpha', async () => {
       const params: any = {
