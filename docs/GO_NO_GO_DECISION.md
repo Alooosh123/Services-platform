@@ -17,14 +17,14 @@
 | البوابة | الحالة الحالية | شرط الانتقال إلى PASSED |
 |---|---|---|
 | SaaS API authentication | معالجة أولية في فرع PR | دمج التغيير بعد نجاح CI ومراجعة أمنية |
-| SaaS persistence | BLOCKED | كل عمليات الخطط والمستأجرين والاشتراكات والفواتير تستخدم قاعدة البيانات فعلياً |
-| Tenant isolation | BLOCKED | عزل مثبت باختبارات سلبية بين مستأجرين مختلفين |
+| SaaS persistence | IMPLEMENTED IN BRANCH — VALIDATION PENDING | CRUD للخطط والمستأجرين والاشتراكات والفواتير في Prisma؛ يلزم نجاح migration deploy والاختبارات على رأس الفرع ومراجعة التشغيل الفعلي |
+| Tenant isolation | PARTIALLY IMPLEMENTED — ACCEPTANCE PENDING | AsyncLocalStorage + tenant-aware Prisma filters + reference checks؛ يلزم اختبار تكامل واختراق يغطي كل الوحدات والطوابير والمهام المجدولة والتخزين |
 | Flutter API integration | BLOCKED | مصادقة وكتالوج ومحفظة وطلبات حقيقية مع حالات فشل آمنة |
 | Provider integrations | BLOCKED | عقد ومفاتيح Sandbox/Production واختبار حي موثق لكل مزود |
 | Yemeni payment channels | BLOCKED | بيانات استقبال رسمية موثقة واعتماد مالي ثنائي واختبار تسوية |
 | Ledger reconciliation | NOT VERIFIED | بيانات مالية اختبارية متوازنة، ونتائج تسوية محفوظة قابلة للمراجعة |
 | Dependency security | BLOCKED | معالجة الثغرات عالية/حرجة وإعادة فحص `npm audit` دون إخفاء النتيجة |
-| CI tests and builds | PENDING | تشغيل PR الحالي ينجح بكامل بوابات Backend وFlutter والبناء |
+| CI tests and builds | PENDING | Backend tests وFlutter وPrisma migrations وbuild يجب أن تنجح على أحدث commit؛ Security Audit ما زال حاجزاً بسبب نتائج npm audit |
 | Staging deployment | BLOCKED | نشر فعلي، endpoint health checks، ومراجعة سجلات وتشغيل |
 | Backup / restore | NOT VERIFIED | نسخة مشفرة خارجية وتجربة استعادة فعلية موثقة مع قياس RTO/RPO |
 | Load and security testing | BLOCKED | اختبارات حمل وتنافس واختبار اختراق مستقل |
@@ -41,9 +41,9 @@
 
 ## 4. التغييرات الوقائية قيد المراجعة
 
-فرع `production-completion` وPR مسودة #1 يضمان حماية SaaS على مستوى Controller، وتعطيل عمليات SaaS المعتمدة على الذاكرة في production، وإصلاح إعدادات CI، وإزالة كلمات مرور seed الافتراضية، وتعطيل قنوات الدفع غير المعتمدة في بيانات seed الجديدة.
+فرع `production-completion` وPR مسودة #1 يضمان: SaaS persistence عبر Prisma، حماية Controller، عزل سياق المستأجر وفرض فلاتر على استعلامات وكتابات Prisma، التحقق من المراجع المرتبطة، معاملات Serializable لتعيين المالك وتغيير الحالة والتجديد، وقيداً فريداً جزئياً لفاتورة غير مدفوعة واحدة لكل متجر. كما أضيفت اختبارات سلبية للعزل، وأصبح CI يحاول تطبيق كامل ترحيلات Prisma على PostgreSQL مؤقت.
 
-هذه التغييرات حواجز أمان وتحسينات CI فقط؛ ولا تحقق وحدها شروط الإطلاق. يجب انتظار نتيجة تشغيل CI على رأس الفرع ومراجعة طلب الدمج.
+هذه تحسينات مهمة لكنها لا تعني اعتماد العزل للإنتاج. يلزم نجاح تشغيل CI على آخر commit، ومراجعة أمنية مستقلة، واختبارات تكامل على بيانات تمثل أكثر من متجر، والتحقق من المهام الخلفية والتخزين والـ API gateways.
 
 ## 5. شروط إعادة تقييم القرار
 
