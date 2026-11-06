@@ -290,7 +290,7 @@ export class SaasService {
     const expectedKeys = this.fullEqualFeatures.map((feature) => feature.key).sort();
     const evaluatedTiers = plans.map((plan) => {
       const features = Array.isArray(plan.featuresJson)
-        ? (plan.featuresJson as SaaSFeatureItem[])
+        ? (plan.featuresJson as unknown as SaaSFeatureItem[])
         : [];
       const enabledKeys = features.filter((feature) => feature.included).map((feature) => feature.key).sort();
       const equalKeys =
