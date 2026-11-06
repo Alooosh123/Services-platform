@@ -86,13 +86,13 @@ describe('PrismaService tenant query scope', () => {
       };
       await middleware(productParams, async (value) => value);
       expect(productParams.args.include.prices).toEqual({
-        where: { tenantId: 'tenant-alpha', AND: [] },
+        where: { AND: [{ tenantId: 'tenant-alpha' }] },
       });
       expect(productParams.args.include.tierPrices).toEqual({
         where: { tenantId: 'tenant-alpha', AND: [] },
       });
       expect(productParams.args.include.agentPrices).toEqual({
-        where: { subAgent: { is: { tenantId: 'tenant-alpha' } }, AND: [] },
+        where: { AND: [{ subAgent: { is: { tenantId: 'tenant-alpha' } } }] },
       });
     });
   });
