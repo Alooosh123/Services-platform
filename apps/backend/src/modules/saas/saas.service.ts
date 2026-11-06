@@ -419,7 +419,7 @@ export class SaasService {
       });
       return this.mapTenant(tenant);
     } catch (error: any) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      if (error?.code === 'P2002') {
         throw new ConflictException('Tenant slug, domain or license key already exists');
       }
       throw error;
