@@ -16,15 +16,15 @@
 
 | البوابة | الحالة الحالية | شرط الانتقال إلى PASSED |
 |---|---|---|
-| SaaS API authentication | معالجة أولية في فرع PR | دمج التغيير بعد نجاح CI ومراجعة أمنية |
-| SaaS persistence | IMPLEMENTED IN BRANCH — VALIDATION PENDING | CRUD للخطط والمستأجرين والاشتراكات والفواتير في Prisma؛ يلزم نجاح migration deploy والاختبارات على رأس الفرع ومراجعة التشغيل الفعلي |
-| Tenant isolation | PARTIALLY IMPLEMENTED — ACCEPTANCE PENDING | AsyncLocalStorage + tenant-aware Prisma filters + reference checks؛ يلزم اختبار تكامل واختراق يغطي كل الوحدات والطوابير والمهام المجدولة والتخزين |
+| SaaS API authentication | PASSED IN DRAFT BRANCH | JWT + SUPER_ADMIN role guard على وحدة إدارة SaaS؛ يلزم مراجعة أمنية ودمج PR بعد إغلاق بقية البوابات |
+| SaaS persistence | IMPLEMENTED + CI VERIFIED | CRUD في Prisma؛ نجح آخر CI في Backend tests وبناء الحزم، ونجح تطبيق الترحيلات على PostgreSQL مؤقت |
+| Tenant isolation | IMPLEMENTED IN DRAFT — SECURITY ACCEPTANCE PENDING | AsyncLocalStorage + tenant-aware Prisma filters + parent reference checks + route-scoped platform/finance bypass؛ يلزم اختبار اختراق وتكامل مستقل لكل الوحدات والمهام الخلفية والتخزين |
 | Flutter API integration | BLOCKED | مصادقة وكتالوج ومحفظة وطلبات حقيقية مع حالات فشل آمنة |
 | Provider integrations | BLOCKED | عقد ومفاتيح Sandbox/Production واختبار حي موثق لكل مزود |
 | Yemeni payment channels | BLOCKED | بيانات استقبال رسمية موثقة واعتماد مالي ثنائي واختبار تسوية |
 | Ledger reconciliation | NOT VERIFIED | بيانات مالية اختبارية متوازنة، ونتائج تسوية محفوظة قابلة للمراجعة |
 | Dependency security | BLOCKED | معالجة الثغرات عالية/حرجة وإعادة فحص `npm audit` دون إخفاء النتيجة |
-| CI tests and builds | PENDING | Backend tests وFlutter وPrisma migrations وbuild يجب أن تنجح على أحدث commit؛ Security Audit ما زال حاجزاً بسبب نتائج npm audit |
+| CI tests and builds | PASSED EXCEPT SECURITY AUDIT | 39 مجموعة / 261 اختبار Backend؛ Flutter Analyze ناجح؛ 19 Prisma migrations مطبقة؛ جميع workspaces built. npm audit ما زال فاشلاً بـ42 ثغرة |
 | Staging deployment | BLOCKED | نشر فعلي، endpoint health checks، ومراجعة سجلات وتشغيل |
 | Backup / restore | NOT VERIFIED | نسخة مشفرة خارجية وتجربة استعادة فعلية موثقة مع قياس RTO/RPO |
 | Load and security testing | BLOCKED | اختبارات حمل وتنافس واختبار اختراق مستقل |
@@ -32,18 +32,17 @@
 
 ## 3. أدلة موانع الإطلاق
 
-- مسارات SaaS في الخدمة كانت تعتمد على بيانات في الذاكرة، رغم وجود جداول SaaS في Prisma.
-- تطبيق Flutter كان يحتوي على حالات نجاح شحن وتحقق ورصيد ثابت دون اتصال API؛ جرى إزالة ادعاءات النجاح التجريبية في فرع المعالجة، ولم يكتمل الربط الفعلي.
-- آخر تشغيل CI على `main` أظهر فشل مجموعات اختبارات بسبب عدم بناء الحزمة المشتركة، وفشل Prisma validation بسبب غياب `DATABASE_URL`.
-- تدقيق الاعتماديات في ذلك التشغيل أظهر 42 ثغرة: 14 عالية و2 حرجة إضافة إلى 26 منخفضة/متوسطة.
-- مراحل staging وproduction في workflow السابق لم تكن تنفذ نشرًا فعليًا.
-- لا يوجد إثبات في هذا التدقيق على استضافة إنتاجية أو قنوات دفع ومزودي شحن موصولين بمفاتيح تشغيل حقيقية.
+- SaaS persistence وطبقة tenant-aware query/write filtering موجودة في فرع المعالجة، واجتازت الاختبارات الآلية الحالية، لكنها لم تخضع بعد لاختبار اختراق مستقل شامل.
+- تطبيق Flutter لم يعد يعرض نجاحًا وهميًا، لكنه لا يزال غير متصل بخادم API.
+- آخر CI على فرع المعالجة نجح في 39 مجموعة / 261 اختبار Backend، وتحليل Flutter، و19 Prisma migrations، وبناء جميع workspaces.
+- Security Audit ما زال يكتشف 42 ثغرة: 14 عالية و2 حرجة إضافة إلى 26 منخفضة/متوسطة.
+- لا توجد في workflow الحالي مهام نشر حقيقية، ولا دليل على استضافة إنتاجية أو قنوات دفع ومزودي شحن موصولين بمفاتيح تشغيل حقيقية.
 
 ## 4. التغييرات الوقائية قيد المراجعة
 
-فرع `production-completion` وPR مسودة #1 يضمان: SaaS persistence عبر Prisma، حماية Controller، عزل سياق المستأجر وفرض فلاتر على استعلامات وكتابات Prisma، التحقق من المراجع المرتبطة، معاملات Serializable لتعيين المالك وتغيير الحالة والتجديد، وقيداً فريداً جزئياً لفاتورة غير مدفوعة واحدة لكل متجر. كما أضيفت اختبارات سلبية للعزل، وأصبح CI يحاول تطبيق كامل ترحيلات Prisma على PostgreSQL مؤقت.
+فرع `production-completion` وPR مسودة #1 يضمان SaaS persistence عبر Prisma، حماية Controller، سياق المستأجر وعزل القراءة والكتابة، فحص مراجع السجلات المرتبطة، معاملات Serializable لتعيين المالك وتغيير الحالة والتجديد، قيدًا فريدًا للفواتير غير المدفوعة، وتجاوزًا ضيقًا لصلاحيات المالية على مسار تأكيد الفاتورة الموسوم فقط.
 
-هذه تحسينات مهمة لكنها لا تعني اعتماد العزل للإنتاج. يلزم نجاح تشغيل CI على آخر commit، ومراجعة أمنية مستقلة، واختبارات تكامل على بيانات تمثل أكثر من متجر، والتحقق من المهام الخلفية والتخزين والـ API gateways.
+آخر CI على commit `745ad44f1a11fc756ec5148f0a9bb1e2ee7e69fe` اجتاز الاختبارات والترحيلات وFlutter والبناء. لا تزال بوابة npm audit تفشل بـ42 ثغرة، ويلزم اختبار اختراق وعزل شامل قبل اعتماد العزل للإنتاج.
 
 ## 5. شروط إعادة تقييم القرار
 
