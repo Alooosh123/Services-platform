@@ -162,45 +162,67 @@ export class FulfillmentService {
         throw new ForbiddenException('لا يمكن تسوية قيود دفتر الأستاذ العام بالاعتماد على استجابة وهمية في بيئة الإنتاج');
       }
 
-      // SETTLEMENT: confirmed success
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.Completed,
-          completedAt: new Date(),
-          voucherCode: response.pinCode || null,
-          providerTxId: response.providerOrderId || null,
-          statusHistory: {
-            create: {
-              oldStatus: OrderStatus.Processing,
-              newStatus: OrderStatus.Completed,
-              reason: 'Fulfillment completed successfully via provider',
+      // Provider success and financial completion must commit together.
+      // If the ledger write fails, the order remains unpaid/held for reconciliation.
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              status: OrderStatus.Completed,
+              completedAt: new Date(),
+              voucherCode: response.pinCode || null,
+              providerTxId: response.providerOrderId || null,
+              statusHistory: {
+                create: {
+                  oldStatus: OrderStatus.Processing,
+                  newStatus: OrderStatus.Completed,
+                  reason: 'Fulfillment completed and ledger settlement posted atomically',
+                },
+              },
+            },
+          });
+
+          await this.ledgerService.recordOrderSettlement({
+            userId: order.userId,
+            walletId: wallet.id,
+            orderId: order.orderNumber,
+            currency,
+            retailPrice: retailPriceNumber,
+            costPrice: costPriceNumber,
+            serviceName: order.snapshotServiceName,
+            providerCode,
+          }, tx);
+        }, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (ledgerErr: any) {
+        this.logger.error(
+          `Provider confirmed order ${order.orderNumber}, but atomic ledger settlement failed: ${ledgerErr?.message}`,
+        );
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.ManualReview,
+            errorMessage: 'أكد المزود نجاح الشحن لكن لم يكتمل القيد المالي الذري؛ يتطلب الطلب مطابقة مالية يدوية.',
+            statusHistory: {
+              create: {
+                oldStatus: OrderStatus.Processing,
+                newStatus: OrderStatus.ManualReview,
+                reason: 'Provider success could not be atomically committed with the ledger settlement.',
+              },
             },
           },
-        },
-      });
-
-      // Strict Double-Entry Ledger Settlement
-      let settlementSucceeded = false;
-      try {
-        await this.ledgerService.recordOrderSettlement({
-          userId: order.userId,
-          walletId: wallet.id,
-          orderId: order.orderNumber,
-          currency,
-          retailPrice: retailPriceNumber,
-          costPrice: costPriceNumber,
-          serviceName: order.snapshotServiceName,
-          providerCode,
         });
-        settlementSucceeded = true;
-      } catch (ledgerErr: any) {
-        this.logger.error(`Settlement ledger error for order ${order.orderNumber}: ${ledgerErr?.message}`);
+        return {
+          success: false,
+          status: OrderStatus.ManualReview,
+          orderNumber: order.orderNumber,
+          message: 'Provider success awaits financial reconciliation.',
+        };
       }
 
-      if (settlementSucceeded) {
-        await this.settleAgentCommission(order.id, currency);
-      }
+      await this.settleAgentCommission(order.id, currency);
 
       // P05: Settle commercial cost from supplier account
       if (this.supplierBalanceService) {
