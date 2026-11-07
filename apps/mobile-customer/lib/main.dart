@@ -62,7 +62,7 @@ class _CheckoutPageState extends State<CheckoutPage>{
  Future<void> buy()async{
  if(schema.any((f)=>(f['required']??true)==true && (values[(f['fieldKey']??f['key']).toString()]?.text.trim().isEmpty??true))){setState(()=>error='أكمل بيانات المستفيد المطلوبة.');return;}if(!RegExp(r'^[0-9]{6}$').hasMatch(pin.text)){setState(()=>error='أدخل رمز المعاملة من 6 أرقام.');return;}
  setState(() { busy = true; error = null; });try{
- await ApiClient.instance.post('/orders/checkout',headers:{'x-transaction-pin':pin.text},body:{'productId':widget.product['id'],'currency':currency,'paymentMethod':'WALLET','playerFields':{for(final e in values.entries)e.key:e.value.text.trim()},'idempotencyKey':idempotencyKey});
+ await ApiClient.instance.post('/orders/checkout',headers:{'x-transaction-pin':pin.text,'Idempotency-Key':idempotencyKey},body:{'productId':widget.product['id'],'currency':currency,'paymentMethod':'WALLET','playerFields':{for(final e in values.entries)e.key:e.value.text.trim()},'idempotencyKey':idempotencyKey});
  if(mounted){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم إرسال الطلب. تابع حالته في طلباتي.')));Navigator.pop(context);}
  }catch(e){if(mounted)setState(()=>error=e.toString());}finally{if(mounted)setState(()=>busy=false);}
  }
