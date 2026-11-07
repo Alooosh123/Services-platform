@@ -434,8 +434,24 @@ export default function ReconciliationPage() {
     return matchChannel && matchSearch;
   });
 
+  const totalReconciliationRecords = batches.reduce((sum, batch) => sum + batch.totalItems, 0);
+  const totalMatchedRecords = batches.reduce((sum, batch) => sum + batch.matchedItems, 0);
+  const matchingRate = totalReconciliationRecords > 0
+    ? ((totalMatchedRecords / totalReconciliationRecords) * 100).toFixed(1)
+    : '—';
+  const openDiscrepancies = discrepancies.filter((item) => item.status !== 'RESOLVED').length;
+  const totalSupplierUsd = suppliers.reduce((sum, supplier) =>
+    sum + (supplier.currency === 'USD' ? supplier.balance : 0), 0);
+
   return (
     <div className="space-y-6 pb-12 text-right">
+      {(loading || loadError || actionError) && (
+        <div className="space-y-2">
+          {loading && <p className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-400">جاري تحميل بيانات المطابقة والقنوات وأرصدة الموردين من الخادم...</p>}
+          {loadError && <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">{loadError}</p>}
+          {actionError && <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">{actionError}</p>}
+        </div>
+      )}
       {/* Page Header */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
@@ -484,9 +500,9 @@ export default function ReconciliationPage() {
             <span className="text-xs font-medium">معدل المطابقة الآلية الثلاثية</span>
             <CheckCircle className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-white">98.9%</div>
+          <div className="text-2xl font-bold text-white">{matchingRate}{matchingRate !== '—' ? '%' : ''}</div>
           <div className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-            <span>99 من أصل 100 حركة طابقت تلقائياً</span>
+            <span>{totalMatchedRecords.toLocaleString('en-US')} من {totalReconciliationRecords.toLocaleString('en-US')} حركة طابقت في الدفعات المحفوظة</span>
           </div>
         </div>
 
@@ -497,7 +513,7 @@ export default function ReconciliationPage() {
             <AlertTriangle className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-2xl font-bold text-amber-400">
-            {discrepancies.filter((d) => d.status === 'OPEN').length} حالة
+            {openDiscrepancies} حالة
           </div>
           <div className="text-xs text-slate-400 mt-1">
             <span>تتطلب مراجعة مالية وتعديل قيد</span>
@@ -511,11 +527,11 @@ export default function ReconciliationPage() {
             <Wallet className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="text-2xl font-bold text-white">
-            ${suppliers.reduce((acc, s) => acc + (s.currency === 'USD' ? s.balance : 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            ${totalSupplierUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>بوابة الشحن آمنة (Fulfillment Unblocked)</span>
+            <span>{suppliers.length > 0 ? 'أرصدة الموردين المحفوظة في قاعدة البيانات' : 'بيانات الموردين غير متاحة'}</span>
           </div>
         </div>
 
@@ -529,7 +545,7 @@ export default function ReconciliationPage() {
             {channels.filter((c) => c.mode === 'API').length} آلي / {channels.length} قنوات
           </div>
           <div className="text-xs text-slate-400 mt-1">
-            <span>التحويل التلقائي للأفراد محجوب بأمان (BLOCKED_EXTERNAL)</span>
+            <span>الحالة محسوبة من إعدادات القنوات المحفوظة</span>
           </div>
         </div>
       </div>
@@ -653,7 +669,11 @@ export default function ReconciliationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
-                  {batches.map((batch) => (
+                  {loading ? (
+                    <tr><td colSpan={10} className="py-8 text-center text-slate-400">جاري تحميل الدفعات...</td></tr>
+                  ) : batches.length === 0 ? (
+                    <tr><td colSpan={10} className="py-8 text-center text-slate-500">لا توجد دفعات مطابقة محفوظة. ارفع كشفاً بنكياً حقيقياً لتشغيل المطابقة.</td></tr>
+                  ) : batches.map((batch) => (
                     <tr key={batch.id} className="hover:bg-slate-800/30 transition">
                       <td className="py-3.5 px-4 font-mono text-xs text-indigo-300 font-medium">
                         {batch.batchNumber}
@@ -883,7 +903,11 @@ export default function ReconciliationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
-                  {channels.map((chan) => (
+                  {loading ? (
+                    <tr><td colSpan={7} className="py-8 text-center text-slate-400">جاري تحميل القنوات...</td></tr>
+                  ) : channels.length === 0 ? (
+                    <tr><td colSpan={7} className="py-8 text-center text-slate-500">لا توجد قنوات دفع محفوظة أو أن إعداداتها غير متاحة حالياً.</td></tr>
+                  ) : channels.map((chan) => (
                     <tr key={chan.code} className="hover:bg-slate-800/30 transition">
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-white">{chan.name}</div>
@@ -1030,7 +1054,11 @@ export default function ReconciliationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
-                  {suppliers.map((sup) => (
+                  {loading ? (
+                    <tr><td colSpan={9} className="py-8 text-center text-slate-400">جاري تحميل أرصدة الموردين...</td></tr>
+                  ) : suppliers.length === 0 ? (
+                    <tr><td colSpan={9} className="py-8 text-center text-slate-500">لا توجد أرصدة موردين محفوظة أو أن خدمة الأرصدة غير متاحة.</td></tr>
+                  ) : suppliers.map((sup) => (
                     <tr key={sup.id} className="hover:bg-slate-800/30 transition">
                       <td className="py-3.5 px-4 font-semibold text-white">
                         <div>{sup.providerName}</div>
@@ -1135,7 +1163,11 @@ export default function ReconciliationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
-                  {payouts.map((pay) => (
+                  {payoutsError ? (
+                    <tr><td colSpan={9} className="py-8 text-center text-amber-300">{payoutsError}</td></tr>
+                  ) : payouts.length === 0 ? (
+                    <tr><td colSpan={9} className="py-8 text-center text-slate-500">لا توجد طلبات سحب متاحة للعرض.</td></tr>
+                  ) : payouts.map((pay) => (
                     <tr key={pay.id} className="hover:bg-slate-800/30 transition">
                       <td className="py-3.5 px-4 font-mono text-xs text-indigo-300 font-medium">
                         {pay.payoutNumber}
@@ -1235,7 +1267,25 @@ export default function ReconciliationPage() {
               </div>
 
               <div className="bg-indigo-950/30 border border-indigo-500/20 p-3 rounded-xl text-xs text-indigo-300">
-                سيقوم النظام بمقارنة الكشوف البنكية المسحوبة تلقائياً مع طلبات الإيداع والسحب وحركات دفتر الأستاذ العام وتوليد تقرير الفروقات.
+                أدخل عناصر كشف بنكي فعلي بصيغة JSON. لن ينشئ النظام حركات افتراضية أو يفترض تطابقاً تلقائياً.
+                <div className="mt-3 space-y-2">
+                  <label className="block text-xs font-semibold text-indigo-200">تاريخ كشف الحساب</label>
+                  <input
+                    type="date"
+                    value={statementDate}
+                    onChange={(event) => setStatementDate(event.target.value)}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 p-2 text-white"
+                  />
+                  <label className="block text-xs font-semibold text-indigo-200">عناصر الكشف (JSON Array)</label>
+                  <textarea
+                    rows={7}
+                    value={statementJson}
+                    onChange={(event) => setStatementJson(event.target.value)}
+                    placeholder={'[{"referenceNumber":"BANK-REF-1001","amount":12500,"currency":"YER","type":"DEPOSIT"}]'}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 p-2 font-mono text-xs text-white"
+                    dir="ltr"
+                  />
+                </div>
               </div>
             </div>
 
