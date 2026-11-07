@@ -17,7 +17,11 @@ describe('ProvidersService credential encryption', () => {
           Promise.resolve({ id: 'provider-1', ...data }),
         ),
       },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-provider-update-1' }),
+      },
     };
+    prisma.$transaction = jest.fn((callback: (tx: any) => Promise<any>) => callback(prisma));
     service = new ProvidersService(
       prisma,
       {} as any,
@@ -36,13 +40,23 @@ describe('ProvidersService credential encryption', () => {
   });
 
   it('stores provider API credentials encrypted and never returns the ciphertext', async () => {
-    const result = await service.updateProvider('provider-1', { apiKey: 'provider-secret-key' } as any);
+    const result = await service.updateProvider('provider-1', { apiKey: 'provider-secret-key' } as any, 'owner-1');
     const persistedCiphertext = prisma.provider.update.mock.calls[0][0].data.credentialsCiphertext;
 
     expect(prisma.provider.update.mock.calls[0][0].data.apiKey).toBeNull();
     expect(encryption.decryptJson(persistedCiphertext)).toEqual({ apiKey: 'provider-secret-key' });
     expect(result.apiKey).toBe('********');
     expect(result.credentialsCiphertext).toBeUndefined();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'owner-1',
+          action: 'PROVIDER_CONFIGURATION_UPDATED',
+          entityId: 'provider-1',
+          newValues: expect.objectContaining({ apiKeyChanged: true }),
+        }),
+      }),
+    );
   });
 
   it('decrypts persisted provider credentials only for internal use', async () => {
