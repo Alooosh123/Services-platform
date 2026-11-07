@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ITopupProviderAdapter } from './provider-adapter.interface';
 import {
   PlayerValidationRequest,
@@ -22,40 +22,35 @@ export class ManualProviderAdapter implements ITopupProviderAdapter {
       return { isValid: false, errorMessage: 'معرف اللاعب مطلوب للتنفيذ اليدوي' };
     }
     return {
-      isValid: true,
-      playerName: `Player_${playerId.slice(-4)}`,
-      zoneName: request.fields?.zone_id || 'Server-1',
+      isValid: false,
+      errorMessage: 'هذا المزود لا يدعم التحقق الآلي من اللاعب؛ يجب على المشغل مراجعة بيانات المستفيد أثناء التنفيذ اليدوي.',
     };
   }
 
   async submitOrder(request: TopupProviderOrderRequest): Promise<TopupProviderOrderResponse> {
     this.logger.log(`Enqueueing order ${request.orderNumber || request.orderId} for Manual Operator Fulfillment`);
 
-    try {
-      // Upsert manual fulfillment record
-      await this.prisma.manualFulfillment.upsert({
-        where: { orderId: request.orderId },
-        update: {
-          status: 'PENDING',
-          operatorNotes: 'بانتظار تخصيص مشغل التنفيذ اليدوي',
-        },
-        create: {
-          orderId: request.orderId,
-          status: 'PENDING',
-          operatorNotes: 'بانتظار تخصيص مشغل التنفيذ اليدوي',
-        },
-      });
-    } catch (err: any) {
-      this.logger.warn(`Could not create ManualFulfillment record in DB: ${err?.message}`);
-    }
+    await this.prisma.manualFulfillment.upsert({
+      where: { orderId: request.orderId },
+      update: {
+        status: 'PENDING',
+        operatorNotes: 'بانتظار تخصيص مشغل التنفيذ اليدوي',
+      },
+      create: {
+        orderId: request.orderId,
+        status: 'PENDING',
+        operatorNotes: 'بانتظار تخصيص مشغل التنفيذ اليدوي',
+      },
+    });
 
     return {
       success: true,
       status: 'PENDING',
-      providerOrderId: `MANUAL-${Date.now()}`,
+      providerOrderId: `MANUAL-${request.orderId}`,
       rawResponse: {
         mode: 'MANUAL',
         enqueuedAt: new Date().toISOString(),
+        persisted: true,
       },
     };
   }
@@ -90,7 +85,7 @@ export class ManualProviderAdapter implements ITopupProviderAdapter {
   async fetchBalance(): Promise<ProviderBalanceResponse> {
     return {
       currency: 'USD',
-      balance: 999999, // Manual fulfillment queue has unlimited virtual credit
+      balance: 0, // Manual execution has no provider-held virtual credit
       provider: 'MANUAL',
       lastUpdated: new Date().toISOString(),
     };
