@@ -162,8 +162,8 @@ export default function CustomerWalletPage() {
 
   const handleCreateDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedChannelInfo) {
-      setDepositError('لا توجد قناة إيداع متاحة حالياً');
+    if (!selectedChannelInfo || !selectedChannelInfo.supportedCurrencies.includes(selectedCurrency)) {
+      setDepositError('لا توجد قناة إيداع موثقة تدعم العملة المختارة حالياً.');
       return;
     }
     if (!depositRefNumber) {
@@ -215,7 +215,11 @@ export default function CustomerWalletPage() {
 
   const currentWallet = wallets[selectedCurrency];
 
-  const selectedChannelInfo = channels.find((c) => c.code === depositChannel) || channels[0];
+  const channelsForCurrency = channels.filter((channel) =>
+    Array.isArray(channel.supportedCurrencies) && channel.supportedCurrencies.includes(selectedCurrency),
+  );
+  const selectedChannelInfo =
+    channelsForCurrency.find((channel) => channel.code === depositChannel) || channelsForCurrency[0];
 
   const getStatusBadge = (status: DepositRequest['status']) => {
     switch (status) {
@@ -537,9 +541,9 @@ export default function CustomerWalletPage() {
                   onChange={(e) => setDepositChannel(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right"
                 >
-                  {channels.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.nameAr}
+                  {channelsForCurrency.map((channel) => (
+                    <option key={channel.code} value={channel.code}>
+                      {channel.nameAr}
                     </option>
                   ))}
                 </select>
@@ -551,7 +555,16 @@ export default function CustomerWalletPage() {
                 </label>
                 <select
                   value={selectedCurrency}
-                  onChange={(e) => setSelectedCurrency(e.target.value as any)}
+                  onChange={(e) => {
+                    const nextCurrency = e.target.value as 'YER' | 'USD' | 'SAR';
+                    setSelectedCurrency(nextCurrency);
+                    const supported = channels.filter((channel) =>
+                      Array.isArray(channel.supportedCurrencies) && channel.supportedCurrencies.includes(nextCurrency),
+                    );
+                    if (!supported.some((channel) => channel.code === depositChannel)) {
+                      setDepositChannel(supported[0]?.code || '');
+                    }
+                  }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right font-bold"
                 >
                   <option value="YER">ريال يمني (YER)</option>
