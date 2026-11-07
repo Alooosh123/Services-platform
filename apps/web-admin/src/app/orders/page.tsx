@@ -186,6 +186,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': getActionIdempotencyKey('refund', selectedOrder.id),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -194,6 +195,7 @@ export default function AdminOrdersPage() {
       });
 
       if (res.ok) {
+        clearActionIdempotencyKey('refund', selectedOrder.id);
         alert('تم استرداد الطلب وعكس القيد المحاسبي وإعادة الرصيد للمحفظة بنجاح!');
         setShowRefundModal(false);
         setRefundReasonInput('');
@@ -204,9 +206,7 @@ export default function AdminOrdersPage() {
         alert(`فشل الاسترداد: ${err.message || 'خطأ'}`);
       }
     } catch {
-      alert('تم تسجيل استرداد الطلب بنجاح.');
-      setShowRefundModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد نتيجة الاسترداد بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة بنفس السبب للتحقق من النتيجة.');
     } finally {
       setActionLoading(false);
     }
