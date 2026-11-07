@@ -30,7 +30,7 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
   };
 
   const mockPayoutsService = {
-    findByIdempotencyKey: jest.fn(),
+    findByExternalReference: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -77,7 +77,7 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
       });
 
       // 2. Mock matched payout
-      mockPayoutsService.findByIdempotencyKey.mockImplementation((key: string) => {
+      mockPayoutsService.findByExternalReference.mockImplementation((key: string) => {
         if (key === 'PO-KEY-MATCHED-01') {
           return Promise.resolve({
             id: 'po-1',
