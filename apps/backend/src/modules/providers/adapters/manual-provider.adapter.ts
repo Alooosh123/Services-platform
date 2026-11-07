@@ -76,9 +76,10 @@ export class ManualProviderAdapter implements ITopupProviderAdapter {
     } catch {}
 
     return {
-      success: true,
+      success: false,
       status: 'PENDING',
       providerOrderId,
+      errorMessage: 'حالة التنفيذ اليدوي غير مؤكدة حالياً؛ يلزم التحقق من سجل الطابور.',
     };
   }
 
