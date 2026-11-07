@@ -8,8 +8,7 @@ on:
     branches:
       - production-completion
     paths:
-      - 'apps/backend/src/modules/orders/**'
-      - 'apps/backend/src/main.ts'
+      - 'apps/backend/src/**'
       - 'apps/web-customer/**'
       - 'apps/web-admin/src/app/orders/**'
       - 'apps/mobile-customer/**'
