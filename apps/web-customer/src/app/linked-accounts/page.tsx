@@ -135,13 +135,21 @@ export default function LinkedAccountsPage() {
 
         <button
           onClick={() => setShowAddModal(true)}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-5 py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2"
+          disabled={Boolean(error)}
+          title={error || 'ربط الحسابات متوقف لحين تفعيل التخزين الدائم للموافقة والحسابات'}
+          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs px-5 py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
           <span>ربط حساب جديد</span>
         </button>
       </div>
 
+      {error && (
+        <div role="alert" className="bg-amber-950/40 border border-amber-500/30 rounded-2xl p-4 mb-6 text-xs text-amber-200">
+          الحسابات المرتبطة غير متاحة حالياً من الخادم. لم يتم حفظ أي موافقة أو حساب في الذاكرة المؤقتة.
+          <p className="mt-2 text-amber-300/80">{error}</p>
+        </div>
+      )}
       {actionMsg && (
         <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 mb-6 text-xs text-emerald-300 flex items-center justify-between">
           <div className="flex items-center gap-2">
