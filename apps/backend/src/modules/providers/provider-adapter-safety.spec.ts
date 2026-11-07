@@ -26,6 +26,23 @@ describe('Provider adapter safety gates', () => {
     expect(() => service.getAdapter('')).toThrow(ServiceUnavailableException);
   });
 
+  it('rejects MOCK provider configuration outside automated tests', () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      const service = new ProvidersService(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+      expect(() => service.getAdapter('MOCK')).toThrow(ServiceUnavailableException);
+    } finally {
+      process.env.NODE_ENV = original;
+    }
+  });
+
   describe('ExternalApiAdapter', () => {
     const adapter = new ExternalApiAdapter();
 
