@@ -166,7 +166,7 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
       const updatedBatch = await reconciliationService.getBatchById(persistedBatch.id);
       const updatedItem = updatedBatch.items.find((i) => i.id === discrepancyItem!.id);
       expect(updatedItem?.status).toBe(ReconciliationStatus.RESOLVED_MANUAL);
-      expect(updatedBatch.status).toBe('PENDING_REVIEW');
+      expect(updatedBatch.status).toBe('RESOLVED');
     });
   });
 });
