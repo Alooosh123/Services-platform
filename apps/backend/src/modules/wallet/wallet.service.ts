@@ -467,7 +467,7 @@ export class WalletService {
   async depositFunds(userId: string, dto: DepositFundsDto) {
     if (!this.allowMemoryFallback()) {
       throw new ForbiddenException(
-        'الإيداع المباشر التجريبي محظور نهائياً في بيئة الإنتاج. يجب تمرير كافة عمليات الشحن عبر القنوات البنكية المعتمدة والتأكيد المالي.',
+        'الإيداع المباشر التجريبي متاح لبيئة الاختبار الآلية فقط. يجب تمرير جميع عمليات الشحن خارج الاختبارات عبر قنوات دفع موثقة وتأكيد مالي.',
       );
     }
 
