@@ -59,7 +59,7 @@ export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
 
   private failClosedForTenant(error: any): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       this.logger.error(`Reconciliation persistence failed: ${error?.message || error}`);
       throw new ServiceUnavailableException('Reconciliation data is unavailable from the tenant database.');
     }
@@ -72,7 +72,7 @@ export class ReconciliationService {
     private depositsService: DepositsService,
     private payoutsService: PayoutsService,
   ) {
-    this.seedDefaultBatch();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultBatch();
   }
 
   private seedDefaultBatch() {
@@ -308,10 +308,14 @@ export class ReconciliationService {
       });
     } catch (err: any) {
       this.failClosedForTenant(err);
-      this.logger.warn(`Local unscoped development reconciliation fallback (${err?.message})`);
+      this.logger.warn(`Test-only in-memory reconciliation fallback (${err?.message})`);
     }
 
-    // Save in memory
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException('Reconciliation batch was not persisted.');
+    }
+
+    // Test-only memory fixture
     const memBatch: InMemoryReconciliationBatch = {
       id: batchId,
       batchNumber,
@@ -369,7 +373,7 @@ export class ReconciliationService {
         orderBy: { statementDate: 'desc' },
         include: { items: true },
       });
-      if (dbBatches.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (Array.isArray(dbBatches)) {
         return dbBatches.map((b) => ({
           id: b.id,
           batchNumber: b.batchNumber,
@@ -404,9 +408,10 @@ export class ReconciliationService {
       }
     } catch (error: any) {
       this.failClosedForTenant(error);
-      this.logger.warn(`Local unscoped development reconciliation listing fallback: ${error?.message || error}`);
+      this.logger.warn(`Test-only reconciliation listing fallback: ${error?.message || error}`);
     }
 
+    if (process.env.NODE_ENV !== 'test') return [];
     return Array.from(this.memoryBatches.values()).sort(
       (a, b) => b.statementDate.getTime() - a.statementDate.getTime(),
     );
@@ -434,9 +439,9 @@ export class ReconciliationService {
     notes: string,
     action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
   ): Promise<{ success: boolean; message: string }> {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       throw new ServiceUnavailableException(
-        'Discrepancy resolution is disabled until the resolution workflow is fully database-backed.',
+        'Discrepancy resolution is disabled outside automated tests until database-backed resolution and ledger-adjustment approvals are implemented.',
       );
     }
     for (const batch of this.memoryBatches.values()) {
