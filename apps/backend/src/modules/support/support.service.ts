@@ -546,88 +546,114 @@ export class SupportService {
     staffUserId: string,
     dto: UpdateTicketStatusDto,
   ): Promise<SupportTicketDto> {
-    const mem = this.memoryTickets.get(ticketId);
-    if (!mem) throw new NotFoundException('التذكرة غير موجودة');
+    const current = await this.getTicketById(ticketId, staffUserId, UserRole.SUPPORT);
+    const now = new Date();
+    const resolvedAt = dto.status === TicketStatus.RESOLVED ? now : current.resolvedAt ? new Date(current.resolvedAt) : null;
+    const closedAt = dto.status === TicketStatus.CLOSED ? now : current.closedAt ? new Date(current.closedAt) : null;
+    const note = dto.resolutionNotes?.trim();
 
-    mem.status = dto.status;
-    mem.updatedAt = new Date();
-    if (dto.status === TicketStatus.RESOLVED) {
-      mem.resolvedAt = new Date();
-    } else if (dto.status === TicketStatus.CLOSED) {
-      mem.closedAt = new Date();
+    if (this.allowMemoryFallback()) {
+      const mem = this.memoryTickets.get(ticketId);
+      if (!mem) throw new NotFoundException('التذكرة غير موجودة');
+      mem.status = dto.status;
+      mem.updatedAt = now;
+      if (resolvedAt) mem.resolvedAt = resolvedAt;
+      if (closedAt) mem.closedAt = closedAt;
+      if (note) {
+        mem.messages.push({
+          id: `msg-res-${Date.now()}`,
+          ticketId,
+          senderUserId: staffUserId,
+          senderRole: UserRole.SUPPORT,
+          senderName: 'إدارة الدعم',
+          message: `تم تحديث حالة التذكرة إلى (${dto.status}): ${note}`,
+          isInternalNote: true,
+          createdAt: now,
+        });
+      }
+      return this.mapToDto(mem, UserRole.SUPPORT);
     }
 
     try {
-      await this.prisma.supportTicket.update({
-        where: { id: ticketId },
-        data: {
-          status: dto.status,
-          resolvedAt: mem.resolvedAt,
-          closedAt: mem.closedAt,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.supportTicket.update({
+          where: { id: ticketId },
+          data: { status: dto.status, resolvedAt, closedAt, updatedAt: now },
+        });
+        if (note) {
+          await tx.ticketMessage.create({
+            data: {
+              id: `msg-res-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+              ticketId,
+              senderUserId: staffUserId,
+              senderRole: UserRole.SUPPORT,
+              message: `تم تحديث حالة التذكرة إلى (${dto.status}): ${note}`,
+              isInternalNote: true,
+            },
+          });
+        }
       });
-    } catch {}
-
-    // Add resolution note as system message if provided
-    if (dto.resolutionNotes) {
-      mem.messages.push({
-        id: `msg-res-${Date.now()}`,
-        ticketId,
-        senderUserId: staffUserId,
-        senderRole: UserRole.SUPPORT,
-        senderName: 'إدارة الدعم',
-        message: `تم تحديث حالة التذكرة إلى (${dto.status}): ${dto.resolutionNotes}`,
-        isInternalNote: false,
-        createdAt: new Date(),
-      });
+    } catch (err: any) {
+      this.logger.error(`Support status update transaction failed: ${err?.message}`);
+      throw new ServiceUnavailableException('Ticket status and resolution note could not be saved.');
     }
 
-    // Notify customer
+    const updated = await this.getTicketById(ticketId, staffUserId, UserRole.SUPPORT);
     await this.notificationsService.emitNotification(
-      mem.userId,
+      current.userId,
       NotificationType.SUPPORT_REPLY,
-      `تحديث حالة التذكرة #${mem.ticketNumber}`,
+      `تحديث حالة التذكرة #${current.ticketNumber}`,
       `تم تحديث حالة تذكرتك إلى: ${dto.status}.`,
       { ticketId, status: dto.status },
     );
-
-    return this.mapToDto(mem, UserRole.SUPPORT);
+    return updated;
   }
 
   /**
-   * 6. Assign ticket to support staff
+   * 6. Assign ticket to support staff; persistence is authoritative.
    */
   async assignTicket(
     ticketId: string,
     agentUserId: string,
     agentName?: string,
   ): Promise<SupportTicketDto> {
-    const mem = this.memoryTickets.get(ticketId);
-    if (!mem) throw new NotFoundException('التذكرة غير موجودة');
-
-    mem.assignedToUserId = agentUserId;
-    mem.assignedAgentName = agentName || agentUserId;
-    mem.status = TicketStatus.IN_PROGRESS;
-    mem.updatedAt = new Date();
+    if (this.allowMemoryFallback()) {
+      const mem = this.memoryTickets.get(ticketId);
+      if (!mem) throw new NotFoundException('التذكرة غير موجودة');
+      mem.assignedToUserId = agentUserId;
+      mem.assignedAgentName = agentName || agentUserId;
+      mem.status = TicketStatus.IN_PROGRESS;
+      mem.updatedAt = new Date();
+      return this.mapToDto(mem, UserRole.SUPPORT);
+    }
 
     try {
       await this.prisma.supportTicket.update({
         where: { id: ticketId },
         data: { assignedToUserId: agentUserId, status: TicketStatus.IN_PROGRESS },
       });
-    } catch {}
-
-    return this.mapToDto(mem, UserRole.SUPPORT);
+    } catch (err: any) {
+      this.logger.error(`Support ticket assignment failed: ${err?.message}`);
+      throw new ServiceUnavailableException('The support ticket assignment could not be saved.');
+    }
+    return this.getTicketById(ticketId, agentUserId, UserRole.SUPPORT);
   }
 
   /**
-   * 7. Order Diagnostics tool for Support Staff (AR-15)
+   * 7. Order diagnostics always reads the persisted ticket and linked order.
    */
   async diagnoseOrder(ticketId: string, staffUserId: string): Promise<any> {
-    const mem = this.memoryTickets.get(ticketId);
-    if (!mem) throw new NotFoundException('التذكرة غير موجودة');
+    let ticket: SupportTicketDto;
+    try {
+      ticket = await this.getTicketById(ticketId, staffUserId, UserRole.SUPPORT);
+    } catch (err) {
+      if (!this.allowMemoryFallback()) throw err;
+      const mem = this.memoryTickets.get(ticketId);
+      if (!mem) throw new NotFoundException('التذكرة غير موجودة');
+      ticket = this.mapToDto(mem, UserRole.SUPPORT);
+    }
 
-    if (!mem.orderId) {
+    if (!ticket.orderId) {
       return {
         hasLinkedOrder: false,
         message: 'لا يوجد طلب شحن مرتبط بهذه التذكرة.',
@@ -636,91 +662,84 @@ export class SupportService {
 
     try {
       const order = await this.prisma.order.findUnique({
-        where: { id: mem.orderId },
+        where: { id: ticket.orderId },
         include: { product: true, statusHistory: true },
       });
-
-      if (order) {
-        const isCompleted = order.status === OrderStatus.Completed;
-        const isFailed = order.status === OrderStatus.Failed;
-        return {
-          hasLinkedOrder: true,
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          status: order.status,
-          currency: order.snapshotCurrency,
-          retailPrice: Number(order.snapshotRetailPrice),
-          costPrice: Number(order.snapshotCostPrice),
-          beneficiaryFields: order.snapshotBeneficiaryFields,
-          providerId: order.providerId,
-          providerTxId: order.providerTxId,
-          errorMessage: order.errorMessage,
-          createdAt: order.createdAt,
-          diagnosis:
-            isCompleted
-              ? 'الطلب تم شحنه بنجاح لدى المزود. يرجى توجيه العميل بإعادة تشغيل اللعبة والتحقق من صندوق الوارد.'
-              : isFailed
-              ? 'فشل تنفيذ الطلب لدى المزود. مؤهل للاسترداد المالي أو إعادة المحاولة برقم لاعب صحيح.'
-              : 'الطلب قيد التنفيذ أو المراجعة اليدوية، يرجى الاستعلام من بوابة المزود.',
-        };
+      if (!order) {
+        if (this.allowMemoryFallback()) {
+          return {
+            hasLinkedOrder: true,
+            orderId: ticket.orderId,
+            diagnosis: 'الطلب المرتبط غير موجود في قاعدة بيانات الاختبار.',
+          };
+        }
+        throw new NotFoundException('الطلب المرتبط بالتذكرة غير موجود في قاعدة البيانات.');
       }
-    } catch {}
 
-    return {
-      hasLinkedOrder: true,
-      orderId: mem.orderId,
-      orderNumber: 'ORD-20261011-002',
-      status: 'PROCESSING',
-      paymentStatus: 'PAID',
-      currency: 'YER',
-      retailPrice: 28000,
-      costPrice: 24000,
-      playerId: '512345678',
-      providerCode: 'MOCK',
-      lastFulfillmentError: 'Gateway Timeout from vendor',
-      diagnosis: 'الطلب معلق بسبب تأخر استجابة بوابة المزود. يمكن إرسال إعادة استعلام أو تحويل للمراجعة اليدوية.',
-    };
+      const isCompleted = order.status === OrderStatus.Completed;
+      const isFailed = order.status === OrderStatus.Failed;
+      return {
+        hasLinkedOrder: true,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        currency: order.snapshotCurrency,
+        retailPrice: Number(order.snapshotRetailPrice),
+        costPrice: Number(order.snapshotCostPrice),
+        beneficiaryFields: order.snapshotBeneficiaryFields,
+        providerId: order.providerId,
+        providerTxId: order.providerTxId,
+        errorMessage: order.errorMessage,
+        createdAt: order.createdAt,
+        diagnosis: isCompleted
+          ? 'الطلب مكتمل حسب سجل قاعدة البيانات. يرجى توجيه العميل للتحقق من حسابه.'
+          : isFailed
+            ? 'فشل تنفيذ الطلب حسب سجل قاعدة البيانات. راجع مسار الاسترداد أو إعادة المحاولة.'
+            : 'الطلب قيد التنفيذ أو المراجعة اليدوية؛ يجب مطابقة حالة المزود قبل أي إعادة إرسال.',
+      };
+    } catch (err: any) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error(`Support order diagnosis failed: ${err?.message}`);
+      throw new ServiceUnavailableException('The linked order status could not be verified.');
+    }
   }
 
   /**
-   * 8. Dispute Refund Resolution (AR-01)
+   * A support ticket decision is not a financial refund. Only a financial
+   * workflow that posts a reversal in the ledger may execute a refund.
    */
   async resolveDisputeRefund(
     ticketId: string,
     staffUserId: string,
     dto: ResolveDisputeRefundDto,
   ): Promise<{ success: boolean; message: string; ticket: SupportTicketDto }> {
+    if (!dto.reason?.trim()) {
+      throw new BadRequestException('سبب قرار لجنة النزاعات مطلوب.');
+    }
+    if (!this.allowMemoryFallback()) {
+      throw new ServiceUnavailableException(
+        'A support decision cannot issue a refund. Use the financial order-refund workflow so that authorization and a reversing ledger entry are posted together.',
+      );
+    }
+
     const mem = this.memoryTickets.get(ticketId);
     if (!mem) throw new NotFoundException('التذكرة غير موجودة');
-
     const resolutionText = dto.approved
-      ? `تمت الموافقة على طلب التعويض/الاسترداد بقيمة (${dto.refundAmount || 'كامل المبلغ'}). السبب: ${dto.reason}`
-      : `تم رفض طلب الاسترداد. السبب: ${dto.reason}`;
-
+      ? `تم قبول طلب المراجعة المالية بقيمة (${dto.refundAmount || 'المبلغ الكامل'}). هذا القرار لا ينفذ استرداداً مالياً.`
+      : `تم رفض طلب المراجعة المالية. السبب: ${dto.reason}`;
     mem.status = dto.approved ? TicketStatus.RESOLVED : TicketStatus.CLOSED;
     mem.resolvedAt = new Date();
     mem.updatedAt = new Date();
-
     mem.messages.push({
-      id: `msg-disp-${Date.now()}`,
+      id: `msg-dispute-${Date.now()}`,
       ticketId,
       senderUserId: staffUserId,
-      senderRole: UserRole.SUPPORT,
-      senderName: 'لجنة النزاعات والاسترداد',
+      senderRole: UserRole.FINANCE_MANAGER,
+      senderName: 'مراجعة مالية',
       message: resolutionText,
       isInternalNote: false,
       createdAt: new Date(),
     });
-
-    // Notify customer
-    await this.notificationsService.emitNotification(
-      mem.userId,
-      NotificationType.ORDER_UPDATE,
-      dto.approved ? 'تمت الموافقة على طلب الاسترداد' : 'قرار بخصوص طلب الاسترداد',
-      resolutionText,
-      { ticketId, approved: dto.approved, amount: dto.refundAmount },
-    );
-
     return {
       success: true,
       message: resolutionText,
