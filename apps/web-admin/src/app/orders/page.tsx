@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Header } from '../../components/Header';
 import {
   Search,
@@ -39,6 +39,21 @@ export default function AdminOrdersPage() {
   const [proofUrlInput, setProofUrlInput] = useState('');
   const [operatorNotesInput, setOperatorNotesInput] = useState('');
   const [refundReasonInput, setRefundReasonInput] = useState('');
+
+  const actionIdempotencyKeys = useRef(new Map<string, string>());
+
+  const getActionIdempotencyKey = (action: string, orderId: string) => {
+    const mapKey = `${action}:${orderId}`;
+    const existingKey = actionIdempotencyKeys.current.get(mapKey);
+    if (existingKey) return existingKey;
+    const key = window.crypto.randomUUID();
+    actionIdempotencyKeys.current.set(mapKey, key);
+    return key;
+  };
+
+  const clearActionIdempotencyKey = (action: string, orderId: string) => {
+    actionIdempotencyKeys.current.delete(`${action}:${orderId}`);
+  };
 
   const fetchOrders = async () => {
     setLoading(true);
