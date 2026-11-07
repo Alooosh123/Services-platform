@@ -1,4 +1,4 @@
-import { TooManyRequestsException, ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { RedisRateLimitGuard } from './redis-rate-limit.guard';
 import { RedisRateLimitOptions } from './rate-limit.decorator';
 
@@ -61,7 +61,7 @@ describe('RedisRateLimitGuard', () => {
   it('blocks requests over the limit and sets Retry-After', async () => {
     store.incrementRateLimit.mockResolvedValue({ count: 6, ttlMs: 12_500 });
 
-    await expect(guard.canActivate(contextFor())).rejects.toBeInstanceOf(TooManyRequestsException);
+    await expect(guard.canActivate(contextFor())).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
 
     expect(response.setHeader).toHaveBeenCalledWith('Retry-After', '13');
     expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
