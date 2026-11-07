@@ -60,7 +60,7 @@ describe('Phase 10 Production Stress & Resiliency: Concurrent Checkout, Worker R
 
   let availableBalance = 1500.0;
 
-  const mockPrisma = {
+  const mockPrisma: any = {
     order: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -94,6 +94,10 @@ describe('Phase 10 Production Stress & Resiliency: Concurrent Checkout, Worker R
       findUnique: jest.fn().mockResolvedValue(null),
     },
   };
+
+  mockPrisma.$transaction = jest.fn(
+    (callback: (tx: any) => Promise<any>) => callback(mockPrisma),
+  );
 
   const mockLedgerService = {
     holdWalletBalance: jest.fn(),
