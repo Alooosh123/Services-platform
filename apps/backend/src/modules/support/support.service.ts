@@ -740,6 +740,13 @@ export class SupportService {
       isInternalNote: false,
       createdAt: new Date(),
     });
+    await this.notificationsService.emitNotification(
+      mem.userId,
+      NotificationType.SUPPORT_REPLY,
+      dto.approved ? 'الموافقة على طلب الاسترداد للمراجعة المالية' : 'تم رفض طلب الاسترداد',
+      resolutionText,
+      { ticketId, financialRefundExecuted: false },
+    );
     return {
       success: true,
       message: resolutionText,
