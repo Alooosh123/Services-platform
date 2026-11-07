@@ -63,10 +63,11 @@ export class ProvidersController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Admin: Update provider configuration and credentials' })
   async updateProvider(
+    @CurrentUser('id') actorUserId: string,
     @Param('id') providerId: string,
     @Body() dto: UpdateProviderDto,
   ) {
-    return this.providersService.updateProvider(providerId, dto);
+    return this.providersService.updateProvider(providerId, dto, actorUserId);
   }
 
   @Post('admin/:id/test-connection')
