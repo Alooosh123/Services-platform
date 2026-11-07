@@ -229,6 +229,9 @@ export default function AdminOrdersPage() {
         clearActionIdempotencyKey('retry', orderId);
         alert('تمت إعادة إرسال الطلب لمحرك التنفيذ بنجاح!');
         fetchOrders();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`تعذرت إعادة المحاولة: ${err.message || 'رفض الخادم الطلب'}`);
       }
     } catch {
       alert('تعذر تأكيد نتيجة إعادة المحاولة بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة للتحقق من النتيجة.');
