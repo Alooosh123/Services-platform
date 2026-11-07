@@ -2,7 +2,8 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
-  TooManyRequestsException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request, Response } from 'express';
@@ -53,7 +54,7 @@ export class RedisRateLimitGuard implements CanActivate {
     if (blocked.length > 0) {
       const retryAfter = Math.max(1, ...blocked.map((counter) => Math.ceil(counter.ttlMs / 1000)));
       response.setHeader('Retry-After', String(retryAfter));
-      throw new TooManyRequestsException('تم تجاوز عدد المحاولات المسموح. يرجى الانتظار قبل إعادة المحاولة.');
+      throw new HttpException('تم تجاوز عدد المحاولات المسموح. يرجى الانتظار قبل إعادة المحاولة.', HttpStatus.TOO_MANY_REQUESTS);
     }
     return true;
   }
