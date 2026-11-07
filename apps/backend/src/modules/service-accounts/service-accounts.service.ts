@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../database/prisma.service';
@@ -80,7 +81,7 @@ export class ServiceAccountsService {
     private prisma: PrismaService,
     private aiEvaluator: AiRiskEvaluatorService,
   ) {
-    this.seedInitialAccounts();
+    if (process.env.NODE_ENV === 'test') this.seedInitialAccounts();
   }
 
   private seedInitialAccounts() {
@@ -165,6 +166,14 @@ export class ServiceAccountsService {
     return ServiceCapabilitiesConfig.getAllCapabilities();
   }
 
+  private assertPersistentStorageAvailable(): void {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException(
+        'Linked service accounts are disabled until durable account, consent, and review storage is implemented.',
+      );
+    }
+  }
+
   /**
    * Link a service account with explicit consent and explainable AI risk evaluation.
    */
@@ -174,6 +183,7 @@ export class ServiceAccountsService {
     ipAddress = '127.0.0.1',
     userAgent = 'Web-Client',
   ) {
+    this.assertPersistentStorageAvailable();
     const capability = ServiceCapabilitiesConfig.getCapability(dto.serviceSlug);
 
     // 1. Check user details (Phone verification status, orders count)
@@ -315,6 +325,7 @@ export class ServiceAccountsService {
    * Customer: Get all active linked accounts with strict BOLA authorization
    */
   async getMyAccounts(userId: string) {
+    this.assertPersistentStorageAvailable();
     const list = Array.from(this.memoryAccounts.values()).filter(
       (a) => a.userId === userId && a.status !== ServiceAccountStatus.REVOKED,
     );
@@ -329,6 +340,7 @@ export class ServiceAccountsService {
    * Customer: Unlink service account and revoke consent with strict BOLA check
    */
   async unlinkAccount(userId: string, accountId: string) {
+    this.assertPersistentStorageAvailable();
     const account = this.memoryAccounts.get(accountId);
     if (!account) {
       throw new NotFoundException('حساب الخدمة المطلوب غير موجود');
@@ -360,6 +372,7 @@ export class ServiceAccountsService {
    * Evaluates risk of an existing account with BOLA check
    */
   async evaluateAccountRisk(userId: string, accountId: string): Promise<AiEvaluationReport> {
+    this.assertPersistentStorageAvailable();
     const account = this.memoryAccounts.get(accountId);
     if (!account) {
       throw new NotFoundException('حساب الخدمة غير موجود');
@@ -386,6 +399,7 @@ export class ServiceAccountsService {
    * Admin: List pending review cases
    */
   async getAdminReviewCases(status?: AccountReviewStatus, search?: string) {
+    this.assertPersistentStorageAvailable();
     let cases = Array.from(this.memoryReviews.values());
 
     if (status) {
@@ -415,6 +429,7 @@ export class ServiceAccountsService {
    * Admin: Resolve a review case (Approve, Reject, Needs Info) with zero financial impact
    */
   async resolveAdminReview(staffId: string, reviewId: string, dto: ResolveReviewDto) {
+    this.assertPersistentStorageAvailable();
     const reviewCase = this.memoryReviews.get(reviewId);
     if (!reviewCase) {
       throw new NotFoundException('حالة المراجعة الإدارية غير موجودة');
