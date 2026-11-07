@@ -113,6 +113,7 @@ async function bootstrap() {
       'Authorization',
       'X-Tenant-Domain',
       'Idempotency-Key',
+      'X-Transaction-Pin',
       'X-Device-Fingerprint',
       'X-CSRF-Token',
     ],
