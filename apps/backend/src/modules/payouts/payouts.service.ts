@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -53,7 +54,15 @@ export class PayoutsService {
     private walletService: WalletService,
     private adapterRegistry: PaymentAdapterRegistry,
   ) {
-    this.seedDefaultPayouts();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultPayouts();
+  }
+
+  private assertPersistentPayoutWorkflow(): void {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException(
+        'Payout operations are disabled until wallet holds, payout approvals, provider execution, and ledger settlement are persisted atomically.',
+      );
+    }
   }
 
   private seedDefaultPayouts() {
@@ -92,7 +101,8 @@ export class PayoutsService {
   async createPayoutRequest(
     userId: string,
     dto: CreatePayoutDto,
-  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{
+    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
     if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
       throw new BadRequestException('مفتاح عدم التكرار (idempotencyKey) إلزامي لمنع الازدواج المالي');
     }
@@ -253,7 +263,8 @@ export class PayoutsService {
     staffUserId: string,
     payoutId: string,
     dto?: ApprovePayoutDto,
-  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{
+    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status !== PayoutStatus.REQUESTED) {
@@ -298,7 +309,8 @@ export class PayoutsService {
   async dispatchPayout(
     staffUserId: string,
     payoutId: string,
-  ): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
+  ): Promise<{
+    this.assertPersistentPayoutWorkflow(); success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status !== PayoutStatus.APPROVED && payout.status !== PayoutStatus.REQUESTED) {
@@ -443,7 +455,8 @@ export class PayoutsService {
     payoutId: string,
     externalRef: string,
     notes?: string,
-  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{
+    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
     if (
@@ -496,7 +509,8 @@ export class PayoutsService {
     staffUserId: string,
     payoutId: string,
     reason: string,
-  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{
+    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status === PayoutStatus.CONFIRMED) {
@@ -518,6 +532,7 @@ export class PayoutsService {
   }
 
   async getPayoutById(payoutId: string): Promise<InMemoryPayout> {
+    this.assertPersistentPayoutWorkflow();
     try {
       const db = await this.prisma.payoutRequest.findUnique({
         where: { id: payoutId },
@@ -557,6 +572,7 @@ export class PayoutsService {
   }
 
   async findByIdempotencyKey(key: string): Promise<InMemoryPayout | null> {
+    this.assertPersistentPayoutWorkflow();
     try {
       const db = await this.prisma.payoutRequest.findUnique({
         where: { idempotencyKey: key },
@@ -589,7 +605,8 @@ export class PayoutsService {
     return null;
   }
 
-  async listPayouts(filters?: { status?: PayoutStatus; userId?: string }): Promise<InMemoryPayout[]> {
+  async listPayouts(filters?: {
+    this.assertPersistentPayoutWorkflow(); status?: PayoutStatus; userId?: string }): Promise<InMemoryPayout[]> {
     try {
       const where: any = {};
       if (filters?.status) where.status = filters.status;
