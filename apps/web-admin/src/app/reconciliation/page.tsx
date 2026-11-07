@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 import {
   Scale,
   CheckCircle,
@@ -138,374 +140,288 @@ export default function ReconciliationPage() {
   const [newChannelMode, setNewChannelMode] = useState<'API' | 'MANUAL' | 'BLOCKED_EXTERNAL' | 'DISABLED'>('MANUAL');
   const [resolutionType, setResolutionType] = useState('ADJUST_LEDGER');
   const [resolutionNotes, setResolutionNotes] = useState('');
-  const [fundingAmount, setFundingAmount] = useState('1000');
-  const [fundingBankRef, setFundingBankRef] = useState('BANK-TR-FUND-9921');
+  const [fundingAmount, setFundingAmount] = useState('');
+  const [fundingBankRef, setFundingBankRef] = useState('');
+  const [statementDate, setStatementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [statementJson, setStatementJson] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Notification Banner
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
-  // Initial State: Batches
-  const [batches, setBatches] = useState<ReconciliationBatch[]>([
-    {
-      id: 'rb-20261010-01',
-      batchNumber: 'REC-20261010-001',
-      channelCode: 'JAIB',
-      periodStart: '2026-10-09T00:00:00Z',
-      periodEnd: '2026-10-09T23:59:59Z',
-      totalItems: 48,
-      matchedItems: 48,
-      discrepanciesCount: 0,
-      totalBankAmount: 2450000,
-      totalInternalAmount: 2450000,
-      netDifference: 0,
-      currency: 'YER',
-      status: 'BALANCED',
-      reconciledAt: '2026-10-10T02:00:00Z',
-      reconciledBy: 'نظام التسوية الآلي (Batch Job)',
-    },
-    {
-      id: 'rb-20261010-02',
-      batchNumber: 'REC-20261010-002',
-      channelCode: 'JAWALI',
-      periodStart: '2026-10-09T00:00:00Z',
-      periodEnd: '2026-10-09T23:59:59Z',
-      totalItems: 32,
-      matchedItems: 31,
-      discrepanciesCount: 1,
-      totalBankAmount: 1850000,
-      totalInternalAmount: 1845000,
-      netDifference: 5000,
-      currency: 'YER',
-      status: 'DISCREPANCY_FOUND',
-      reconciledAt: '2026-10-10T02:15:00Z',
-      reconciledBy: 'نظام التسوية الآلي (Batch Job)',
-    },
-    {
-      id: 'rb-20261010-03',
-      batchNumber: 'REC-20261010-003',
-      channelCode: 'ONE_CASH',
-      periodStart: '2026-10-09T00:00:00Z',
-      periodEnd: '2026-10-09T23:59:59Z',
-      totalItems: 19,
-      matchedItems: 19,
-      discrepanciesCount: 0,
-      totalBankAmount: 980000,
-      totalInternalAmount: 980000,
-      netDifference: 0,
-      currency: 'YER',
-      status: 'BALANCED',
-      reconciledAt: '2026-10-10T02:30:00Z',
-      reconciledBy: 'نظام التسوية الآلي (Batch Job)',
-    },
-  ]);
+  // Financial data is rendered only from persisted backend records.
+  const [batches, setBatches] = useState<ReconciliationBatch[]>([]);
+  const [discrepancies, setDiscrepancies] = useState<DiscrepancyItem[]>([]);
+  const [channels, setChannels] = useState<PaymentChannel[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierAccount[]>([]);
+  const [payouts, setPayouts] = useState<PayoutItem[]>([]);
+  const [payoutsError, setPayoutsError] = useState<string | null>(null);
 
-  // Initial State: Discrepancies
-  const [discrepancies, setDiscrepancies] = useState<DiscrepancyItem[]>([
-    {
-      id: 'disc-001',
-      batchNumber: 'REC-20261010-002',
-      channelCode: 'JAWALI',
-      discrepancyType: 'AMOUNT_MISMATCH',
-      externalReference: 'JW-TX-998811',
-      internalReference: 'DEP-20261009-082',
-      bankAmount: 30000,
-      internalAmount: 25000,
-      difference: 5000,
-      currency: 'YER',
-      status: 'OPEN',
-      detectedAt: '2026-10-10T02:15:00Z',
-    },
-    {
-      id: 'disc-002',
-      batchNumber: 'REC-20261008-001',
-      channelCode: 'JAIB',
-      discrepancyType: 'MISSING_IN_INTERNAL',
-      externalReference: 'JB-UNKN-44331',
-      bankAmount: 10000,
-      internalAmount: 0,
-      difference: 10000,
-      currency: 'YER',
-      status: 'RESOLVED',
-      resolutionNotes: 'تم تحديد العميل بموجب رقم الهاتف وقيد السند المحاسبي التسويوي.',
-      resolutionType: 'ADJUST_LEDGER',
-      detectedAt: '2026-10-08T02:00:00Z',
-    },
-  ]);
-
-  // Initial State: Channels with Capability Flags
-  const [channels, setChannels] = useState<PaymentChannel[]>([
-    {
-      code: 'JAIB',
-      name: 'محفظة جيب (بنك التضامن)',
-      mode: 'API',
-      capabilities: {
-        depositConfirm: true,
-        transactionLookup: true,
-        payout: false,
-        balance: true,
-        reconcile: true,
-      },
-      accountNumber: '770123456',
-      accountHolder: 'مؤسسة الشحن الرقمي لتقنية المعلومات',
-      isLegalVerified: true,
-      minAmount: 1000,
-      maxAmount: 2000000,
-      feePercentage: 0,
-      fixedFee: 0,
-      dailyVolume: 2450000,
-      dailyLimit: 20000000,
-      currency: 'YER',
-    },
-    {
-      code: 'JAWALI',
-      name: 'محفظة جوالي (بنك اليمن والكويت)',
-      mode: 'API',
-      capabilities: {
-        depositConfirm: true,
-        transactionLookup: true,
-        payout: false,
-        balance: false,
-        reconcile: true,
-      },
-      accountNumber: '771234567',
-      accountHolder: 'مؤسسة الشحن الرقمي لتقنية المعلومات',
-      isLegalVerified: true,
-      minAmount: 1000,
-      maxAmount: 1500000,
-      feePercentage: 0,
-      fixedFee: 0,
-      dailyVolume: 1850000,
-      dailyLimit: 15000000,
-      currency: 'YER',
-    },
-    {
-      code: 'ONE_CASH',
-      name: 'ون كاش (OneCash)',
-      mode: 'MANUAL',
-      capabilities: {
-        depositConfirm: false,
-        transactionLookup: false,
-        payout: false,
-        balance: false,
-        reconcile: true,
-      },
-      accountNumber: '772345678',
-      accountHolder: 'مؤسسة الشحن الرقمي لتقنية المعلومات',
-      isLegalVerified: true,
-      minAmount: 1000,
-      maxAmount: 1000000,
-      feePercentage: 0,
-      fixedFee: 0,
-      dailyVolume: 980000,
-      dailyLimit: 10000000,
-      currency: 'YER',
-    },
-    {
-      code: 'EASY',
-      name: 'إيزي (بنك اليمن الدولي)',
-      mode: 'MANUAL',
-      capabilities: {
-        depositConfirm: false,
-        transactionLookup: false,
-        payout: false,
-        balance: false,
-        reconcile: true,
-      },
-      accountNumber: '773456789',
-      accountHolder: 'مؤسسة الشحن الرقمي لتقنية المعلومات',
-      isLegalVerified: true,
-      minAmount: 2000,
-      maxAmount: 3000000,
-      feePercentage: 0,
-      fixedFee: 0,
-      dailyVolume: 450000,
-      dailyLimit: 15000000,
-      currency: 'YER',
-    },
-    {
-      code: 'CASH',
-      name: 'سند إيداع نقدي / حوالة صرافة',
-      mode: 'MANUAL',
-      capabilities: {
-        depositConfirm: false,
-        transactionLookup: false,
-        payout: false,
-        balance: false,
-        reconcile: true,
-      },
-      accountNumber: 'SANAD-OFFICE-01',
-      accountHolder: 'مكتب الخزينة الرئيسي - صنعاء',
-      isLegalVerified: true,
-      minAmount: 5000,
-      maxAmount: 10000000,
-      feePercentage: 0,
-      fixedFee: 0,
-      dailyVolume: 320000,
-      dailyLimit: 30000000,
-      currency: 'YER',
-    },
-  ]);
-
-  // Initial State: Supplier Balances
-  const [suppliers, setSuppliers] = useState<SupplierAccount[]>([
-    {
-      id: 'sup-001',
-      providerCode: 'SMILE_ONE',
-      providerName: 'Smile One API (شحن ألعاب)',
-      accountType: 'PREPAID',
-      currency: 'USD',
-      balance: 4850.5,
-      creditLimit: 0,
-      lowBalanceThreshold: 500,
-      status: 'ACTIVE',
-      lastFundedAt: '2026-10-08T14:30:00Z',
-      lastFundedAmount: 2000,
-      ledgerAccountCode: '1130-SMILE_ONE',
-    },
-    {
-      id: 'sup-002',
-      providerCode: 'MOOGOLD',
-      providerName: 'MooGold Gateway',
-      accountType: 'PREPAID',
-      currency: 'USD',
-      balance: 320.0,
-      creditLimit: 0,
-      lowBalanceThreshold: 500,
-      status: 'LOW_BALANCE',
-      lastFundedAt: '2026-10-06T11:00:00Z',
-      lastFundedAmount: 1500,
-      ledgerAccountCode: '1130-MOOGOLD',
-    },
-    {
-      id: 'sup-003',
-      providerCode: 'UNIPIN',
-      providerName: 'UniPin Direct Integration',
-      accountType: 'PAY_PER_ORDER',
-      currency: 'USD',
-      balance: 7280.0,
-      creditLimit: 2000,
-      lowBalanceThreshold: 1000,
-      status: 'ACTIVE',
-      lastFundedAt: '2026-10-09T09:15:00Z',
-      lastFundedAmount: 3000,
-      ledgerAccountCode: '1130-UNIPIN',
-    },
-  ]);
-
-  // Initial State: Payouts
-  const [payouts, setPayouts] = useState<PayoutItem[]>([
-    {
-      id: 'pay-001',
-      payoutNumber: 'PAY-20261010-001',
-      userId: 'user-agent-001',
-      userName: 'مركز الأسطورة للشحن (وكيل معتمد)',
-      amount: 150000,
-      currency: 'YER',
-      channelCode: 'JAIB',
-      beneficiaryAccount: '779900112',
-      beneficiaryName: 'عبدالرحمن العريقي',
-      status: 'PROCESSING',
-      mode: 'MANUAL',
-      notes: 'تم حجز رصيد المحفظة وتمرير أمر الحوالة للمسؤول المالي (BLOCKED_EXTERNAL Safe SOP)',
-      createdAt: '2026-10-10T11:20:00Z',
-    },
-    {
-      id: 'pay-002',
-      payoutNumber: 'PAY-20261009-089',
-      userId: 'user-agent-002',
-      userName: 'شبكة الصقر للتوزيع',
-      amount: 400000,
-      currency: 'YER',
-      channelCode: 'JAWALI',
-      beneficiaryAccount: '773344556',
-      beneficiaryName: 'هاني السعيدي',
-      status: 'CONFIRMED',
-      mode: 'MANUAL',
-      externalReference: 'JW-OUT-7788192',
-      ledgerTxId: 'LTX-PAYOUT-0089',
-      notes: 'تم تنفيذ الحوالة البنكية وإبراء الذمة المحاسبية في دفتر الأستاذ العام.',
-      createdAt: '2026-10-09T16:45:00Z',
-    },
-  ]);
-
-  // Actions
-  const handleSwitchChannelMode = () => {
-    if (!activeChannelToEdit) return;
-    setChannels((prev) =>
-      prev.map((c) => (c.code === activeChannelToEdit.code ? { ...c, mode: newChannelMode } : c)),
-    );
-    setIsSwitchModeModalOpen(false);
-    setAlertMessage(`تم تعديل وضع القناة [${activeChannelToEdit.name}] إلى (${newChannelMode}) بنجاح وبشكل آمن.`);
-    setTimeout(() => setAlertMessage(null), 5000);
-  };
-
-  const handleResolveDiscrepancy = () => {
-    if (!activeDiscrepancyToResolve) return;
-    setDiscrepancies((prev) =>
-      prev.map((d) =>
-        d.id === activeDiscrepancyToResolve.id
-          ? {
-              ...d,
-              status: 'RESOLVED',
-              resolutionType,
-              resolutionNotes,
-            }
-          : d,
-      ),
-    );
-    setIsResolveDiscrepancyModalOpen(false);
-    setAlertMessage(
-      `تمت معالجة الاستثناء (${activeDiscrepancyToResolve.externalReference}) بنجاح وتسجيل القيد التسويوي (${resolutionType}).`,
-    );
-    setTimeout(() => setAlertMessage(null), 5000);
-  };
-
-  const handleFundSupplier = () => {
-    if (!activeSupplierToFund) return;
-    const amountNum = parseFloat(fundingAmount);
-    setSuppliers((prev) =>
-      prev.map((s) =>
-        s.id === activeSupplierToFund.id
-          ? {
-              ...s,
-              balance: s.balance + amountNum,
-              status: 'ACTIVE',
-              lastFundedAt: new Date().toISOString(),
-              lastFundedAmount: amountNum,
-            }
-          : s,
-      ),
-    );
-    setIsFundSupplierModalOpen(false);
-    setAlertMessage(
-      `تم تسجيل حركة تغذية الرصيد التجاري للمزود [${activeSupplierToFund.providerName}] بمبلغ $${amountNum} USD وتسجيل حركة الأصول في دفتر الأستاذ العام (Cash Movement: Bank ↔ Prepaid Asset).`,
-    );
-    setTimeout(() => setAlertMessage(null), 6000);
-  };
-
-  const handleRunBatch = () => {
-    const newBatchNum = `REC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-00${batches.length + 1}`;
-    const newBatch: ReconciliationBatch = {
-      id: `rb-${Date.now()}`,
-      batchNumber: newBatchNum,
-      channelCode: selectedChannel === 'ALL' ? 'JAIB' : selectedChannel,
-      periodStart: new Date(Date.now() - 86400000).toISOString(),
-      periodEnd: new Date().toISOString(),
-      totalItems: 54,
-      matchedItems: 54,
-      discrepanciesCount: 0,
-      totalBankAmount: 3120000,
-      totalInternalAmount: 3120000,
-      netDifference: 0,
-      currency: 'YER',
-      status: 'BALANCED',
-      reconciledAt: new Date().toISOString(),
-      reconciledBy: 'المدير العام (Super Admin)',
+  const getAdminHeaders = () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+    if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     };
-    setBatches([newBatch, ...batches]);
-    setIsRunBatchModalOpen(false);
-    setAlertMessage(`تم تنفيذ دفعة التسوية الثلاثية (${newBatchNum}) بنجاح. كافة القيود متطابقة ومتوازنة.`);
-    setTimeout(() => setAlertMessage(null), 5000);
+  };
+
+  const readRows = async (url: string, label: string) => {
+    const response = await fetch(`${API_BASE_URL}${url}`, { headers: getAdminHeaders() });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || label);
+    const rows = Array.isArray(payload) ? payload : payload.data;
+    if (!Array.isArray(rows)) throw new Error(`استجابة الخادم غير صحيحة: ${label}`);
+    return rows;
+  };
+
+  const fetchReconciliationData = async () => {
+    setLoading(true);
+    setLoadError(null);
+    setActionError(null);
+    const errors: string[] = [];
+
+    try {
+      const rows = await readRows('/reconciliation/batches', 'تعذر تحميل دفعات المطابقة.');
+      const mappedBatches: ReconciliationBatch[] = rows.map((batch: any) => {
+        const items = Array.isArray(batch.items) ? batch.items : [];
+        const actualAmount = items.reduce((sum: number, item: any) => sum + Number(item.actualAmount || 0), 0);
+        const expectedAmount = items.reduce((sum: number, item: any) => sum + Number(item.expectedAmount || 0), 0);
+        const matchedItems = Number(batch.matchedCount || 0);
+        const totalItems = Number(batch.totalRecords || items.length || 0);
+        return {
+          id: batch.id,
+          batchNumber: batch.batchNumber,
+          channelCode: batch.channelCode || '—',
+          periodStart: batch.statementDate,
+          periodEnd: batch.statementDate,
+          totalItems,
+          matchedItems,
+          discrepanciesCount: Number(batch.discrepancyCount || 0),
+          totalBankAmount: actualAmount,
+          totalInternalAmount: expectedAmount,
+          netDifference: actualAmount - expectedAmount,
+          currency: items[0]?.currency || '—',
+          status: batch.status === 'COMPLETED'
+            ? 'BALANCED'
+            : batch.status === 'RESOLVED'
+              ? 'RECONCILED_WITH_ADJUSTMENTS'
+              : 'DISCREPANCY_FOUND',
+          reconciledAt: batch.createdAt,
+          reconciledBy: batch.reconciledByUserId || '—',
+        };
+      });
+      setBatches(mappedBatches);
+
+      const mappedDiscrepancies: DiscrepancyItem[] = [];
+      for (const batch of rows) {
+        for (const item of (Array.isArray(batch.items) ? batch.items : [])) {
+          if (item.status === 'MATCHED') continue;
+          mappedDiscrepancies.push({
+            id: item.id,
+            batchNumber: batch.batchNumber,
+            channelCode: batch.channelCode || '—',
+            discrepancyType: item.discrepancyType || 'MISSING_IN_INTERNAL',
+            externalReference: item.referenceNumber,
+            internalReference: item.internalTxId || undefined,
+            bankAmount: Number(item.actualAmount || 0),
+            internalAmount: Number(item.expectedAmount || 0),
+            difference: Number(item.actualAmount || 0) - Number(item.expectedAmount || 0),
+            currency: item.currency,
+            status: item.status === 'RESOLVED_MANUAL' ? 'RESOLVED' : 'OPEN',
+            resolutionNotes: item.notes || undefined,
+            detectedAt: item.createdAt,
+          });
+        }
+      }
+      setDiscrepancies(mappedDiscrepancies);
+    } catch (err) {
+      setBatches([]);
+      setDiscrepancies([]);
+      errors.push(err instanceof Error ? err.message : 'تعذر تحميل بيانات المطابقة.');
+    }
+
+    try {
+      const rows = await readRows('/admin/deposits/channels/all', 'تعذر تحميل قنوات الدفع.');
+      setChannels(rows.map((channel: any) => ({
+        code: channel.code,
+        name: channel.nameAr || channel.name || channel.code,
+        mode: channel.mode || 'MANUAL',
+        capabilities: {
+          depositConfirm: Boolean(channel.depositConfirmEnabled),
+          transactionLookup: Boolean(channel.transactionLookupEnabled),
+          payout: Boolean(channel.payoutEnabled),
+          balance: Boolean(channel.balanceLookupEnabled),
+          reconcile: true,
+        },
+        accountNumber: channel.accountNumber || '',
+        accountHolder: channel.accountHolder || '',
+        isLegalVerified: channel.verificationStatus === 'VERIFIED',
+        minAmount: Number(channel.minAmount || 0),
+        maxAmount: Number(channel.maxAmount || 0),
+        feePercentage: Number(channel.feePercentage || 0),
+        fixedFee: Number(channel.fixedFee || 0),
+        dailyVolume: Number(channel.dailyVolume || 0),
+        dailyLimit: Number(channel.dailyLimit || 0),
+        currency: (channel.supportedCurrencies || []).join(', '),
+      })));
+    } catch (err) {
+      setChannels([]);
+      errors.push(err instanceof Error ? err.message : 'تعذر تحميل القنوات.');
+    }
+
+    try {
+      const rows = await readRows('/providers/admin/supplier-accounts', 'تعذر تحميل أرصدة الموردين.');
+      setSuppliers(rows.map((account: any) => ({
+        id: account.id,
+        providerCode: account.providerCode || account.provider?.code || '',
+        providerName: account.provider?.name || account.providerName || account.providerCode || '',
+        accountType: account.accountType,
+        currency: account.currency,
+        balance: Number(account.balance || 0),
+        creditLimit: Number(account.creditLimit || 0),
+        lowBalanceThreshold: Number(account.lowBalanceThreshold || 0),
+        status: Number(account.balance || 0) <= Number(account.lowBalanceThreshold || 0) ? 'LOW_BALANCE' : 'ACTIVE',
+        lastFundedAt: account.updatedAt,
+        ledgerAccountCode: account.ledgerAccountCode || '',
+      })));
+    } catch (err) {
+      setSuppliers([]);
+      errors.push(err instanceof Error ? err.message : 'تعذر تحميل أرصدة الموردين.');
+    }
+
+    try {
+      const rows = await readRows('/payouts/admin/list', 'طلبات السحب غير متاحة.');
+      setPayouts(rows.map((payout: any) => ({
+        id: payout.id,
+        payoutNumber: payout.payoutNumber,
+        userId: payout.userId,
+        userName: payout.user?.fullName || payout.userId,
+        amount: Number(payout.amount || 0),
+        currency: payout.currency,
+        channelCode: payout.channelCode,
+        beneficiaryAccount: payout.destinationAccount,
+        beneficiaryName: payout.beneficiaryName,
+        status: payout.status,
+        mode: 'MANUAL',
+        externalReference: payout.externalReference,
+        ledgerTxId: payout.ledgerTxId,
+        createdAt: payout.createdAt,
+        notes: payout.approvalNotes || payout.failureReason,
+      })));
+      setPayoutsError(null);
+    } catch (err) {
+      setPayouts([]);
+      setPayoutsError(err instanceof Error ? err.message : 'طلبات السحب غير متاحة حتى يكتمل مسارها المالي الدائم.');
+    }
+
+    if (errors.length > 0) setLoadError(errors.join(' '));
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void fetchReconciliationData();
+  }, []);
+
+  const handleSwitchChannelMode = async () => {
+    if (!activeChannelToEdit) return;
+    setActionError(null);
+    try {
+      const token = getAdminHeaders();
+      const response = await fetch(
+        `${API_BASE_URL}/admin/deposits/channels/${encodeURIComponent(activeChannelToEdit.code)}/switch-mode`,
+        { method: 'POST', headers: token, body: JSON.stringify({ mode: newChannelMode }) },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'تعذر تغيير وضع القناة.');
+      setIsSwitchModeModalOpen(false);
+      setAlertMessage(payload.message || 'تم تغيير وضع القناة وتأكيده من الخادم.');
+      await fetchReconciliationData();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر تغيير وضع القناة.');
+    }
+  };
+
+  const handleResolveDiscrepancy = async () => {
+    if (!activeDiscrepancyToResolve) return;
+    if (!resolutionNotes.trim()) {
+      setActionError('ملاحظات معالجة الفرق مطلوبة.');
+      return;
+    }
+    setActionError('تم تعطيل الإجراء من الواجهة حتى يكتمل مسار اعتماد قيود التسوية الدائم. لا يمكن تسجيل فرق على أنه محلول دون قيد دفتر أستاذ وموافقة مالية.');
+  };
+
+  const handleFundSupplier = async () => {
+    if (!activeSupplierToFund) return;
+    const amount = Number(fundingAmount);
+    if (!Number.isFinite(amount) || amount <= 0 || !fundingBankRef.trim()) {
+      setActionError('أدخل مبلغاً صحيحاً ومرجع تحويل بنكي حقيقياً.');
+      return;
+    }
+    setActionError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/providers/admin/fund-supplier`, {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify({
+          providerId: activeSupplierToFund.providerCode,
+          currency: activeSupplierToFund.currency,
+          amount,
+          referenceNumber: fundingBankRef.trim(),
+          notes: 'Supplier prefunding initiated from reconciliation center.',
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'تعذر قيد تمويل المورد.');
+      setIsFundSupplierModalOpen(false);
+      setFundingAmount('');
+      setFundingBankRef('');
+      setAlertMessage(payload.message || 'تم قيد تمويل المورد في دفتر الأستاذ.');
+      await fetchReconciliationData();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر قيد تمويل المورد.');
+    }
+  };
+
+  const handleRunBatch = async () => {
+    let externalStatements: any[];
+    try {
+      externalStatements = JSON.parse(statementJson);
+      if (!Array.isArray(externalStatements) || externalStatements.length === 0) {
+        throw new Error('أدخل قائمة JSON تحتوي عناصر كشف بنكي فعلية.');
+      }
+      for (const item of externalStatements) {
+        if (!item.referenceNumber || !Number.isFinite(Number(item.amount)) || Number(item.amount) <= 0 || !item.currency) {
+          throw new Error('كل عنصر يتطلب referenceNumber وamount موجباً وcurrency.');
+        }
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'صيغة كشف الحساب غير صحيحة.');
+      return;
+    }
+
+    setActionError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/reconciliation/run`, {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify({
+          channelCode: selectedChannel === 'ALL' ? undefined : selectedChannel,
+          statementDate,
+          externalStatements,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'تعذر إنشاء دفعة المطابقة.');
+      setIsRunBatchModalOpen(false);
+      setStatementJson('');
+      setAlertMessage(payload.message || `تم إنشاء دفعة المطابقة ${payload.batchNumber || ''} بناءً على كشف الحساب المرسل.`);
+      await fetchReconciliationData();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر إنشاء دفعة المطابقة.');
+    }
   };
 
   // Filtered Lists
