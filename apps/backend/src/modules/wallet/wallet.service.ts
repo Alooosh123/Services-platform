@@ -11,6 +11,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { CurrencyCode, PaymentChannelCode, PaymentStatus } from '@digital-topup/shared';
 import { DepositFundsDto } from '../ledger/dto/ledger-adjustment.dto';
+import { Prisma } from '@prisma/client';
 
 interface InMemoryWallet {
   id: string;
@@ -411,58 +412,52 @@ export class WalletService {
    */
   async confirmTopup(staffUserId: string, topupId: string) {
     try {
-      const topup = await this.prisma.walletTopup.findUnique({
-        where: { id: topupId },
-        include: { paymentMethod: true, wallet: true },
+      return await this.prisma.$transaction(async (tx) => {
+        const topup = await tx.walletTopup.findUnique({
+          where: { id: topupId },
+          include: { paymentMethod: true, wallet: true },
+        });
+
+        if (!topup) {
+          throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
+        }
+        if (topup.status === PaymentStatus.Confirmed) {
+          throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
+        }
+
+        const ledgerResult = await this.ledgerService.recordTopup({
+          userId: topup.userId,
+          walletId: topup.walletId,
+          currency: topup.currency as CurrencyCode,
+          amount: Number(topup.amount),
+          paymentChannel: topup.paymentMethod.code as PaymentChannelCode,
+          referenceId: topup.id,
+          performedByUserId: staffUserId,
+          notes: `Admin confirmed manual topup ref: ${topup.referenceNumber}`,
+        }, tx);
+
+        const updatedTopup = await tx.walletTopup.update({
+          where: { id: topupId },
+          data: {
+            status: PaymentStatus.Confirmed,
+            confirmedAt: new Date(),
+          },
+        });
+
+        return {
+          message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
+          topup: updatedTopup,
+          ledgerTransaction: ledgerResult.transaction,
+        };
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
-
-      if (!topup) {
-        throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
-      }
-
-      if (topup.status === PaymentStatus.Confirmed) {
-        throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
-      }
-
-      // Post Double-Entry Ledger Transaction
-      const ledgerResult = await this.ledgerService.recordTopup({
-        userId: topup.userId,
-        walletId: topup.walletId,
-        currency: topup.currency as CurrencyCode,
-        amount: Number(topup.amount),
-        paymentChannel: topup.paymentMethod.code as PaymentChannelCode,
-        referenceId: topup.id,
-        performedByUserId: staffUserId,
-        notes: `Admin confirmed manual topup ref: ${topup.referenceNumber}`,
-      });
-
-      const updatedTopup = await this.prisma.walletTopup.update({
-        where: { id: topupId },
-        data: {
-          status: PaymentStatus.Confirmed,
-          confirmedAt: new Date(),
-        },
-      });
-
-      return {
-        message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
-        topup: updatedTopup,
-        ledgerTransaction: ledgerResult.transaction,
-      };
     } catch (err: any) {
       if (err instanceof NotFoundException || err instanceof ConflictException) {
         throw err;
       }
-      this.logger.warn(`Prisma offline during confirmTopup: simulated confirmation (${err?.message})`);
-
-      return {
-        message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
-        topup: {
-          id: topupId,
-          status: PaymentStatus.Confirmed,
-          confirmedAt: new Date(),
-        },
-      };
+      this.logger.error(`Topup confirmation transaction failed: ${err?.message}`);
+      throw new ServiceUnavailableException('Topup confirmation could not be committed to the ledger.');
     }
   }
 
