@@ -31,21 +31,27 @@ export class RedisRateLimitGuard implements CanActivate {
     const http = context.switchToHttp();
     const request = http.getRequest<RateLimitedRequest>();
     const response = http.getResponse<Response>();
-    const identity = request.user?.id
-      ? `user:${request.user.id}`
-      : `ip:${request.ip || request.socket?.remoteAddress || 'unknown'}`;
-    const tenant = request.tenantId || request.header('x-tenant-domain') || 'platform';
-    const key = [options.scope, tenant, identity].join(':');
+    const ip = request.ip || request.socket?.remoteAddress || 'unknown';
+    const tenant = request.tenantId || 'platform';
+    const keys = [
+      [options.scope, tenant, `ip:${ip}`].join(':'),
+    ];
+    if (request.user?.id) {
+      keys.push([options.scope, tenant, `user:${request.user.id}`].join(':'));
+    }
 
-    // Redis is authoritative for these sensitive routes. An unavailable store
-    // propagates ServiceUnavailableException rather than disabling the limit.
-    const { count, ttlMs } = await this.store.incrementRateLimit(key, options.windowMs);
-    const remaining = Math.max(0, options.limit - count);
+    // Enforce both per-IP and per-user quotas for authenticated routes.
+    // Redis is authoritative; an unavailable store fails closed.
+    const counters = await Promise.all(
+      keys.map((key) => this.store.incrementRateLimit(key, options.windowMs)),
+    );
+    const remaining = Math.max(0, Math.min(...counters.map((counter) => options.limit - counter.count)));
     response.setHeader('X-RateLimit-Limit', String(options.limit));
     response.setHeader('X-RateLimit-Remaining', String(remaining));
 
-    if (count > options.limit) {
-      const retryAfter = Math.max(1, Math.ceil(ttlMs / 1000));
+    const blocked = counters.filter((counter) => counter.count > options.limit);
+    if (blocked.length > 0) {
+      const retryAfter = Math.max(1, ...blocked.map((counter) => Math.ceil(counter.ttlMs / 1000)));
       response.setHeader('Retry-After', String(retryAfter));
       throw new TooManyRequestsException('تم تجاوز عدد المحاولات المسموح. يرجى الانتظار قبل إعادة المحاولة.');
     }
