@@ -532,7 +532,6 @@ export class PayoutsService {
   }
 
   async getPayoutById(payoutId: string): Promise<InMemoryPayout> {
-    this.assertPersistentPayoutWorkflow();
     try {
       const db = await this.prisma.payoutRequest.findUnique({
         where: { id: payoutId },
@@ -578,7 +577,6 @@ export class PayoutsService {
   }
 
   async findByIdempotencyKey(key: string): Promise<InMemoryPayout | null> {
-    this.assertPersistentPayoutWorkflow();
     try {
       const db = await this.prisma.payoutRequest.findUnique({
         where: { idempotencyKey: key },
