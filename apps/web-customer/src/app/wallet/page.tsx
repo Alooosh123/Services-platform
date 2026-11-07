@@ -60,201 +60,97 @@ interface DepositRequest {
 export default function CustomerWalletPage() {
   const [selectedCurrency, setSelectedCurrency] = useState<'YER' | 'USD' | 'SAR'>('YER');
   const [activeTab, setActiveTab] = useState<'overview' | 'deposit' | 'requests'>('overview');
-  const [wallets, setWallets] = useState<Record<string, WalletData>>({
-    YER: {
-      id: 'w-yer',
-      currency: 'YER',
-      balance: 50000,
-      lockedBalance: 0,
-      availableBalance: 50000,
-      isFrozen: false,
-    },
-    USD: {
-      id: 'w-usd',
-      currency: 'USD',
-      balance: 100,
-      lockedBalance: 0,
-      availableBalance: 100,
-      isFrozen: false,
-    },
-    SAR: {
-      id: 'w-sar',
-      currency: 'SAR',
-      balance: 200,
-      lockedBalance: 0,
-      availableBalance: 200,
-      isFrozen: false,
-    },
-  });
-
-  const [channels, setChannels] = useState<PaymentChannel[]>([
-    {
-      code: 'JAIB',
-      name: 'Jaib Wallet',
-      nameAr: 'محفظة جيب (بنك CAC)',
-      accountNumber: '770123456',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق جيب إلى الحساب رقم 770123456 باسم منصة الشحن، ثم أدخل رقم الحوالة هنا.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 2000000,
-    },
-    {
-      code: 'JAWALI',
-      name: 'Jawali Wallet',
-      nameAr: 'محفظة جوالي (بنك اليمن والكويت)',
-      accountNumber: '733987654',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق جوالي إلى الحساب رقم 733987654، ثم أرفق الرقم المرجعي للعملية.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 2000000,
-    },
-    {
-      code: 'CASH',
-      name: 'Cash Wallet',
-      nameAr: 'محفظة كاش (بنك سبأ الإسلامي)',
-      accountNumber: '711223344',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق كاش إلى الرقم 711223344 باسم المنصة، وأدخل رقم العملية.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 2000000,
-    },
-    {
-      code: 'ONE_CASH',
-      name: 'One Cash',
-      nameAr: 'ون كاش (شركة YOU)',
-      accountNumber: '739112233',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'حول المبلغ عبر ون كاش إلى الرقم 739112233 ثم اكتب رقم الإشعار للتحقق المالي.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 1500000,
-    },
-    {
-      code: 'EASY',
-      name: 'Easy Wallet',
-      nameAr: 'محفظة إيزي للدفع الإلكتروني',
-      accountNumber: '775544332',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'حول إلى محفظة إيزي رقم 775544332 وأدخل رقم العملية للتأكيد من المشرفين.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 1500000,
-    },
-  ]);
-
-  const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([
-    {
-      id: 'dep-1',
-      depositNumber: 'DEP-20261009-0001',
-      currency: 'YER',
-      amount: 50000,
-      paymentMethodCode: 'JAIB',
-      referenceNumber: 'REF-JAIB-112233',
-      senderName: 'أحمد محمد الحاشدي',
-      status: 'CREDITED',
-      reviewNotes: 'تم التحقق من الحوالة وتغذية رصيد المحفظة بواسطة النظام المحاسبي المزدوج',
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-    {
-      id: 'dep-2',
-      depositNumber: 'DEP-20261009-0002',
-      currency: 'YER',
-      amount: 25000,
-      paymentMethodCode: 'JAWALI',
-      referenceNumber: 'REF-JAWALI-998877',
-      senderName: 'أحمد محمد الحاشدي',
-      status: 'PENDING',
-      createdAt: new Date(Date.now() - 7200000).toISOString(),
-    },
-    {
-      id: 'dep-3',
-      depositNumber: 'DEP-20261009-0003',
-      currency: 'YER',
-      amount: 15000,
-      paymentMethodCode: 'CASH',
-      referenceNumber: 'REF-CASH-445566',
-      senderName: 'أحمد محمد الحاشدي',
-      status: 'UNDER_REVIEW',
-      reviewNotes: 'جاري مطابقة الحوالة مع كشف حساب بنك سبأ الإسلامي',
-      createdAt: new Date(Date.now() - 14400000).toISOString(),
-    },
-  ]);
+  const [wallets, setWallets] = useState<Record<string, WalletData>>({});
+  const [channels, setChannels] = useState<PaymentChannel[]>([]);
+  const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([]);
 
   // Form states for deposit request
-  const [depositChannel, setDepositChannel] = useState('JAIB');
-  const [depositAmount, setDepositAmount] = useState('25000');
+  const [depositChannel, setDepositChannel] = useState('');
+  const [depositAmount, setDepositAmount] = useState('');
   const [depositRefNumber, setDepositRefNumber] = useState('');
-  const [senderName, setSenderName] = useState('أحمد محمد الحاشدي');
-  const [senderPhone, setSenderPhone] = useState('+967770000003');
-  const [proofUrl, setProofUrl] = useState('/images/proofs/sample-receipt.jpg');
+  const [senderName, setSenderName] = useState('');
+  const [senderPhone, setSenderPhone] = useState('');
+  const [proofUrl, setProofUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [depositError, setDepositError] = useState<string | null>(null);
   const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
+  const [walletLoading, setWalletLoading] = useState(true);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [channelsLoading, setChannelsLoading] = useState(true);
+  const [channelsError, setChannelsError] = useState<string | null>(null);
+  const [depositsLoading, setDepositsLoading] = useState(true);
+  const [depositsError, setDepositsError] = useState<string | null>(null);
 
   // Fetch real data on mount
   useEffect(() => {
-    setWallets({});
-    setChannels([]);
-    setDepositRequests([]);
-    fetchBalances();
-    fetchChannels();
-    fetchMyDeposits();
+    void fetchBalances();
+    void fetchChannels();
+    void fetchMyDeposits();
   }, []);
 
   const fetchBalances = async () => {
+    setWalletLoading(true);
+    setWalletError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('customer_token') : null;
+      if (!token) throw new Error('سجّل الدخول لعرض أرصدة محافظك.');
       const res = await fetch(apiUrl('/wallet/balances'), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        const map: Record<string, WalletData> = {};
-        for (const w of data) {
-          map[w.currency] = w;
-        }
-        setWallets(map);
-      }
-    } catch {
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل أرصدة المحفظة.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة أرصدة المحفظة غير صحيحة.');
+      const map: Record<string, WalletData> = {};
+      for (const wallet of rows) map[wallet.currency] = wallet;
+      setWallets(map);
+    } catch (err) {
       setWallets({});
+      setWalletError(err instanceof Error ? err.message : 'تعذر تحميل أرصدة المحفظة.');
+    } finally {
+      setWalletLoading(false);
     }
   };
 
   const fetchChannels = async () => {
+    setChannelsLoading(true);
+    setChannelsError(null);
     try {
       const res = await fetch(apiUrl('/deposits/channels'));
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setChannels(data);
-        }
-      }
-    } catch {
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل قنوات الإيداع.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة قنوات الإيداع غير صحيحة.');
+      setChannels(rows);
+      if (rows.length > 0) setDepositChannel((current) => current || rows[0].code);
+    } catch (err) {
       setChannels([]);
+      setChannelsError(err instanceof Error ? err.message : 'تعذر تحميل قنوات الإيداع.');
+    } finally {
+      setChannelsLoading(false);
     }
   };
 
   const fetchMyDeposits = async () => {
+    setDepositsLoading(true);
+    setDepositsError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('customer_token') : null;
+      if (!token) throw new Error('سجّل الدخول لعرض طلبات الإيداع.');
       const res = await fetch(apiUrl('/deposits/my-deposits'), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setDepositRequests(data);
-        }
-      }
-    } catch {
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل طلبات الإيداع.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة طلبات الإيداع غير صحيحة.');
+      setDepositRequests(rows);
+    } catch (err) {
       setDepositRequests([]);
+      setDepositsError(err instanceof Error ? err.message : 'تعذر تحميل طلبات الإيداع.');
+    } finally {
+      setDepositsLoading(false);
     }
   };
 
@@ -294,7 +190,7 @@ export default function CustomerWalletPage() {
           referenceNumber: depositRefNumber,
           senderName,
           senderPhone,
-          proofImageUrl: proofUrl,
+          proofImageUrl: proofUrl || undefined,
         }),
       });
 
@@ -303,7 +199,7 @@ export default function CustomerWalletPage() {
         throw new Error(data.message || 'فشل في إرسال طلب الإيداع');
       }
 
-      setDepositRequests([data.deposit, ...depositRequests]);
+      await fetchMyDeposits();
       setSubmitSuccess(true);
       setDepositRefNumber('');
       setTimeout(() => {
@@ -317,14 +213,7 @@ export default function CustomerWalletPage() {
     }
   };
 
-  const currentWallet = wallets[selectedCurrency] || {
-    id: 'w-default',
-    currency: selectedCurrency,
-    balance: 0,
-    lockedBalance: 0,
-    availableBalance: 0,
-    isFrozen: false,
-  };
+  const currentWallet = wallets[selectedCurrency];
 
   const selectedChannelInfo = channels.find((c) => c.code === depositChannel) || channels[0];
 
@@ -398,8 +287,12 @@ export default function CustomerWalletPage() {
         </div>
       </div>
 
+      {walletError && <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">{walletError}</p>}
+      {channelsError && <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300">{channelsError}</p>}
+      {depositsError && activeTab === 'requests' && <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">{depositsError}</p>}
+
       {/* Frozen Alert Banner */}
-      {currentWallet.isFrozen && (
+      {currentWallet?.isFrozen && (
         <div className="bg-rose-950/40 border border-rose-500/50 rounded-2xl p-5 flex items-start gap-4 text-rose-200">
           <AlertTriangle className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
@@ -427,10 +320,10 @@ export default function CustomerWalletPage() {
             </span>
           </div>
           <div className="text-3xl sm:text-4xl font-black font-mono text-emerald-400 mb-2">
-            {currentWallet.availableBalance.toLocaleString('en-US', {
+            {walletLoading ? '...' : currentWallet ? currentWallet.availableBalance.toLocaleString('en-US', {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
-            })}
+            }) : 'غير متاح'}
           </div>
           <p className="text-[11px] text-slate-400">
             يمكنك استخدامه فوراً لشحن شدات الألعاب والتطبيقات
@@ -448,10 +341,10 @@ export default function CustomerWalletPage() {
             </span>
           </div>
           <div className="text-3xl sm:text-4xl font-black font-mono text-amber-400 mb-2">
-            {currentWallet.lockedBalance.toLocaleString('en-US', {
+            {walletLoading ? '...' : currentWallet ? currentWallet.lockedBalance.toLocaleString('en-US', {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
-            })}
+            }) : 'غير متاح'}
           </div>
           <p className="text-[11px] text-slate-400">
             مبالغ محجوزة لطلبات شحن قيد المعالجة والانتظار
@@ -467,10 +360,10 @@ export default function CustomerWalletPage() {
             </span>
           </div>
           <div className="text-3xl sm:text-4xl font-black font-mono text-white mb-2">
-            {currentWallet.balance.toLocaleString('en-US', {
+            {walletLoading ? '...' : currentWallet ? currentWallet.balance.toLocaleString('en-US', {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
-            })}
+            }) : 'غير متاح'}
           </div>
           <p className="text-[11px] text-slate-400">
             موثق بالقيد المحاسبي المزدوج ولا يقبل التغيير المباشر
@@ -527,7 +420,11 @@ export default function CustomerWalletPage() {
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {channels.map((ch) => (
+              {channelsLoading ? (
+                <p className="text-xs text-slate-400">جاري تحميل بيانات قنوات الإيداع...</p>
+              ) : channels.length === 0 ? (
+                <p className="text-xs text-amber-300">لا توجد قنوات استقبال مفعلة ومثبتة في الخادم حالياً. لن يتم عرض أرقام تحويل غير موثقة.</p>
+              ) : channels.map((ch) => (
                 <div
                   key={ch.code}
                   className="bg-slate-950 border border-slate-800/80 rounded-2xl p-5 space-y-3 relative group hover:border-indigo-500/50 transition-all"
@@ -740,7 +637,7 @@ export default function CustomerWalletPage() {
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !selectedChannelInfo}
                 className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-sm transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? 'جاري إرسال الطلب...' : 'إرسال طلب الإيداع للمراجعة المالية'}
@@ -782,7 +679,11 @@ export default function CustomerWalletPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {depositRequests.map((dep) => (
+                {depositsLoading ? (
+                  <tr><td colSpan={7} className="p-8 text-center text-slate-400">جاري تحميل طلبات الإيداع...</td></tr>
+                ) : depositRequests.length === 0 ? (
+                  <tr><td colSpan={7} className="p-8 text-center text-slate-400">لا توجد طلبات إيداع مسجلة لهذا الحساب.</td></tr>
+                ) : depositRequests.map((dep) => (
                   <tr key={dep.id} className="hover:bg-slate-800/30 transition-colors">
                     <td className="py-4 px-4 font-mono font-bold text-indigo-300">
                       {dep.depositNumber}
