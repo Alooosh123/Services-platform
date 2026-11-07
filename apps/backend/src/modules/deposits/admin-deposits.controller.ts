@@ -15,7 +15,9 @@ import { ReviewDepositDto, RejectDepositDto } from './dto/review-deposit.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentUser } from '../auth/decorators/cuimport { RateLimit } from '../../security/rate-limit.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+rrent-user.decorator';
 import { DepositStatus, UserRole, PaymentChannelCode, PaymentChannelMode } from '@digital-topup/shared';
 
 @ApiTags('Deposits (Admin Financial Operations)')
@@ -51,6 +53,8 @@ export class AdminDepositsController {
   }
 
   @Post(':id/under-review')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'deposit-admin-review')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Change deposit status to UNDER_REVIEW' })
   async markUnderReview(
@@ -62,6 +66,8 @@ export class AdminDepositsController {
   }
 
   @Post(':id/approve')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'deposit-admin-approve')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Admin/Finance: Approve and credit deposit via strict double-entry ledger',
@@ -75,6 +81,8 @@ export class AdminDepositsController {
   }
 
   @Post(':id/reject')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'deposit-admin-reject')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Reject deposit request with mandatory reason' })
   async rejectDeposit(
@@ -87,6 +95,8 @@ export class AdminDepositsController {
 
 @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/switch-mode')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'deposit-channel-mode')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Switch channel mode safely (MANUAL, API, BLOCKED_EXTERNAL, DISABLED)' })
   async switchChannelMode(
@@ -100,6 +110,8 @@ export class AdminDepositsController {
 
 @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/failover')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'deposit-channel-failover')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Trigger emergency safe failover of payment channel to MANUAL' })
   async failoverChannel(
@@ -125,6 +137,8 @@ export class AdminDepositsController {
 
 @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'deposit-channel-create')
   @ApiOperation({ summary: 'Admin: Create a new dynamic payment channel' })
   async createChannel(
     @Body() dto: any,
@@ -136,6 +150,8 @@ export class AdminDepositsController {
 
 @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/propose-account')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'deposit-channel-account-propose')
   @ApiOperation({ summary: 'Admin: Propose new receiver account (requires finance approval)' })
   async proposeAccount(
     @Param('channel') channel: string,
@@ -154,6 +170,8 @@ export class AdminDepositsController {
   }
 
   @Post('channels/:channel/finance-approval')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'deposit-channel-finance-approve')
   @Roles(UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @ApiOperation({ summary: 'Finance Manager: Dual control approval for channel account change (AT-15)' })
   async approveChannelFinance(
@@ -172,6 +190,8 @@ export class AdminDepositsController {
 
 @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @Post('channels/:channel/kill-switch')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'deposit-channel-kill-switch')
   @ApiOperation({ summary: 'Admin: Emergency Kill Switch for payment channel (AT-24)' })
   async killSwitchChannel(
     @CurrentUser('id') adminUserId: string,
