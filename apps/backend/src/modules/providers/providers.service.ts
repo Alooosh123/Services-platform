@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ITopupProviderAdapter } from './adapters/provider-adapter.interface';
 import { MockProviderAdapter } from './adapters/mock-provider.adapter';
@@ -33,10 +33,11 @@ export class ProvidersService {
   }
 
   getAdapter(providerCode: string): ITopupProviderAdapter {
-    const adapter = this.adapters.get(providerCode.toUpperCase());
+    const code = typeof providerCode === 'string' ? providerCode.trim().toUpperCase() : '';
+    const adapter = code ? this.adapters.get(code) : undefined;
     if (!adapter) {
-      this.logger.warn(`No adapter configured for ${providerCode}. Falling back to MOCK.`);
-      return this.mockAdapter;
+      this.logger.error(`No provider adapter is registered for code "${code || 'EMPTY'}". Dispatch is blocked.`);
+      throw new ServiceUnavailableException(`No fulfillment adapter is configured for provider "${code || 'unknown'}".`);
     }
     return adapter;
   }
