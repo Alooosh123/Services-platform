@@ -613,6 +613,46 @@ export class PayoutsService {
     return null;
   }
 
+  async findByExternalReference(reference: string): Promise<InMemoryPayout | null> {
+    if (!reference?.trim()) return null;
+    try {
+      const db = await this.prisma.payoutRequest.findFirst({
+        where: { externalReference: reference.trim() },
+      });
+      if (db) {
+        return {
+          id: db.id,
+          payoutNumber: db.payoutNumber,
+          userId: db.userId,
+          walletId: db.walletId,
+          currency: db.currency as CurrencyCode,
+          amount: Number(db.amount),
+          feeAmount: Number(db.feeAmount),
+          channelCode: db.channelCode as PaymentChannelCode,
+          destinationAccount: db.destinationAccount,
+          beneficiaryName: db.beneficiaryName,
+          idempotencyKey: db.idempotencyKey,
+          status: db.status as PayoutStatus,
+          externalReference: db.externalReference,
+          createdAt: db.createdAt,
+          updatedAt: db.updatedAt,
+        };
+      }
+      return null;
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout external reference lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout reference could not be verified.');
+      }
+    }
+    if (process.env.NODE_ENV === 'test') {
+      for (const payout of this.memoryPayouts.values()) {
+        if (payout.externalReference === reference.trim()) return payout;
+      }
+    }
+    return null;
+  }
+
   async listPayouts(filters?: { status?: PayoutStatus; userId?: string }): Promise<InMemoryPayout[]> {
     try {
       const where: any = {};
