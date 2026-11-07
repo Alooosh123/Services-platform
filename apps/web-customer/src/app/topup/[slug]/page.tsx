@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Gamepad2,
@@ -42,6 +42,8 @@ export default function GameTopupPage() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [orderResult, setOrderResult] = useState<any>(null);
   const [linkedAccounts, setLinkedAccounts] = useState<any[]>([]);
+  const [transactionPin, setTransactionPin] = useState('');
+  const idempotencyKeyRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
   // Fetch Service Catalog and User Wallets
   useEffect(() => {
@@ -225,8 +227,30 @@ export default function GameTopupPage() {
       return;
     }
 
+    if (!/^[0-9]{6}$/.test(transactionPin)) {
+      setCheckoutError('أدخل رمز المعاملة المالي الصحيح المكوّن من 6 أرقام.');
+      return;
+    }
+
+    if (!window.crypto?.randomUUID) {
+      setCheckoutError('المتصفح لا يدعم إنشاء مفتاح آمن لمنع تكرار الطلب. يرجى تحديث المتصفح.');
+      return;
+    }
+
+    const requestBody = {
+      productId: selectedPackage.id,
+      currency: selectedCurrency,
+      playerFields: playerInputs,
+      paymentMethod: 'WALLET',
+    };
+    const fingerprint = JSON.stringify(requestBody);
+    const idempotencyKey =
+      idempotencyKeyRef.current?.fingerprint === fingerprint
+        ? idempotencyKeyRef.current.key
+        : window.crypto.randomUUID();
+    idempotencyKeyRef.current = { fingerprint, key: idempotencyKey };
+
     setIsSubmitting(true);
-    const idempotencyKey = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     try {
       const res = await fetch(apiUrl('/orders/checkout'), {
@@ -234,20 +258,18 @@ export default function GameTopupPage() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'Idempotency-Key': idempotencyKey,
+          'x-transaction-pin': transactionPin,
         },
-        body: JSON.stringify({
-          productId: selectedPackage.id,
-          currency: selectedCurrency,
-          playerFields: playerInputs,
-          idempotencyKey,
-          paymentMethod: 'WALLET',
-        }),
+        body: JSON.stringify({ ...requestBody, idempotencyKey }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
         setOrderResult(data);
+        idempotencyKeyRef.current = null;
+        setTransactionPin('');
         // Refresh wallets
         fetchCustomerWallets();
       } else {
@@ -529,6 +551,27 @@ export default function GameTopupPage() {
                   يتم حجز الرصيد ذرياً فوراً والتسوية عبر السجل المزدوج.
                 </p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="checkout-transaction-pin" className="block text-xs font-semibold text-slate-200">
+                رمز المعاملة المالي
+              </label>
+              <input
+                id="checkout-transaction-pin"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={transactionPin}
+                onChange={(event) => setTransactionPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+                placeholder="أدخل الرمز المكوّن من 6 أرقام"
+                className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-white tracking-[0.35em] text-center focus:outline-none focus:border-indigo-500"
+                aria-describedby="checkout-transaction-pin-help"
+              />
+              <p id="checkout-transaction-pin-help" className="text-[11px] text-slate-400">
+                يُطلب الرمز لتأكيد الدفع من المحفظة، ولا يُحفظ في المتصفح.
+              </p>
             </div>
 
             <button
