@@ -203,6 +203,10 @@ describe('Phase 10 Production Stress & Resiliency: Concurrent Checkout, Worker R
       const createdOrderRecord = {
         id: 'ord-single-1',
         orderNumber: 'ORD-12345',
+        userId: 'cust-stress-101',
+        productId: 'prod-pubg-60',
+        snapshotPaymentMethodCode: PaymentChannelCode.WALLET,
+        snapshotBeneficiaryFields: { player_id: '5123456789' },
         status: OrderStatus.Completed,
         snapshotRetailPrice: 550,
         snapshotCurrency: CurrencyCode.YER,
