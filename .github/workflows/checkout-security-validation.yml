@@ -70,8 +70,12 @@ jobs:
         run: |
           npm run build --workspace=packages/shared
           npm run db:generate
+      - name: Prepare disposable CI database
+        run: |
+          npx prisma db push --schema=packages/database/prisma/schema.prisma
+          npm run db:seed
       - name: Run backend tests
-        run: npm run test --workspace=apps/backend -- --runInBand
+        run: npm test --workspace=apps/backend
       - name: Check customer web types
         run: npx tsc --noEmit --project apps/web-customer/tsconfig.json
       - name: Check admin web types
