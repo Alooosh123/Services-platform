@@ -418,9 +418,14 @@ export class ProductsService {
         orderBy: { displayOrder: 'asc' },
         include: { _count: { select: { services: true } } },
       });
-      if (list && list.length > 0) return list;
-    } catch {}
-    return Array.from(this.memoryCategories.values());
+      return list && list.length > 0
+        ? list
+        : process.env.NODE_ENV === 'test' ? Array.from(this.memoryCategories.values()) : list;
+    } catch (err: any) {
+      if (process.env.NODE_ENV === 'test') return Array.from(this.memoryCategories.values());
+      this.logger.error(`Category catalog lookup failed: ${err?.message}`);
+      throw new ServiceUnavailableException('The category catalog is temporarily unavailable.');
+    }
   }
 
   async createCategory(dto: {
@@ -440,7 +445,11 @@ export class ProductsService {
           displayOrder: dto.displayOrder || 0,
         },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Category create failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Category could not be saved.');
+      }
       const newCat = {
         id: `cat-${Date.now()}`,
         slug: dto.slug,
@@ -461,7 +470,11 @@ export class ProductsService {
         where: { id },
         data: dto,
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Category update failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Category could not be updated.');
+      }
       const existing = this.memoryCategories.get(id);
       if (!existing) throw new NotFoundException(`Category not found: ${id}`);
       const updated = { ...existing, ...dto };
@@ -497,9 +510,15 @@ export class ProductsService {
       helperTextAr?: string;
     }>;
   }) {
-    const existing = await this.prisma.service.findUnique({
-      where: { slug: dto.slug },
-    }).catch(() => null);
+    let existing: any = null;
+    try {
+      existing = await this.prisma.service.findUnique({ where: { slug: dto.slug } });
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service uniqueness check failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service availability could not be verified.');
+      }
+    }
 
     if (existing) {
       throw new ConflictException(`Service with slug "${dto.slug}" already exists`);
@@ -518,7 +537,11 @@ export class ProductsService {
         },
         include: { fields: true, products: true },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service create failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service could not be saved.');
+      }
       const newSrv = {
         id: `srv-${Date.now()}`,
         slug: dto.slug,
@@ -563,7 +586,11 @@ export class ProductsService {
         where: { id },
         data: dto,
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service update failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service could not be updated.');
+      }
       const existing = this.memoryServices.get(id);
       if (!existing) throw new NotFoundException(`Service not found: ${id}`);
       const updated = { ...existing, ...dto };
@@ -606,7 +633,11 @@ export class ProductsService {
           displayOrder: dto.displayOrder || 0,
         },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service field create failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service field could not be saved.');
+      }
       const newF = {
         id: `field-${Date.now()}`,
         serviceId,
@@ -620,7 +651,11 @@ export class ProductsService {
   async deleteServiceField(fieldId: string) {
     try {
       return await this.prisma.serviceField.delete({ where: { id: fieldId } });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service field delete failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service field could not be deleted.');
+      }
       this.memoryFields.delete(fieldId);
       return { success: true };
     }
@@ -675,7 +710,11 @@ export class ProductsService {
         },
         include: { prices: true },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Product create failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Product could not be saved.');
+      }
       const newP = {
         id: `prod-${Date.now()}`,
         serviceId,
@@ -706,7 +745,16 @@ export class ProductsService {
   }) {
     // If setting isAvailable = true, enforce Provider Mapping Gating
     if (dto.isAvailable === true) {
-      const existing = await this.prisma.product.findUnique({ where: { id: productId } }).catch(() => null);
+      let existing: any = null;
+      try {
+        existing = await this.prisma.product.findUnique({ where: { id: productId } });
+      } catch (err: any) {
+        if (process.env.NODE_ENV !== 'test') {
+          this.logger.error(`Product mapping lookup failed: ${err?.message}`);
+          throw new ServiceUnavailableException('Product provider mapping could not be verified.');
+        }
+        existing = this.memoryProducts.get(productId);
+      }
       const isManual = dto.isManualFulfillment ?? existing?.isManualFulfillment ?? false;
       const hasProvider = Boolean(dto.providerId ?? existing?.providerId ?? dto.providerProductSku ?? existing?.providerProductSku);
 
@@ -731,7 +779,11 @@ export class ProductsService {
         },
         include: { prices: true },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Product update failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Product could not be updated.');
+      }
       const existing = this.memoryProducts.get(productId);
       if (!existing) throw new NotFoundException(`Product not found: ${productId}`);
       const updated = { ...existing, ...dto };
@@ -751,28 +803,32 @@ export class ProductsService {
     this.logger.warn(`[KillSwitch] Product ${productId} disabled immediately by ${adminUserId}. Reason: ${reason}`);
 
     try {
-      const updated = await this.prisma.product.update({
-        where: { id: productId },
-        data: { isAvailable: false },
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.update({
+          where: { id: productId },
+          data: { isAvailable: false },
+        });
+        await tx.auditLog.create({
+          data: {
+            userId: adminUserId,
+            action: 'PRODUCT_KILL_SWITCH_TRIGGERED',
+            entityName: 'Product',
+            entityId: productId,
+            newValues: { isAvailable: false, reason },
+          },
+        });
+        return product;
       });
-
-      // Record in audit log
-      await this.prisma.auditLog.create({
-        data: {
-          userId: adminUserId,
-          action: 'PRODUCT_KILL_SWITCH_TRIGGERED',
-          entityName: 'Product',
-          entityId: productId,
-          newValues: { isAvailable: false, reason },
-        },
-      }).catch(() => null);
-
       return {
         success: true,
         message: 'تم إيقاف الباقة فوراً وحظر طلبات الشراء الجديدة عليها',
         product: updated,
       };
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Product kill switch failed: ${err?.message}`);
+        throw new ServiceUnavailableException('The product kill switch could not be persisted and audited.');
+      }
       const existing = this.memoryProducts.get(productId);
       if (existing) {
         existing.isAvailable = false;
@@ -814,7 +870,11 @@ export class ProductsService {
           notes: dto.notes || null,
         },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service request create failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Your service request could not be saved.');
+      }
       const newReq = {
         id: `sreq-${Date.now()}`,
         userId,
@@ -834,7 +894,11 @@ export class ProductsService {
         where: { userId },
         orderBy: { createdAt: 'desc' },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service request lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service requests are temporarily unavailable.');
+      }
       return Array.from(this.memoryServiceRequests.values()).filter((r) => r.userId === userId);
     }
   }
@@ -846,7 +910,11 @@ export class ProductsService {
         orderBy: { createdAt: 'desc' },
         include: { user: { select: { id: true, fullName: true, phone: true } } },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Admin service request lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service requests are temporarily unavailable.');
+      }
       let list = Array.from(this.memoryServiceRequests.values());
       if (status) list = list.filter((r) => r.status === status);
       return list;
@@ -866,7 +934,11 @@ export class ProductsService {
           reviewNotes: dto.reviewNotes || null,
         },
       });
-    } catch {
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Service request review failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Service request could not be reviewed.');
+      }
       const existing = this.memoryServiceRequests.get(requestId);
       if (!existing) throw new NotFoundException(`Service request not found: ${requestId}`);
       existing.status = dto.status;
