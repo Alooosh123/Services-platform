@@ -60,72 +60,55 @@ class _CheckoutPageState extends State<CheckoutPage>{
  List<Map<String,dynamic>> get prices=>rows(widget.product['prices']);List<Map<String,dynamic>> get schema=>rows(widget.service['fields']);
  @override void initState(){super.initState();if(prices.isNotEmpty)currency=prices.first['currency']?.toString()??'YER';for(final f in schema){final k=(f['fieldKey']??f['key']??'').toString();if(k.isNotEmpty)values[k]=TextEditingController();}}
  @override void dispose(){for(final x in values.values){x.dispose();}pin.dispose();super.dispose();}
- Future<void> buy()async{
- if(schema.any((f)=>(f['required']??true)==true && (values[(f['fieldKey']??f['key']).toString()]?.text.trim().isEmpty??true))){setState(()=>error='أكمل بيانات المستفيد المطلوبة.');return;}if(!RegExp(r'^[0-9]{6}
- @override Widget build(BuildContext c){
- Map<String,dynamic>? price;for(final p in prices){if(p['currency']?.toString()==currency){price=p;break;}}
- return Scaffold(appBar:AppBar(title:Text(widget.service['nameAr']?.toString()??'تأكيد الطلب')),body:ListView(padding:const EdgeInsets.all(16),children:[
- Text(widget.product['nameAr']?.toString()??widget.product['name']?.toString()??'باقة',style:const TextStyle(fontSize:20,fontWeight:FontWeight.bold)),
- Text(price==null?'السعر غير متوفر':money(price['retailPrice'],currency),style:const TextStyle(color:green,fontWeight:FontWeight.bold)),
- const SizedBox(height:18),const Text('بيانات المستفيد'),
- for(final f in schema)...[TextField(controller:values[(f['fieldKey']??f['key']).toString()],keyboardType:f['type']?.toString()=='number'?TextInputType.number:TextInputType.text,decoration:InputDecoration(labelText:f['labelAr']?.toString()??f['label']?.toString()??f['fieldKey']?.toString(),hintText:f['placeholderAr']?.toString())),const SizedBox(height:10)],
- if(prices.map((p)=>p['currency']).toSet().length>1)DropdownButtonFormField<String>(initialValue:currency,decoration:const InputDecoration(labelText:'عملة الدفع'),items:prices.map((p)=>p['currency'].toString()).toSet().map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>setState(()=>currency=v??currency)),
- TextField(controller:pin,obscureText:true,maxLength:6,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'رمز المعاملة المالي')),
- if(error!=null)Text(error!,style:const TextStyle(color:Colors.redAccent)),
- FilledButton(onPressed:busy||price==null?null:buy,child:Text(busy?'جارٍ الإرسال…':'تأكيد الطلب والدفع من المحفظة')),
- const Text('السعر والتحقق من الرصيد والخصم تتم داخل الخادم فقط.',style:TextStyle(color:Colors.white54,fontSize:12))
- ]));
- }
-}
-class OrdersPage extends StatefulWidget{const OrdersPage({super.key});@override State<OrdersPage> createState()=>_OrdersPageState();}
-class _OrdersPageState extends State<OrdersPage>{
- late Future<dynamic> data;@override void initState(){super.initState();data=ApiClient.instance.get('/orders/my-orders?page=1&limit=50');}
- Future<void> reload()async=>setState(()=>data=ApiClient.instance.get('/orders/my-orders?page=1&limit=50'));
- @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('طلباتي'),actions:[IconButton(onPressed:reload,icon:const Icon(Icons.refresh))]),body:FutureBuilder(future:data,builder:(c,s){
- if(s.connectionState==ConnectionState.waiting)return const Center(child:CircularProgressIndicator());if(s.hasError)return Retry(s.error.toString(),reload);final list=rows(s.data);if(list.isEmpty)return const Center(child:Text('لا توجد طلبات.'));
- return RefreshIndicator(onRefresh:reload,child:ListView(children:[for(final o in list)Card(color:panel,child:ListTile(title:Text(o['orderNumber']?.toString()??'طلب'),subtitle:Text((o['snapshotProductNameAr']??o['snapshotProductName']??'').toString()+' • '+money(o['snapshotRetailPrice'],o['snapshotCurrency']?.toString()??'')+'\nالحالة: '+(o['status']??'—').toString()),isThreeLine:true,onTap:()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>OrderDetailPage(id:o['id']?.toString()??o['orderNumber']?.toString()??'')))))]));
- }));
-}
-class OrderDetailPage extends StatelessWidget{final String id;const OrderDetailPage({super.key,required this.id});@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('تفاصيل الطلب')),body:FutureBuilder(future:ApiClient.instance.get('/orders/'+id),builder:(c,s){
- if(s.connectionState==ConnectionState.waiting)return const Center(child:CircularProgressIndicator());if(s.hasError)return Center(child:Text(s.error.toString()));final d=s.data is Map?Map<String,dynamic>.from(s.data):<String,dynamic>{};
- return ListView(padding:const EdgeInsets.all(16),children:[InfoTile('رقم الطلب',d['orderNumber']),InfoTile('الحالة',d['status']),InfoTile('الخدمة',d['snapshotServiceNameAr']??d['snapshotServiceName']),InfoTile('الباقة',d['snapshotProductNameAr']??d['snapshotProductName']),InfoTile('المبلغ',money(d['snapshotRetailPrice'],d['snapshotCurrency']?.toString()??''))]);
- }));
-}
-class WalletPage extends StatefulWidget{const WalletPage({super.key});@override State<WalletPage> createState()=>_WalletPageState();}
-class _WalletPageState extends State<WalletPage>{
- late Future<dynamic> data;@override void initState(){super.initState();data=ApiClient.instance.get('/wallet/balances');}
- Future<void> reload()async=>setState(()=>data=ApiClient.instance.get('/wallet/balances'));
- @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('المحفظة'),actions:[IconButton(onPressed:reload,icon:const Icon(Icons.refresh))]),body:FutureBuilder(future:data,builder:(c,s){
- if(s.connectionState==ConnectionState.waiting)return const Center(child:CircularProgressIndicator());if(s.hasError)return Retry(s.error.toString(),reload);final list=rows(s.data);
- return RefreshIndicator(onRefresh:reload,child:ListView(padding:const EdgeInsets.all(16),children:[const Text('أرصدة منفصلة حسب العملة',style:TextStyle(fontSize:17,fontWeight:FontWeight.bold)),for(final w in list)Card(color:panel,child:ListTile(title:Text(w['currency']?.toString()??'—'),subtitle:Text('المتاح: '+money(w['availableBalance']??w['balance'],w['currency']?.toString()??'')+'\nالمحجوز: '+money(w['lockedBalance'],w['currency']?.toString()??'')),isThreeLine:true,trailing:Icon(w['isFrozen']==true?Icons.lock:Icons.check_circle_outline,color:w['isFrozen']==true?Colors.red:green))),const Text('تأكيد الإيداعات يتم بعد المطابقة المالية فقط.',style:TextStyle(color:Colors.white54))]));
- }));
-}
-class ProfilePage extends StatefulWidget{const ProfilePage({super.key});@override State<ProfilePage> createState()=>_ProfilePageState();}
-class _ProfilePageState extends State<ProfilePage>{
- late Future<dynamic> profile;@override void initState(){super.initState();profile=ApiClient.instance.get('/auth/profile');}
- Future<void> setPin()async{
- final pass=TextEditingController(),pin=TextEditingController();
- final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('إعداد رمز المعاملة'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:pass,obscureText:true,decoration:const InputDecoration(labelText:'كلمة المرور الحالية')),TextField(controller:pin,obscureText:true,maxLength:6,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'رمز جديد من 6 أرقام'))]),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('حفظ'))]));
- if(ok==true){try{await ApiClient.instance.post('/auth/transaction-pin',body:{'currentPassword':pass.text,'pin':pin.text});if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم تحديث رمز المعاملة.')));}catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e.toString())));}}
- pass.dispose();pin.dispose();
- }
- @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('حسابي')),body:FutureBuilder(future:profile,builder:(c,s){
- if(s.connectionState==ConnectionState.waiting)return const Center(child:CircularProgressIndicator());if(s.hasError)return Retry(s.error.toString(),()async=>setState(()=>profile=ApiClient.instance.get('/auth/profile')));
- final d=s.data is Map?Map<String,dynamic>.from(s.data):<String,dynamic>{};final u=d['user'] is Map?Map<String,dynamic>.from(d['user']):d;
- return ListView(padding:const EdgeInsets.all(16),children:[Card(color:panel,child:ListTile(title:Text(u['fullName']?.toString()??'العميل'),subtitle:Text(u['email']?.toString()??u['phone']?.toString()??''))),ListTile(leading:const Icon(Icons.password),title:const Text('إعداد / تغيير رمز المعاملة'),onTap:setPin),ListTile(leading:const Icon(Icons.logout,color:Colors.red),title:const Text('تسجيل الخروج'),onTap:()async{await ApiClient.instance.logout();if(c.mounted)Navigator.pushAndRemoveUntil(c,MaterialPageRoute(builder:(_)=>AuthPage(onDone:()=>Navigator.pushReplacement(c,MaterialPageRoute(builder:(_)=>const Shell())))),(_)=>false);})]);
- }));
-}
-class InfoTile extends StatelessWidget{final String label;final dynamic value;const InfoTile(this.label,this.value);@override Widget build(BuildContext c)=>Card(color:panel,child:ListTile(title:Text(label,style:const TextStyle(color:Colors.white54,fontSize:12)),subtitle:Text(value?.toString()??'—')));}
-class Retry extends StatelessWidget{final String message;final Future<void> Function() retry;const Retry(this.message,this.retry);@override Widget build(BuildContext c)=>Center(child:Padding(padding:const EdgeInsets.all(22),child:Column(mainAxisSize:MainAxisSize.min,children:[const Icon(Icons.cloud_off,size:36,color:Colors.amber),Text(message,textAlign:TextAlign.center),OutlinedButton(onPressed:retry,child:const Text('إعادة المحاولة'))])));}
-).hasMatch(pin.text)){setState(()=>error='أدخل رمز المعاملة من 6 أرقام.');return;}
- final requestBody=<String,dynamic>{'productId':widget.product['id'],'currency':currency,'paymentMethod':'WALLET','playerFields':{for(final e in values.entries)e.key:e.value.text.trim()}};
- final fingerprint=jsonEncode(requestBody);
- if(idempotencyFingerprint!=fingerprint||idempotencyKey==null){idempotencyFingerprint=fingerprint;idempotencyKey=const Uuid().v4();}
- final requestKey=idempotencyKey!;
- setState(() { busy = true; error = null; });try{
- await ApiClient.instance.post('/orders/checkout',headers:{'x-transaction-pin':pin.text,'Idempotency-Key':requestKey},body:{...requestBody,'idempotencyKey':requestKey});
- if(mounted){idempotencyFingerprint=null;idempotencyKey=null;ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم إرسال الطلب. تابع حالته في طلباتي.')));Navigator.pop(context);}
- }catch(e){if(mounted)setState(()=>error=e.toString());}finally{if(mounted)setState(()=>busy=false);}
+ Future<void> buy() async {
+  if (schema.any((f) => (f['required'] ?? true) == true &&
+      (values[(f['fieldKey'] ?? f['key']).toString()]?.text.trim().isEmpty ?? true))) {
+    setState(() => error = 'أكمل بيانات المستفيد المطلوبة.');
+    return;
+  }
+  if (!RegExp(r'^[0-9]{6}$').hasMatch(pin.text)) {
+    setState(() => error = 'أدخل رمز المعاملة من 6 أرقام.');
+    return;
+  }
+
+  final requestBody = <String, dynamic>{
+    'productId': widget.product['id'],
+    'currency': currency,
+    'paymentMethod': 'WALLET',
+    'playerFields': {
+      for (final entry in values.entries) entry.key: entry.value.text.trim(),
+    },
+  };
+  final fingerprint = jsonEncode(requestBody);
+  if (idempotencyFingerprint != fingerprint || idempotencyKey == null) {
+    idempotencyFingerprint = fingerprint;
+    idempotencyKey = const Uuid().v4();
+  }
+  final requestKey = idempotencyKey!;
+
+  setState(() { busy = true; error = null; });
+  try {
+    await ApiClient.instance.post(
+      '/orders/checkout',
+      headers: {
+        'x-transaction-pin': pin.text,
+        'Idempotency-Key': requestKey,
+      },
+      body: {...requestBody, 'idempotencyKey': requestKey},
+    );
+    if (mounted) {
+      idempotencyFingerprint = null;
+      idempotencyKey = null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إرسال الطلب. تابع حالته في طلباتي.')),
+      );
+      Navigator.pop(context);
+    }
+  } catch (e) {
+    if (mounted) setState(() => error = e.toString());
+  } finally {
+    if (mounted) setState(() => busy = false);
+  }
  }
  @override Widget build(BuildContext c){
  Map<String,dynamic>? price;for(final p in prices){if(p['currency']?.toString()==currency){price=p;break;}}
