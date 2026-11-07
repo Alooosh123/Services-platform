@@ -23,6 +23,7 @@ import {
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [search, setSearch] = useState('');
 
@@ -58,71 +59,29 @@ export default function AdminOrdersPage() {
 
   const fetchOrders = async () => {
     setLoading(true);
+    setOrdersError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const url = new URL('http://localhost:4000/api/orders/admin/all');
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const baseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
+      const url = new URL(`${baseUrl}/orders/admin/all`);
       if (filterStatus !== 'ALL') url.searchParams.append('status', filterStatus);
       if (search) url.searchParams.append('search', search);
 
       const res = await fetch(url.toString(), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setOrders(data.data || []);
-      } else {
-        loadFallbackOrders();
-      }
-    } catch {
-      loadFallbackOrders();
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل الطلبات من الخادم.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة قائمة الطلبات غير صحيحة.');
+      setOrders(rows);
+    } catch (err) {
+      setOrders([]);
+      setOrdersError(err instanceof Error ? err.message : 'تعذر تحميل الطلبات من الخادم.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadFallbackOrders = () => {
-    setOrders([
-      {
-        id: 'ord-1',
-        orderNumber: 'ORD-20261009-8491',
-        snapshotServiceNameAr: 'ببجي موبايل',
-        snapshotServiceName: 'PUBG Mobile',
-        snapshotProductNameAr: '660 شدة ببجي',
-        snapshotProductName: '660 UC',
-        snapshotRetailPrice: 5500,
-        snapshotCostPrice: 4950,
-        snapshotProfit: 550,
-        snapshotCurrency: 'YER',
-        snapshotBeneficiaryFields: { player_id: '512938475' },
-        status: 'Completed',
-        voucherCode: 'PUBG-8899-7766-5544',
-        user: { fullName: 'أحمد محمد الحاشدي', email: 'customer@gmail.com', phone: '+967770000003' },
-        createdAt: new Date().toISOString(),
-        statusHistory: [
-          { oldStatus: 'AwaitingPayment', newStatus: 'Queued', reason: 'حجز الرصيد من المحفظة', createdAt: new Date(Date.now() - 3600000).toISOString() },
-          { oldStatus: 'Queued', newStatus: 'Completed', reason: 'تم تسليم الشحنة والتسوية المحاسبية', createdAt: new Date().toISOString() },
-        ],
-      },
-      {
-        id: 'ord-2',
-        orderNumber: 'ORD-20261009-3321',
-        snapshotServiceNameAr: 'يويو - غرف الدردشة الصوتية',
-        snapshotServiceName: 'YoYo Voice',
-        snapshotProductNameAr: '5,000 عملة يويو',
-        snapshotProductName: '5,000 Coins',
-        snapshotRetailPrice: 2500,
-        snapshotCostPrice: 2250,
-        snapshotProfit: 250,
-        snapshotCurrency: 'YER',
-        snapshotBeneficiaryFields: { user_id: '88776655' },
-        status: 'ManualReview',
-        user: { fullName: 'علي كريم', email: 'ali@gamer.net', phone: '+967771122334' },
-        createdAt: new Date(Date.now() - 1800000).toISOString(),
-        statusHistory: [
-          { oldStatus: 'Queued', newStatus: 'ManualReview', reason: 'بانتظار المشغل للتنفيذ اليدوي وإرفاق الكود', createdAt: new Date().toISOString() },
-        ],
-      },
-    ]);
   };
 
   useEffect(() => {
@@ -361,6 +320,13 @@ export default function AdminOrdersPage() {
                   <tr>
                     <td colSpan={6} className="p-12 text-center text-slate-500">
                       جاري تحميل بيانات الطلبات...
+                    </td>
+                  </tr>
+                ) : ordersError ? (
+                  <tr>
+                    <td colSpan={6} className="p-12 text-center text-rose-300">
+                      {ordersError}
+                      <button onClick={fetchOrders} className="block mx-auto mt-3 text-indigo-400 underline">إعادة المحاولة</button>
                     </td>
                   </tr>
                 ) : orders.length === 0 ? (
