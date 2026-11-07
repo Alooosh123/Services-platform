@@ -14,6 +14,8 @@ import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { UserRole } from '@digital-topup/shared';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -21,6 +23,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(3, 60_000, 'auth-register')
   @ApiOperation({ summary: 'Register a new customer account' })
   @ApiResponse({ status: 201, description: 'Customer account created successfully' })
   async register(@Body() dto: RegisterDto, @Req() request: any) {
@@ -28,6 +32,8 @@ export class AuthController {
   }
 
   @Post('login')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'auth-login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login using email or phone and password' })
   @ApiResponse({ status: 200, description: 'Login successful, returns JWT tokens' })
@@ -36,6 +42,8 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'auth-refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rotate a valid refresh token and issue a new access/refresh token pair' })
   async refresh(@Body() dto: RefreshTokenDto) {
@@ -43,6 +51,8 @@ export class AuthController {
   }
 
   @Post('admin/login')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'auth-admin-login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Staff login with MFA requirement' })
   @ApiResponse({ status: 200, description: 'Credentials verified, requires MFA code' })
@@ -51,6 +61,8 @@ export class AuthController {
   }
 
   @Post('admin/verify-mfa')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'auth-admin-mfa')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify admin MFA code (TOTP) and issue session tokens' })
   @ApiResponse({ status: 200, description: 'MFA verified, returns admin access tokens' })
