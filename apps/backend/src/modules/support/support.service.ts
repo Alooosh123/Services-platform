@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -67,7 +68,7 @@ export class SupportService {
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
   ) {
-    this.seedDefaultTickets();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultTickets();
   }
 
   private seedDefaultTickets() {
@@ -128,8 +129,15 @@ export class SupportService {
   }
 
   clearMemoryTickets() {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException('In-memory support records are available only in tests.');
+    }
     this.memoryTickets.clear();
     this.memoryIdempotency.clear();
+  }
+
+  private allowMemoryFallback(): boolean {
+    return process.env.NODE_ENV === 'test';
   }
 
   /**
@@ -146,10 +154,25 @@ export class SupportService {
 
     // A. Idempotency verification (Weak Network Protection)
     if (dto.idempotencyKey) {
-      const existingId = this.memoryIdempotency.get(dto.idempotencyKey);
-      if (existingId) {
-        const existing = await this.getTicketById(existingId, userId, UserRole.CUSTOMER);
-        return existing;
+      if (this.allowMemoryFallback()) {
+        const existingId = this.memoryIdempotency.get(dto.idempotencyKey);
+        if (existingId) return this.getTicketById(existingId, userId, UserRole.CUSTOMER);
+      } else {
+        try {
+          const existing = await this.prisma.supportTicket.findUnique({
+            where: { idempotencyKey: dto.idempotencyKey },
+          });
+          if (existing) {
+            if (existing.userId !== userId) {
+              throw new ForbiddenException('مفتاح التذكرة مستخدم من حساب آخر.');
+            }
+            return this.getTicketById(existing.id, userId, UserRole.CUSTOMER);
+          }
+        } catch (err: any) {
+          if (err instanceof ForbiddenException) throw err;
+          this.logger.error(`Support ticket idempotency lookup failed: ${err?.message}`);
+          throw new ServiceUnavailableException('Support ticket idempotency could not be verified.');
+        }
       }
     }
 
@@ -162,6 +185,10 @@ export class SupportService {
         }
       } catch (err: any) {
         if (err instanceof ForbiddenException) throw err;
+        if (!this.allowMemoryFallback()) {
+          this.logger.error(`Support ticket linked-order verification failed: ${err?.message}`);
+          throw new ServiceUnavailableException('The linked order ownership could not be verified.');
+        }
       }
     }
 
@@ -203,38 +230,44 @@ export class SupportService {
     };
 
     try {
-      await this.prisma.supportTicket.create({
-        data: {
-          id: ticketId,
-          ticketNumber,
-          userId,
-          category: ticketRecord.category,
-          priority: ticketRecord.priority,
-          status: ticketRecord.status,
-          subject: ticketRecord.subject,
-          description: ticketRecord.description,
-          orderId: ticketRecord.orderId,
-          depositId: ticketRecord.depositId,
-          idempotencyKey: ticketRecord.idempotencyKey,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.supportTicket.create({
+          data: {
+            id: ticketId,
+            ticketNumber,
+            userId,
+            category: ticketRecord.category,
+            priority: ticketRecord.priority,
+            status: ticketRecord.status,
+            subject: ticketRecord.subject,
+            description: ticketRecord.description,
+            orderId: ticketRecord.orderId,
+            depositId: ticketRecord.depositId,
+            idempotencyKey: ticketRecord.idempotencyKey,
+          },
+        });
+        await tx.ticketMessage.create({
+          data: {
+            id: initialMsg.id,
+            ticketId,
+            senderUserId: userId,
+            senderRole: 'CUSTOMER',
+            message: initialMsg.message,
+            isInternalNote: false,
+          },
+        });
       });
-      await this.prisma.ticketMessage.create({
-        data: {
-          id: initialMsg.id,
-          ticketId,
-          senderUserId: userId,
-          senderRole: 'CUSTOMER',
-          message: initialMsg.message,
-          isInternalNote: false,
-        },
-      });
-    } catch {
-      this.logger.debug(`Prisma ticket creation fallback to memory for ${ticketId}`);
+    } catch (err: any) {
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Support ticket persistence failed: ${err?.message}`);
+        throw new ServiceUnavailableException('The support ticket could not be saved.');
+      }
+      this.logger.warn(`Test-only in-memory support ticket fallback: ${err?.message}`);
     }
 
-    this.memoryTickets.set(ticketId, ticketRecord);
-    if (dto.idempotencyKey) {
-      this.memoryIdempotency.set(dto.idempotencyKey, ticketId);
+    if (this.allowMemoryFallback()) {
+      this.memoryTickets.set(ticketId, ticketRecord);
+      if (dto.idempotencyKey) this.memoryIdempotency.set(dto.idempotencyKey, ticketId);
     }
 
     // Emit in-app notification to customer
@@ -274,7 +307,7 @@ export class SupportService {
         include: { messages: true },
       });
 
-      if (dbTickets && dbTickets.length > 0) {
+      if (Array.isArray(dbTickets)) {
         return dbTickets.map((t) => {
           const mappedMessages = (t.messages || [])
             .filter((m) => isStaff || !m.isInternalNote) // Redact internal notes for customers!
@@ -310,8 +343,14 @@ export class SupportService {
           };
         });
       }
-    } catch {}
+    } catch (err: any) {
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Support ticket list failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Support tickets are temporarily unavailable.');
+      }
+    }
 
+    if (!this.allowMemoryFallback()) return [];
     const all = Array.from(this.memoryTickets.values());
     const filtered = all.filter((t) => {
       if (!isStaff && t.userId !== userId) return false;
@@ -377,8 +416,15 @@ export class SupportService {
       }
     } catch (err: any) {
       if (err instanceof ForbiddenException) throw err;
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Support ticket lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Support ticket is temporarily unavailable.');
+      }
     }
 
+    if (!this.allowMemoryFallback()) {
+      throw new NotFoundException(`تذكرة الدعم غير موجودة (${ticketId})`);
+    }
     const mem = this.memoryTickets.get(ticketId);
     if (!mem) {
       throw new NotFoundException(`تذكرة الدعم غير موجودة (${ticketId})`);
@@ -436,22 +482,30 @@ export class SupportService {
     }
 
     try {
-      await this.prisma.ticketMessage.create({
-        data: {
-          id: msgId,
-          ticketId,
-          senderUserId: userId,
-          senderRole: userRole,
-          message: dto.message,
-          attachments: dto.attachments ? JSON.stringify(dto.attachments) : undefined,
-          isInternalNote,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.ticketMessage.create({
+          data: {
+            id: msgId,
+            ticketId,
+            senderUserId: userId,
+            senderRole: userRole,
+            message: dto.message,
+            attachments: dto.attachments ? JSON.stringify(dto.attachments) : undefined,
+            isInternalNote,
+          },
+        });
+        await tx.supportTicket.update({
+          where: { id: ticketId },
+          data: { status: newStatus, updatedAt: new Date() },
+        });
       });
-      await this.prisma.supportTicket.update({
-        where: { id: ticketId },
-        data: { status: newStatus, updatedAt: new Date() },
-      });
-    } catch {}
+    } catch (err: any) {
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Support message persistence failed: ${err?.message}`);
+        throw new ServiceUnavailableException('The support reply could not be saved.');
+      }
+    }
+
 
     const mem = this.memoryTickets.get(ticketId);
     if (mem) {
