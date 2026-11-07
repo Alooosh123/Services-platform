@@ -101,8 +101,8 @@ export class PayoutsService {
   async createPayoutRequest(
     userId: string,
     dto: CreatePayoutDto,
-  ): Promise<{
-    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    this.assertPersistentPayoutWorkflow();
     if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
       throw new BadRequestException('مفتاح عدم التكرار (idempotencyKey) إلزامي لمنع الازدواج المالي');
     }
@@ -263,8 +263,8 @@ export class PayoutsService {
     staffUserId: string,
     payoutId: string,
     dto?: ApprovePayoutDto,
-  ): Promise<{
-    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status !== PayoutStatus.REQUESTED) {
@@ -309,8 +309,8 @@ export class PayoutsService {
   async dispatchPayout(
     staffUserId: string,
     payoutId: string,
-  ): Promise<{
-    this.assertPersistentPayoutWorkflow(); success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
+  ): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status !== PayoutStatus.APPROVED && payout.status !== PayoutStatus.REQUESTED) {
@@ -455,8 +455,8 @@ export class PayoutsService {
     payoutId: string,
     externalRef: string,
     notes?: string,
-  ): Promise<{
-    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (
@@ -509,8 +509,8 @@ export class PayoutsService {
     staffUserId: string,
     payoutId: string,
     reason: string,
-  ): Promise<{
-    this.assertPersistentPayoutWorkflow(); success: boolean; payout: InMemoryPayout }> {
+  ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status === PayoutStatus.CONFIRMED) {
@@ -560,10 +560,16 @@ export class PayoutsService {
           updatedAt: db.updatedAt,
         };
       }
-    } catch {
-      // fallback
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout records are temporarily unavailable.');
+      }
     }
 
+    if (process.env.NODE_ENV !== 'test') {
+      throw new NotFoundException(`طلب السحب ${payoutId} غير موجود`);
+    }
     const mem = this.memoryPayouts.get(payoutId);
     if (!mem) {
       throw new NotFoundException(`طلب السحب ${payoutId} غير موجود`);
@@ -595,18 +601,21 @@ export class PayoutsService {
           updatedAt: db.updatedAt,
         };
       }
-    } catch {
-      // fallback
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout idempotency lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout idempotency could not be verified.');
+      }
     }
 
+    if (process.env.NODE_ENV !== 'test') return null;
     for (const p of this.memoryPayouts.values()) {
       if (p.idempotencyKey === key) return p;
     }
     return null;
   }
 
-  async listPayouts(filters?: {
-    this.assertPersistentPayoutWorkflow(); status?: PayoutStatus; userId?: string }): Promise<InMemoryPayout[]> {
+  async listPayouts(filters?: { status?: PayoutStatus; userId?: string }): Promise<InMemoryPayout[]> {
     try {
       const where: any = {};
       if (filters?.status) where.status = filters.status;
@@ -617,7 +626,7 @@ export class PayoutsService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (db && db.length > 0) {
+      if (Array.isArray(db)) {
         return db.map((p) => ({
           id: p.id,
           payoutNumber: p.payoutNumber,
@@ -640,10 +649,14 @@ export class PayoutsService {
           updatedAt: p.updatedAt,
         }));
       }
-    } catch {
-      // fallback
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout list lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout records are temporarily unavailable.');
+      }
     }
 
+    if (process.env.NODE_ENV !== 'test') return [];
     let results = Array.from(this.memoryPayouts.values());
     if (filters?.status) results = results.filter((p) => p.status === filters.status);
     if (filters?.userId) results = results.filter((p) => p.userId === filters.userId);
