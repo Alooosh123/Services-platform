@@ -52,36 +52,6 @@ export default function GameTopupPage() {
     fetchLinkedAccounts();
   }, [slug]);
 
-  const fetchLinkedAccountsLegacy = async () => {
-    try {
-      const res = await fetch(apiUrl('/service-accounts'), {
-        headers: { Authorization: 'Bearer mock-customer-token' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setLinkedAccounts(data.data || []);
-      }
-    } catch {}
-  };
-
-  const fetchCustomerWalletsLegacy = async () => {
-    try {
-      const token = getCustomerToken();
-      if (!token) return;
-      const res = await fetch(apiUrl('/wallet/balances'), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const map: Record<string, any> = {};
-        for (const w of data) {
-          map[w.currency] = w;
-        }
-        setUserWallets(map);
-      }
-    } catch {}
-  };
-
   const fetchLinkedAccounts = async () => {
     if (!getCustomerToken()) return;
     try {
