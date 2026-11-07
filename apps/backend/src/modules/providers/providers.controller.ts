@@ -7,6 +7,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserRole, UpdateProviderDto, SupplierDepositDto } from '@digital-topup/shared';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 
 @ApiTags('TopUp Providers')
 @Controller('providers')
@@ -77,7 +79,8 @@ export class ProvidersController {
   }
 
   @Post('validate-player')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'provider-player-validation')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Validate player username/zone before order submission (authenticated customer)' })
   async validatePlayer(
