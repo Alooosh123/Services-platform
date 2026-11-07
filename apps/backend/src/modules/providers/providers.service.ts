@@ -34,6 +34,9 @@ export class ProvidersService {
 
   getAdapter(providerCode: string): ITopupProviderAdapter {
     const code = typeof providerCode === 'string' ? providerCode.trim().toUpperCase() : '';
+    if (code === 'MOCK' && process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException('The MOCK provider adapter is available in automated tests only.');
+    }
     const adapter = code ? this.adapters.get(code) : undefined;
     if (!adapter) {
       this.logger.error(`No provider adapter is registered for code "${code || 'EMPTY'}". Dispatch is blocked.`);
