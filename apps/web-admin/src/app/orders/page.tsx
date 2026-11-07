@@ -142,7 +142,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': window.crypto.randomUUID(),
+          'Idempotency-Key': getActionIdempotencyKey('fulfill-manual', selectedOrder.id),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -153,6 +153,7 @@ export default function AdminOrdersPage() {
       });
 
       if (res.ok) {
+        clearActionIdempotencyKey('fulfill-manual', selectedOrder.id);
         alert('تم اعتماد وتنفيذ الطلب يدوياً وتسجيل التسوية المحاسبية بنجاح!');
         setShowFulfillModal(false);
         setVoucherInput('');
@@ -165,9 +166,7 @@ export default function AdminOrdersPage() {
         alert(`فشل التنفيذ: ${err.message || 'خطأ غير معروف'}`);
       }
     } catch {
-      alert('تم حفظ التنفيذ اليدوي واعتماد تسوية الطلب.');
-      setShowFulfillModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد نتيجة التنفيذ اليدوي بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة بنفس البيانات للتحقق من النتيجة.');
     } finally {
       setActionLoading(false);
     }
