@@ -37,6 +37,8 @@ export class ProvidersController {
   }
 
   @Post('admin/fund-supplier')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'supplier-funding')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @ApiBearerAuth()
@@ -58,6 +60,8 @@ export class ProvidersController {
   }
 
   @Patch('admin/:id')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'provider-config-update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiBearerAuth()
@@ -71,6 +75,8 @@ export class ProvidersController {
   }
 
   @Post('admin/:id/test-connection')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'provider-connection-test')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiBearerAuth()
