@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ITopupProviderAdapter } from './provider-adapter.interface';
 import {
   PlayerValidationRequest,
@@ -25,67 +25,31 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
     if (targetUrl) {
       this.validateEndpoint(targetUrl);
     }
-
     const playerId = request.fields?.player_id || request.fields?.userId;
     if (!playerId) {
       return { isValid: false, errorMessage: 'معرف اللاعب مطلوب' };
     }
     return {
-      isValid: true,
-      playerName: `ExtUser_${playerId.slice(-4)}`,
-      zoneName: request.fields?.zone_id,
+      isValid: false,
+      errorMessage: 'لم يتم ربط واجهة تحقق فعلية بهذا المزود؛ لم يتم التحقق من الحساب.',
     };
   }
 
   async submitOrder(request: TopupProviderOrderRequest, targetUrl?: string): Promise<TopupProviderOrderResponse> {
-    this.logger.log(`Dispatching order ${request.orderNumber} to External API Provider`);
-
-    try {
-      if (targetUrl) {
-        this.validateEndpoint(targetUrl);
-      }
-
-      const playerId = request.playerFields?.player_id || '';
-
-      // Test Case: Timeout simulation (player_id starts with '777')
-      if (playerId.startsWith('777')) {
-        return {
-          success: false,
-          status: 'PENDING',
-          errorMessage: 'Provider gateway timeout (15000ms exceeded). Order moved to Manual Review.',
-          errorCode: 'ERR_GATEWAY_TIMEOUT',
-        };
-      }
-
-      // Test Case: Hard failure (player_id starts with '999')
-      if (playerId.startsWith('999')) {
-        return {
-          success: false,
-          status: 'FAILED',
-          errorMessage: 'External API rejected: User does not exist or region mismatch',
-          errorCode: 'ERR_ACCOUNT_NOT_FOUND',
-        };
-      }
-
-      // Successful dispatch
-      return {
-        success: true,
-        status: 'SUCCESS',
-        providerOrderId: `EXT-TX-${Date.now()}`,
-        pinCode: request.providerSku.includes('VOUCHER') ? `VOUCH-${Math.random().toString(36).substring(2, 10).toUpperCase()}` : undefined,
-        serialNumber: `SN-EXT-${Date.now()}`,
-        rawResponse: {
-          statusCode: 200,
-          providerStatus: 'DELIVERED',
-        },
-      };
-    } catch (err: any) {
-      return {
-        success: false,
-        status: 'FAILED',
-        errorMessage: err?.message || 'External API connection failed',
-      };
+    if (targetUrl) {
+      this.validateEndpoint(targetUrl);
     }
+
+    this.logger.error(
+      `External provider ${this.providerCode} is not wired to a real HTTP API. Order ${request.orderNumber} is held for manual review.`,
+    );
+    return {
+      success: false,
+      status: 'PENDING',
+      errorMessage: 'لم يتم إعداد اتصال API فعلي لهذا المزود. تم إيقاف الإرسال الآلي وتحويل الطلب للمراجعة اليدوية.',
+      errorCode: 'PROVIDER_API_NOT_CONFIGURED',
+      rawResponse: { adapterConfigured: false },
+    };
   }
 
   async checkOrderStatus(
@@ -96,12 +60,12 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
     if (targetUrl) {
       this.validateEndpoint(targetUrl);
     }
-
     return {
-      success: true,
-      status: 'SUCCESS',
+      success: false,
+      status: 'PENDING',
       providerOrderId,
-      rawResponse: { checkedAt: new Date().toISOString() },
+      errorMessage: 'لا يمكن الاستعلام من المزود قبل إعداد نقطة API فعلية.',
+      errorCode: 'PROVIDER_API_NOT_CONFIGURED',
     };
   }
 
@@ -109,12 +73,8 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
     if (targetUrl) {
       this.validateEndpoint(targetUrl);
     }
-
-    return {
-      currency: 'USD',
-      balance: 1450.5,
-      provider: 'EXTERNAL_API',
-      lastUpdated: new Date().toISOString(),
-    };
+    throw new ServiceUnavailableException(
+      'لا يمكن عرض رصيد مزود خارجي قبل إعداد اتصال API فعلي وموثق.',
+    );
   }
 }
