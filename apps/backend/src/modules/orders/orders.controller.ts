@@ -6,8 +6,10 @@ import {
   Param,
   Query,
   UseGuards,
+  Headers,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto, RetryOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -37,11 +39,18 @@ export class OrdersController {
   @RequirePolicy('orders:create')
   @UseGuards(PoliciesGuard, TransactionPinGuard)
   @ApiOperation({ summary: 'Submit a topup checkout order with atomic balance hold' })
+  @ApiHeader({ name: 'Idempotency-Key', required: true, description: 'Must exactly match body.idempotencyKey' })
   @ApiResponse({ status: 201, description: 'Order created with dynamic snapshots and double-entry payment' })
   async checkout(
     @CurrentUser('id') userId: string,
     @Body() dto: CreateOrderDto,
+    @Headers('Idempotency-Key') idempotencyHeader?: string,
   ) {
+    const headerKey = idempotencyHeader?.trim();
+    const bodyKey = typeof dto?.idempotencyKey === 'string' ? dto.idempotencyKey.trim() : '';
+    if (!headerKey || !bodyKey || bodyKey !== headerKey || dto.idempotencyKey !== bodyKey) {
+      throw new BadRequestException('Idempotency-Key header must exactly match body.idempotencyKey.');
+    }
     return this.ordersService.createOrder(userId, dto);
   }
 
