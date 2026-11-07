@@ -54,7 +54,7 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
 
   async checkOrderStatus(
     providerOrderId: string,
-    internalOrderNumber: string,
+    _internalOrderNumber: string,
     targetUrl?: string,
   ): Promise<TopupProviderOrderResponse> {
     if (targetUrl) {
