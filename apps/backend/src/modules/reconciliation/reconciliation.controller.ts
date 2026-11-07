@@ -13,7 +13,9 @@ import { ReconciliationService } from './reconciliation.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentUser } froimport { RateLimit } from '../../security/rate-limit.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+m '../auth/decorators/current-user.decorator';
 import { UserRole, RunReconciliationDto } from '@digital-topup/shared';
 
 @ApiTags('Daily Financial Reconciliation')
@@ -37,6 +39,8 @@ export class ReconciliationController {
   }
 
   @Post('run')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(3, 60_000, 'reconciliation-run')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Execute 3-way daily reconciliation batch (Bank ↔ Deposits ↔ Payouts ↔ Ledger)' })
   async runReconciliation(
@@ -47,6 +51,8 @@ export class ReconciliationController {
   }
 
   @Post('resolve-discrepancy/:itemId')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'reconciliation-resolve')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Manually resolve reconciliation discrepancy or dispute' })
   async resolveDiscrepancy(
