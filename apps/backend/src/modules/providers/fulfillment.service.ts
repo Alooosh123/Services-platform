@@ -132,13 +132,14 @@ export class FulfillmentService {
       }
     }
 
-    const adapter = this.providersService.getAdapter(providerCode);
-
     this.logger.log(`Dispatching order ${order.orderNumber} via adapter: ${providerCode}`);
 
-    // 3. Invoke provider adapter (safely outside any DB transaction)
+    // 3. Invoke provider adapter outside the DB transaction. A thrown network
+    // or configuration error has an unknown external outcome: keep funds held
+    // and route to ManualReview rather than releasing the customer's balance.
     let response;
     try {
+      const adapter = this.providersService.getAdapter(providerCode);
       response = await adapter.submitOrder({
         orderId: order.id,
         orderNumber: order.orderNumber,
@@ -148,11 +149,12 @@ export class FulfillmentService {
         currency,
       });
     } catch (err: any) {
-      this.logger.error(`Adapter execution threw error for order ${order.orderNumber}: ${err?.message}`);
+      this.logger.error(`Adapter outcome is unknown for order ${order.orderNumber}: ${err?.message}`);
       response = {
         success: false,
-        status: 'FAILED',
-        errorMessage: err?.message || 'Adapter execution error',
+        status: 'PENDING',
+        errorMessage: err?.message || 'Provider outcome is unknown; manual reconciliation is required.',
+        errorCode: 'PROVIDER_OUTCOME_UNKNOWN',
       };
     }
 
