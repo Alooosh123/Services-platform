@@ -219,16 +219,18 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': getActionIdempotencyKey('retry', orderId),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ reason: 'إعادة محاولة تنفيذ الطلب من لوحة الإدارة' }),
       });
       if (res.ok) {
+        clearActionIdempotencyKey('retry', orderId);
         alert('تمت إعادة إرسال الطلب لمحرك التنفيذ بنجاح!');
         fetchOrders();
       }
     } catch {
-      alert('تمت إعادة محاولة إرسال الطلب.');
+      alert('تعذر تأكيد نتيجة إعادة المحاولة بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة للتحقق من النتيجة.');
     }
   };
 
