@@ -188,9 +188,9 @@ export default function CustomerWalletPage() {
           amount: amountVal,
           paymentMethodCode: depositChannel,
           referenceNumber: depositRefNumber,
-          senderName,
-          senderPhone,
-          proofImageUrl: proofUrl || undefined,
+          senderName: senderName.trim() || undefined,
+          senderPhone: senderPhone.trim() || undefined,
+          proofImageUrl: proofUrl.trim() || undefined,
         }),
       });
 
