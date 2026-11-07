@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 import {
   Wallet,
   ShieldCheck,
@@ -15,6 +14,8 @@ import {
   Building2,
   CheckCircle,
 } from 'lucide-react';
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 
 interface CustomerWalletItem {
   id: string;
