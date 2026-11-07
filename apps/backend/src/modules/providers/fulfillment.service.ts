@@ -353,19 +353,22 @@ export class FulfillmentService {
           completedAt: new Date(),
         },
       });
+
+      // The order, operator evidence, hold release and ledger posting commit together.
+      await this.ledgerService.recordOrderSettlement({
+        userId: order.userId,
+        walletId: wallet.id,
+        orderId: order.orderNumber,
+        currency,
+        retailPrice: retailPriceNumber,
+        costPrice: costPriceNumber,
+        serviceName: order.snapshotServiceName,
+        providerCode: 'MANUAL',
+      }, tx);
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
 
-    // 2. Strict Double-Entry Ledger Settlement
-    await this.ledgerService.recordOrderSettlement({
-      userId: order.userId,
-      walletId: wallet.id,
-      orderId: order.orderNumber,
-      currency,
-      retailPrice: retailPriceNumber,
-      costPrice: costPriceNumber,
-      serviceName: order.snapshotServiceName,
-      providerCode: 'MANUAL',
-    });
     await this.settleAgentCommission(order.id, currency);
 
     return this.prisma.order.findUnique({
