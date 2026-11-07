@@ -6,6 +6,7 @@ import { HmacSignatureService } from './hmac-signature.service';
 import { IdempotencyInterceptor } from './idempotency.interceptor';
 import { RedisIdempotencyStore } from './redis-idempotency.store';
 import { SensitiveAuditInterceptor } from './sensitive-audit.interceptor';
+import { RedisRateLimitGuard } from './redis-rate-limit.guard';
 
 @Global()
 @Module({
@@ -14,11 +15,12 @@ import { SensitiveAuditInterceptor } from './sensitive-audit.interceptor';
     EncryptionService,
     HmacSignatureService,
     RedisIdempotencyStore,
+    RedisRateLimitGuard,
     IdempotencyInterceptor,
     SensitiveAuditInterceptor,
     { provide: APP_INTERCEPTOR, useExisting: SensitiveAuditInterceptor },
     { provide: APP_INTERCEPTOR, useExisting: IdempotencyInterceptor },
   ],
-  exports: [EncryptionService, HmacSignatureService, RedisIdempotencyStore],
+  exports: [EncryptionService, HmacSignatureService, RedisIdempotencyStore, RedisRateLimitGuard],
 })
 export class SecurityCoreModule {}
