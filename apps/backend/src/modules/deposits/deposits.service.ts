@@ -66,7 +66,7 @@ export class DepositsService {
   private memoryDeposits: Map<string, InMemoryDeposit> = new Map();
 
   private assertMemoryFallbackAllowed(operation: string, error?: any): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       this.logger.error(
         `Refusing in-memory deposit fallback for ${operation}: ${error?.message || error || 'record unavailable'}`,
       );
@@ -83,7 +83,9 @@ export class DepositsService {
     private adapterRegistry: PaymentAdapterRegistry,
     private hmacSignatureService: HmacSignatureService,
   ) {
-    this.seedInitialMemoryDeposits();
+    if (process.env.NODE_ENV === 'test') {
+      this.seedInitialMemoryDeposits();
+    }
   }
 
   private seedInitialMemoryDeposits() {
@@ -233,19 +235,18 @@ export class DepositsService {
         }));
       }
     } catch (err: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Payment channel query failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Verified payment channels are unavailable from the tenant database.');
       }
-      this.logger.warn(`Local unscoped development payment channel registry fallback (${err?.message})`);
+      this.logger.warn(`Test-only payment channel registry fallback: ${err?.message}`);
     }
 
-    // Mock/default adapters are visible only in local unscoped development
-    // when no persistent channel configuration exists at all.
-    if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return [];
+    // Mock/default payment channel adapters are visible only in automated tests.
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) return [];
     const channels = this.adapterRegistry.getAllChannels();
     return channels.filter(
-      (c: any) => c.isActive && (!c.verificationStatus || c.verificationStatus === ChannelVerificationStatus.VERIFIED),
+      (channel: any) => channel.isActive && channel.verificationStatus === ChannelVerificationStatus.VERIFIED,
     );
   }
 
@@ -257,7 +258,7 @@ export class DepositsService {
     const activeChannel = (await this.getPaymentChannels()).find(
       (channel) => channel.code === dto.paymentMethodCode && channel.isActive,
     );
-    if ((process.env.NODE_ENV === 'production' || getCurrentTenantId()) && !activeChannel) {
+    if ((process.env.NODE_ENV !== 'test' || getCurrentTenantId()) && !activeChannel) {
       throw new BadRequestException('قناة الدفع غير مفعلة أو غير موثقة حالياً.');
     }
     if (activeChannel) {
