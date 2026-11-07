@@ -106,6 +106,27 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           retailPrice: 550,
           costPrice: 495,
         }),
+        mockPrisma,
+      );
+    });
+
+    it('moves provider-success orders to ManualReview when ledger settlement fails', async () => {
+      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockAdapter.submitOrder.mockResolvedValue({
+        status: 'SUCCESS',
+        success: true,
+        providerOrderId: 'MOCK-TX-LEDGER-FAIL',
+      });
+      mockLedgerService.recordOrderSettlement.mockRejectedValueOnce(new Error('ledger unavailable'));
+
+      const result = await service.dispatchOrder('ord-test-1');
+
+      expect(result.status).toBe(OrderStatus.ManualReview);
+      expect(mockPrisma.order.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: { id: 'ord-test-1' },
+          data: expect.objectContaining({ status: OrderStatus.ManualReview }),
+        }),
       );
     });
 
@@ -206,7 +227,23 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           orderId: mockOrder.orderNumber,
           providerCode: 'MANUAL',
         }),
+        mockPrisma,
       );
+    });
+
+    it('does not keep a completed manual order when its ledger transaction fails', async () => {
+      mockPrisma.order.findUnique.mockResolvedValue({
+        ...mockOrder,
+        status: OrderStatus.ManualReview,
+      });
+      mockLedgerService.recordOrderSettlement.mockRejectedValueOnce(new Error('ledger unavailable'));
+
+      await expect(
+        service.fulfillManualOrder('staff-op-1', 'ord-test-1', {
+          voucherCode: 'MANUAL-PIN-FAIL',
+          operatorNotes: 'Settlement failure test',
+        }),
+      ).rejects.toThrow('ledger unavailable');
     });
   });
 
