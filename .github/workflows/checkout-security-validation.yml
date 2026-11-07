@@ -37,7 +37,7 @@ jobs:
           --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 5s
-          --retries 10
+          --health-retries 10
       redis:
         image: redis:7-alpine
         ports:
@@ -46,7 +46,7 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
-          --retries 10
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public
       REDIS_URL: redis://localhost:6379
