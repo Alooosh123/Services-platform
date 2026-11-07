@@ -40,14 +40,15 @@ export default function AdminOrdersPage() {
   const [operatorNotesInput, setOperatorNotesInput] = useState('');
   const [refundReasonInput, setRefundReasonInput] = useState('');
 
-  const actionIdempotencyKeys = useRef(new Map<string, string>());
+  const actionIdempotencyKeys = useRef(new Map<string, { fingerprint: string; key: string }>());
 
-  const getActionIdempotencyKey = (action: string, orderId: string) => {
+  const getActionIdempotencyKey = (action: string, orderId: string, payload: unknown) => {
     const mapKey = `${action}:${orderId}`;
-    const existingKey = actionIdempotencyKeys.current.get(mapKey);
-    if (existingKey) return existingKey;
+    const fingerprint = JSON.stringify(payload);
+    const existing = actionIdempotencyKeys.current.get(mapKey);
+    if (existing?.fingerprint === fingerprint) return existing.key;
     const key = window.crypto.randomUUID();
-    actionIdempotencyKeys.current.set(mapKey, key);
+    actionIdempotencyKeys.current.set(mapKey, { fingerprint, key });
     return key;
   };
 
@@ -142,7 +143,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': getActionIdempotencyKey('fulfill-manual', selectedOrder.id),
+          'Idempotency-Key': getActionIdempotencyKey('fulfill-manual', selectedOrder.id, { voucherCode: voucherInput, proofScreenshotUrl: proofUrlInput || null, operatorNotes: operatorNotesInput || 'تم التنفيذ اليدوي بنجاح بواسطة المشغل' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -186,7 +187,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': getActionIdempotencyKey('refund', selectedOrder.id),
+          'Idempotency-Key': getActionIdempotencyKey('refund', selectedOrder.id, { reason: refundReasonInput }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -219,7 +220,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': getActionIdempotencyKey('retry', orderId),
+          'Idempotency-Key': getActionIdempotencyKey('retry', orderId, { reason: 'إعادة محاولة تنفيذ الطلب من لوحة الإدارة' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ reason: 'إعادة محاولة تنفيذ الطلب من لوحة الإدارة' }),
