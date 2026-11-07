@@ -161,6 +161,10 @@ describe('P09: Security, Anti-Fraud, Compliance & Pen-Testing (Master AT-08, AT-
       },
     };
 
+    mockPrisma.$transaction = jest.fn(
+      (callback: (tx: any) => Promise<any>) => callback(mockPrisma),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PrivacyService,
