@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ITopupProviderAdapter } from './provider-adapter.interface';
 import {
   PlayerValidationRequest,
