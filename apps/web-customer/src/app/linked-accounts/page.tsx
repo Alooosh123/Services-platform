@@ -14,7 +14,7 @@ import {
   ExternalLink,
   Info,
 } from 'lucide-react';
-import { apiUrl } from '../../lib/api';
+import { apiRequest, getCustomerToken } from '../../lib/api';
 
 interface ServiceAccount {
   id: string;
@@ -44,47 +44,23 @@ export default function LinkedAccountsPage() {
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
   const fetchAccounts = async () => {
+    setLoading(true);
+    setError(null);
+    if (!getCustomerToken()) {
+      setAccounts([]);
+      setError('سجّل الدخول لعرض الحسابات المرتبطة.');
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await fetch(apiUrl('/service-accounts'), {
-        headers: {
-          Authorization: 'Bearer mock-customer-token', // Backend handles dev demo
-        },
-      });
-      const data = await res.json();
-      if (res.ok && data.data) {
-        setAccounts(data.data);
-      } else {
-        // Fallback demo data
-        setAccounts([
-          {
-            id: 'acc-demo-1',
-            serviceSlug: 'pubg-mobile',
-            serviceName: 'PUBG Mobile UC',
-            serviceNameAr: 'ببجي موبايل (شدات UC)',
-            accountIdentifier: '5123456789',
-            accountName: 'Gamer_Yemen_Pro',
-            serverZoneId: 'Global',
-            status: 'REFERENCE_ONLY',
-            verificationSource: 'Customer Explicit Input & Provider Check',
-            lastVerifiedAt: new Date().toISOString(),
-          },
-        ]);
-      }
-    } catch {
-      setAccounts([
-        {
-          id: 'acc-demo-1',
-          serviceSlug: 'pubg-mobile',
-          serviceName: 'PUBG Mobile UC',
-          serviceNameAr: 'ببجي موبايل (شدات UC)',
-          accountIdentifier: '5123456789',
-          accountName: 'Gamer_Yemen_Pro',
-          serverZoneId: 'Global',
-          status: 'REFERENCE_ONLY',
-          verificationSource: 'Customer Explicit Input & Provider Check',
-          lastVerifiedAt: new Date().toISOString(),
-        },
-      ]);
+      const response = await apiRequest<ServiceAccount[] | { data?: ServiceAccount[] }>('/service-accounts');
+      const rows = Array.isArray(response) ? response : response.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة الحسابات المرتبطة غير صحيحة.');
+      setAccounts(rows);
+    } catch (err) {
+      setAccounts([]);
+      setError(err instanceof Error ? err.message : 'تعذر تحميل الحسابات المرتبطة.');
     } finally {
       setLoading(false);
     }
@@ -105,12 +81,8 @@ export default function LinkedAccountsPage() {
     setError(null);
 
     try {
-      const res = await fetch(apiUrl('/service-accounts'), {
+      const response = await apiRequest<{ message?: string }>('/service-accounts', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer mock-customer-token',
-        },
         body: JSON.stringify({
           serviceSlug: selectedService,
           accountIdentifier,
@@ -120,17 +92,12 @@ export default function LinkedAccountsPage() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'تعذر ربط الحساب');
-      }
-
-      setActionMsg(data.message || 'تم حفظ وربط الحساب بنجاح');
+      setActionMsg(response.message || 'تم حفظ وربط الحساب بنجاح');
       setShowAddModal(false);
       setAccountIdentifier('');
       setAccountName('');
       setConsentGranted(false);
-      fetchAccounts();
+      await fetchAccounts();
     } catch (err: any) {
       setError(err.message || 'حدث خطأ في ربط الحساب');
     } finally {
@@ -142,17 +109,13 @@ export default function LinkedAccountsPage() {
     if (!confirm('هل أنت متأكد من إلغاء ربط هذا الحساب وسحب الموافقة؟')) return;
 
     try {
-      const res = await fetch(apiUrl(`/service-accounts/${id}`), {
+      const response = await apiRequest<{ message?: string }>(`/service-accounts/${encodeURIComponent(id)}`, {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer mock-customer-token' },
       });
-      const data = await res.json();
-      setActionMsg(data.message || 'تم إلغاء الربط بنجاح');
-      fetchAccounts();
-    } catch {
-      // offline fallback
-      setAccounts(accounts.filter((a) => a.id !== id));
-      setActionMsg('تم إلغاء الربط بنجاح');
+      setActionMsg(response.message || 'تم إلغاء الربط وسحب الموافقة بنجاح.');
+      await fetchAccounts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر إلغاء ربط الحساب.');
     }
   };
 
