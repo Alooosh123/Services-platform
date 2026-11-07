@@ -173,7 +173,7 @@ export default function AdminReportsPage() {
     setActionError(null);
     setActionSuccess(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/reports/daily-close', {
+      const res = await fetch(`${API_BASE_URL}/reports/daily-close`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -239,7 +239,7 @@ export default function AdminReportsPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/payouts/request', {
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/payouts/request`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1190,7 +1190,11 @@ export default function AdminReportsPage() {
                     </option>
                   ))}
                   {ownerBeneficiaries.length === 0 && (
-                    <option value="ben-owner-001">حساب إدارة المنصة - بنك الكريمي (افتراضي)</option>
+                    {ownerBeneficiaries.map((beneficiary) => (
+              <option key={beneficiary.id} value={beneficiary.id}>
+                {beneficiary.beneficiaryName || beneficiary.name || beneficiary.id}
+              </option>
+            ))}
                   )}
                 </select>
               </div>
