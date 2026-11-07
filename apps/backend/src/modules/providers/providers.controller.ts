@@ -77,7 +77,9 @@ export class ProvidersController {
   }
 
   @Post('validate-player')
-  @ApiOperation({ summary: 'Validate player username/zone before order submission' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Validate player username/zone before order submission (authenticated customer)' })
   async validatePlayer(
     @Body()
     body: {
