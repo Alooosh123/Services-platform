@@ -71,9 +71,9 @@ export class OwnerEarningsService {
     if (getCurrentTenantId()) {
       throw new ForbiddenException('Platform owner earnings are not accessible from a tenant storefront domain.');
     }
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV !== 'test') {
       throw new ServiceUnavailableException(
-        'Platform owner earnings are unavailable until the persistent financial wallet workflow is completed.',
+        'Platform owner earnings are disabled outside automated tests until persistent balances, beneficiary verification, MFA secrets, and payout approvals are implemented.',
       );
     }
   }
@@ -289,8 +289,7 @@ export class OwnerEarningsService {
     }
 
     // C. TOTP MFA Check (AT-17)
-    const isTotpValid =
-      TotpUtil.verifyCode(dto.totpCode, this.defaultTotpSecret) || dto.totpCode === '123456';
+    const isTotpValid = TotpUtil.verifyCode(dto.totpCode, this.defaultTotpSecret);
     if (!isTotpValid) {
       throw new ForbiddenException('رمز التحقق بخطوتين (TOTP MFA) غير صحيح أو منتهي الصلاحية');
     }
