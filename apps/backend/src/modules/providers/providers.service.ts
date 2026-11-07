@@ -134,7 +134,8 @@ export class ProvidersService {
   /**
    * Update provider configuration (name, baseUrl, apiKey, isActive, type).
    */
-  async updateProvider(providerId: string, dto: UpdateProviderDto) {
+  async updateProvider(providerId: string, dto: UpdateProviderDto, actorUserId: string) {
+    if (!actorUserId) throw new BadRequestException('Authenticated operator identity is required for provider configuration changes.');
     const provider = await this.prisma.provider.findUnique({
       where: { id: providerId },
     });
@@ -153,9 +154,27 @@ export class ProvidersService {
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.type !== undefined) data.type = dto.type as any;
 
-    const updated = await this.prisma.provider.update({
-      where: { id: providerId },
-      data,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const providerUpdate = await tx.provider.update({
+        where: { id: providerId },
+        data,
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: actorUserId,
+          action: 'PROVIDER_CONFIGURATION_UPDATED',
+          entityName: 'Provider',
+          entityId: providerId,
+          newValues: {
+            name: dto.name,
+            baseUrl: dto.baseUrl,
+            apiKeyChanged: Boolean(dto.apiKey && !dto.apiKey.includes('****')),
+            isActive: dto.isActive,
+            type: dto.type,
+          },
+        },
+      });
+      return providerUpdate;
     });
 
     return {
@@ -180,6 +199,11 @@ export class ProvidersService {
   }
 
   async testProviderConnectivity(providerId: string) {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException(
+        'Real provider connectivity checks are disabled until a verified provider HTTP adapter with authenticated health and balance endpoints is configured.',
+      );
+    }
     const provider = await this.prisma.provider.findUnique({
       where: { id: providerId },
     });
