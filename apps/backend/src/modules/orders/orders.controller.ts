@@ -26,6 +26,8 @@ import { RequireTransactionPin } from '../auth/decorators/require-transaction-pi
 import { TransactionPinGuard } from '../auth/guards/transaction-pin.guard';
 import { PoliciesGuard } from '../auth/guards/policies.guard';
 import { RequirePolicy } from '../auth/decorators/require-policy.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 
 @ApiTags('Orders')
 @Controller('orders')
@@ -37,7 +39,8 @@ export class OrdersController {
   @Post('checkout')
   @RequireTransactionPin()
   @RequirePolicy('orders:create')
-  @UseGuards(PoliciesGuard, TransactionPinGuard)
+  @UseGuards(PoliciesGuard, TransactionPinGuard, RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'orders-checkout')
   @ApiOperation({ summary: 'Submit a topup checkout order with atomic balance hold' })
   @ApiHeader({ name: 'Idempotency-Key', required: true, description: 'Must exactly match body.idempotencyKey' })
   @ApiResponse({ status: 201, description: 'Order created with dynamic snapshots and double-entry payment' })
