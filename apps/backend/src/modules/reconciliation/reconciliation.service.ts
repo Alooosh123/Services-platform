@@ -220,7 +220,7 @@ export class ReconciliationService {
       }
 
       // 2. Check Internal Payouts
-      const payout = await this.payoutsService.findByIdempotencyKey(ref);
+      const payout = await this.payoutsService.findByExternalReference(ref);
       if (payout) {
         const expectedAmount = Number(payout.amount);
         if (Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === payout.currency) {
