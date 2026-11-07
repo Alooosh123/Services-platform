@@ -31,7 +31,7 @@ import { RateLimit } from '../../security/rate-limit.decorator';
 
 @ApiTags('Orders')
 @Controller('orders')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RedisRateLimitGuard)
 @ApiBearerAuth()
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
@@ -39,7 +39,7 @@ export class OrdersController {
   @Post('checkout')
   @RequireTransactionPin()
   @RequirePolicy('orders:create')
-  @UseGuards(PoliciesGuard, TransactionPinGuard, RedisRateLimitGuard)
+  @UseGuards(PoliciesGuard, TransactionPinGuard)
   @RateLimit(10, 60_000, 'orders-checkout')
   @ApiOperation({ summary: 'Submit a topup checkout order with atomic balance hold' })
   @ApiHeader({ name: 'Idempotency-Key', required: true, description: 'Must exactly match body.idempotencyKey' })
