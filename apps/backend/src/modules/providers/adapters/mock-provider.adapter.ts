@@ -14,16 +14,16 @@ export class MockProviderAdapter implements ITopupProviderAdapter {
   readonly isSandboxOnly = true;
   private readonly logger = new Logger(MockProviderAdapter.name);
 
-  private assertNotProduction(): void {
-    if (process.env.NODE_ENV === 'production') {
+  private assertTestOnly(): void {
+    if (process.env.NODE_ENV !== 'test') {
       throw new ForbiddenException(
-        'محول المحاكاة التجريبي (MockProviderAdapter) محظور نهائياً في بيئة الإنتاج التشغيلية (SG-03 Sandbox Isolation Enforcement).',
+        'محول المحاكاة متاح للاختبارات الآلية فقط، ولا يجوز استخدامه في development أو staging أو production.',
       );
     }
   }
 
   async validatePlayer(request: PlayerValidationRequest): Promise<PlayerValidationResponse> {
-    this.assertNotProduction();
+    this.assertTestOnly();
 
     const playerId = request.fields?.player_id || request.fields?.userId;
 
@@ -50,7 +50,7 @@ export class MockProviderAdapter implements ITopupProviderAdapter {
   }
 
   async submitOrder(request: TopupProviderOrderRequest): Promise<TopupProviderOrderResponse> {
-    this.assertNotProduction();
+    this.assertTestOnly();
 
     this.logger.log(`Executing Mock Provider Topup for Order: ${request.orderNumber}`);
 
@@ -99,7 +99,7 @@ export class MockProviderAdapter implements ITopupProviderAdapter {
     providerOrderId: string,
     internalOrderNumber: string,
   ): Promise<TopupProviderOrderResponse> {
-    this.assertNotProduction();
+    this.assertTestOnly();
 
     await new Promise((resolve) => setTimeout(resolve, 300));
 
@@ -115,7 +115,7 @@ export class MockProviderAdapter implements ITopupProviderAdapter {
   }
 
   async fetchBalance(): Promise<ProviderBalanceResponse> {
-    this.assertNotProduction();
+    this.assertTestOnly();
 
     return {
       currency: 'USD',
