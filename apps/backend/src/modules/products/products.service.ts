@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 
@@ -260,12 +261,18 @@ export class ProductsService {
       if (dbCategories && dbCategories.length > 0) {
         return dbCategories;
       }
-    } catch (err: any) {
-      this.logger.warn(`PostgreSQL offline: Returning Seeded Yemen Dynamic Catalog (${err?.message})`);
-    }
 
-    // Return in-memory catalog
-    return this.assembleMemoryCatalog();
+      // Demo catalog is available only to automated tests; an empty production
+      // catalog must remain empty instead of publishing invented products/prices.
+      return process.env.NODE_ENV === 'test' ? this.assembleMemoryCatalog() : dbCategories;
+    } catch (err: any) {
+      if (process.env.NODE_ENV === 'test') {
+        this.logger.warn(`Prisma unavailable in test; using deterministic in-memory catalog: ${err?.message}`);
+        return this.assembleMemoryCatalog();
+      }
+      this.logger.error(`Dynamic catalog could not be loaded from PostgreSQL: ${err?.message}`);
+      throw new ServiceUnavailableException('The live service catalog is temporarily unavailable.');
+    }
   }
 
   private assembleMemoryCatalog() {
@@ -317,8 +324,15 @@ export class ProductsService {
       if (service) {
         return service;
       }
-    } catch {
-      // fallback to memory
+      if (process.env.NODE_ENV !== 'test') {
+        throw new NotFoundException(`Service not found with slug: ${slug}`);
+      }
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        if (err instanceof NotFoundException) throw err;
+        this.logger.error(`Service lookup failed for ${slug}: ${err?.message}`);
+        throw new ServiceUnavailableException('The service catalog is temporarily unavailable.');
+      }
     }
 
     for (const s of this.memoryServices.values()) {
