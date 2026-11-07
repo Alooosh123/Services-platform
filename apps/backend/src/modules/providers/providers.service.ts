@@ -75,8 +75,9 @@ export class ProvidersService {
       errorMessage = err?.message || 'Unknown network error';
       response = {
         success: false,
-        status: 'FAILED',
-        errorMessage,
+        status: 'PENDING',
+        errorMessage: `Provider outcome is unknown; manual reconciliation is required. ${errorMessage}`,
+        errorCode: 'PROVIDER_OUTCOME_UNKNOWN',
       };
     }
 
