@@ -167,6 +167,34 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       expect(mockLedgerService.recordOrderSettlement).not.toHaveBeenCalled();
     });
 
+    it('moves thrown provider dispatch errors to ManualReview and preserves the wallet hold', async () => {
+      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockAdapter.submitOrder.mockRejectedValueOnce(new Error('socket hang up after request'));
+
+      const result = await service.dispatchOrder('ord-test-1');
+
+      expect(result.status).toBe(OrderStatus.ManualReview);
+      expect(mockLedgerService.releaseWalletHold).not.toHaveBeenCalled();
+      expect(mockLedgerService.recordOrderSettlement).not.toHaveBeenCalled();
+      expect(mockPrisma.order.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: OrderStatus.ManualReview }),
+        }),
+      );
+    });
+
+    it('moves an unregistered provider adapter to ManualReview without releasing the hold', async () => {
+      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockProvidersService.getAdapter.mockImplementationOnce(() => {
+        throw new Error('provider adapter not configured');
+      });
+
+      const result = await service.dispatchOrder('ord-test-1');
+
+      expect(result.status).toBe(OrderStatus.ManualReview);
+      expect(mockLedgerService.releaseWalletHold).not.toHaveBeenCalled();
+    });
+
     it('should credit reseller commission only after successful ledger settlement', async () => {
       const commissionOrder = {
         ...mockOrder,
