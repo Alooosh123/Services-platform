@@ -5,6 +5,8 @@ import { DepositsService } from './deposits.service';
 import { CreateDepositDto } from './dto/create-deposit.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 
 @ApiTags('Deposits (Customer)')
 @Controller('deposits')
@@ -19,7 +21,8 @@ export class DepositsController {
   }
 
   @Post('request')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'deposit-request')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Submit a new deposit transfer request (Status: PENDING)' })
   @ApiResponse({ status: 201, description: 'Deposit request created and queued for review' })
