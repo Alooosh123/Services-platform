@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CurrencyCode, OrderStatus, CurrencyCloseMetrics } from '@digital-topup/shared';
 
@@ -18,24 +18,23 @@ export interface InMemoryOrderRecord {
 export class ProfitEngineService {
   private readonly logger = new Logger(ProfitEngineService.name);
   private memoryOrders: Map<string, InMemoryOrderRecord> = new Map();
-  private memoryCashBalances: Map<CurrencyCode, number> = new Map([
-    [CurrencyCode.YER, 1500000],
-    [CurrencyCode.USD, 5000],
-    [CurrencyCode.SAR, 8000],
-  ]);
-  private memoryCustomerLiabilities: Map<CurrencyCode, number> = new Map([
-    [CurrencyCode.YER, 400000],
-    [CurrencyCode.USD, 1200],
-    [CurrencyCode.SAR, 2000],
-  ]);
-  private memorySupplierPayables: Map<CurrencyCode, number> = new Map([
-    [CurrencyCode.YER, 50000],
-    [CurrencyCode.USD, 200],
-    [CurrencyCode.SAR, 300],
-  ]);
+  private memoryCashBalances: Map<CurrencyCode, number> = new Map();
+  private memoryCustomerLiabilities: Map<CurrencyCode, number> = new Map();
+  private memorySupplierPayables: Map<CurrencyCode, number> = new Map();
 
   constructor(private prisma: PrismaService) {
-    this.seedInitialOrders();
+    if (process.env.NODE_ENV === 'test') {
+      this.seedInitialOrders();
+      this.memoryCashBalances.set(CurrencyCode.YER, 1500000);
+      this.memoryCashBalances.set(CurrencyCode.USD, 5000);
+      this.memoryCashBalances.set(CurrencyCode.SAR, 8000);
+      this.memoryCustomerLiabilities.set(CurrencyCode.YER, 400000);
+      this.memoryCustomerLiabilities.set(CurrencyCode.USD, 1200);
+      this.memoryCustomerLiabilities.set(CurrencyCode.SAR, 2000);
+      this.memorySupplierPayables.set(CurrencyCode.YER, 50000);
+      this.memorySupplierPayables.set(CurrencyCode.USD, 200);
+      this.memorySupplierPayables.set(CurrencyCode.SAR, 300);
+    }
   }
 
   private seedInitialOrders() {
@@ -96,15 +95,12 @@ export class ProfitEngineService {
     currency: CurrencyCode,
     dateFilter?: string, // YYYY-MM-DD
   ): Promise<CurrencyCloseMetrics> {
-    if (this.memoryOrders.size > 0 || this.memoryCashBalances.size > 0 || process.env.NODE_ENV === 'test') {
-      return this.calculateFromMemory(currency, dateFilter);
-    }
+    if (process.env.NODE_ENV === 'test') return this.calculateFromMemory(currency, dateFilter);
     try {
-      // 1. Try DB aggregates if available
       return await this.calculateFromDb(currency, dateFilter);
-    } catch {
-      // 2. Memory engine fallback
-      return this.calculateFromMemory(currency, dateFilter);
+    } catch (error: any) {
+      this.logger.error('Financial metrics could not be verified from persisted ledger data.');
+      throw new ServiceUnavailableException('Financial metrics are unavailable; owner earnings and payouts are blocked until ledger data can be verified.');
     }
   }
 
@@ -127,6 +123,8 @@ export class ProfitEngineService {
       completedAgg,
       pendingAgg,
       walletsAgg,
+      suppliersAgg,
+      ledgerAccounts,
     ] = await Promise.all([
       this.prisma.order.count({ where: whereBase }),
       this.prisma.order.count({ where: { ...whereBase, status: OrderStatus.Completed } }),
@@ -181,12 +179,36 @@ export class ProfitEngineService {
         where: { currency },
         _sum: { balance: true },
       }),
+      this.prisma.supplierAccount.aggregate({
+        where: { currency },
+        _sum: { balance: true },
+      }),
+      this.prisma.ledgerAccount.findMany({
+        where: { currency, type: { in: ['ASSET', 'REVENUE', 'EXPENSE'] } },
+        include: {
+          entries: {
+            where: { currency, transaction: { status: 'POSTED' } },
+          },
+        },
+      }),
     ]);
 
     const grossSales = Number(completedAgg._sum.snapshotRetailPrice || 0);
     const supplierCost = Number(completedAgg._sum.snapshotCostPrice || 0);
     const channelFees = Math.round(grossSales * 0.01 * 100) / 100; // 1% estimated/validated fees
-    const realizedProfit = Math.round((grossSales - supplierCost - channelFees) * 100) / 100;
+    let ledgerRevenue = 0;
+    let ledgerExpenses = 0;
+    let ledgerCash = 0;
+    for (const account of ledgerAccounts) {
+      const debit = account.entries.reduce((sum: number, entry: any) => sum + Number(entry.debitAmount), 0);
+      const credit = account.entries.reduce((sum: number, entry: any) => sum + Number(entry.creditAmount), 0);
+      if (account.type === 'REVENUE') ledgerRevenue += credit - debit;
+      if (account.type === 'EXPENSE') ledgerExpenses += debit - credit;
+      if (account.type === 'ASSET' && /(cash|bank|safe|vault)/i.test(account.code + ' ' + account.name)) {
+        ledgerCash += debit - credit;
+      }
+    }
+    const realizedProfit = Math.round((ledgerRevenue - ledgerExpenses) * 100) / 100;
 
     const pendingRetail = Number(pendingAgg._sum.snapshotRetailPrice || 0);
     const pendingCost = Number(pendingAgg._sum.snapshotCostPrice || 0);
@@ -269,9 +291,9 @@ export class ProfitEngineService {
     estimatedProfit = Math.round(estimatedProfit * 100) / 100;
 
     const customerWalletLiabilities = this.memoryCustomerLiabilities.get(currency) || 0;
-    const supplierPayables = this.memorySupplierPayables.get(currency) || 0;
+    const supplierPayables = Number(suppliersAgg._sum.balance || 0);
     const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100;
-    const actualCashBalance = this.memoryCashBalances.get(currency) || 1000000;
+    const actualCashBalance = Math.max(0, ledgerCash);
 
     // Strict Liquidity Formula
     const freeCash = actualCashBalance - customerWalletLiabilities - supplierPayables - operatingReserve;
