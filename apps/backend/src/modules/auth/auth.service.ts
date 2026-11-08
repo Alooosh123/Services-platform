@@ -120,12 +120,6 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private memoryUsers: Map<string, InMemoryUser> = new Map();
 
-  // Single-use challenge token blacklist for Anti-Replay protection
-  private usedChallengeTokens = new Set<string>();
-
-  // Failed challenge attempts tracker for Brute-Force protection (max 3 tries)
-  private challengeAttempts = new Map<string, number>();
-
   // Track user session revocations timestamp (for revoking active JWTs)
   private revokedUsersAt = new Map<string, number>();
 
@@ -447,17 +441,54 @@ export class AuthService {
     };
   }
 
+  private getMfaChallengeRedisKey(tempToken: string): string {
+    const digest = createHash('sha256').update(tempToken).digest('hex');
+    return `auth:mfa:challenge-used:${digest}`;
+  }
+
+  private async assertMfaChallengeNotUsed(tempToken: string): Promise<void> {
+    const used = await this.redisStore.get(this.getMfaChallengeRedisKey(tempToken));
+    if (used) {
+      throw new UnauthorizedException(
+        'تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.',
+      );
+    }
+  }
+
+  private async consumeMfaChallenge(tempToken: string, userId: string): Promise<void> {
+    const consumed = await this.redisStore.acquire(
+      this.getMfaChallengeRedisKey(tempToken),
+      JSON.stringify({ userId, consumedAt: new Date().toISOString() }),
+      5 * 60 * 1000,
+    );
+    if (!consumed) {
+      throw new UnauthorizedException(
+        'تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.',
+      );
+    }
+  }
+
+  private async recordMfaChallengeFailure(tempToken: string, userId: string): Promise<number> {
+    const digest = createHash('sha256').update(tempToken).digest('hex');
+    const { count } = await this.redisStore.incrementRateLimit(
+      `auth:mfa:challenge-attempts:${digest}`,
+      5 * 60 * 1000,
+    );
+    if (count >= 3) {
+      await this.consumeMfaChallenge(tempToken, userId);
+      throw new UnauthorizedException(
+        'تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.',
+      );
+    }
+    return 3 - count;
+  }
+
   /**
    * Completes Admin MFA verification using authentic RFC 6238 TOTP with anti-replay and rate limiting.
    */
   async verifyAdminMfa(dto: VerifyMfaDto) {
     if (!dto.tempToken) {
       throw new BadRequestException('رمز الجلسة المؤقت (tempToken) مطلوب');
-    }
-
-    // SG-02: Challenge Replay Prevention
-    if (this.usedChallengeTokens.has(dto.tempToken)) {
-      throw new UnauthorizedException('تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.');
     }
 
     let payload: any;
@@ -473,6 +504,9 @@ export class AuthService {
       throw new UnauthorizedException('رمز التحقق غير صالح لعملية التوثيق الثنائي');
     }
 
+    // Redis is the shared anti-replay source for all backend instances.
+    await this.assertMfaChallengeNotUsed(dto.tempToken);
+
     if (!dto.code || dto.code.trim().length !== 6) {
       throw new BadRequestException('يجب أن يتكون رمز التحقق من 6 أرقام');
     }
@@ -481,14 +515,6 @@ export class AuthService {
     const user = await this.findUserById(userId);
     if (!user) {
       throw new UnauthorizedException('المستخدم غير موجود');
-    }
-
-    // SG-02: Brute-Force Rate Limiting (Max 3 failed attempts per challenge)
-    const currentAttempts = this.challengeAttempts.get(userId) || 0;
-    if (currentAttempts >= 3) {
-      this.usedChallengeTokens.add(dto.tempToken);
-      this.challengeAttempts.delete(userId);
-      throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
     }
 
     const allowTestMfaBypass =
@@ -512,21 +538,13 @@ export class AuthService {
     }
 
     if (!isTotpValid) {
-      const nextAttempts = currentAttempts + 1;
-      this.challengeAttempts.set(userId, nextAttempts);
-
-      if (nextAttempts >= 3) {
-        this.usedChallengeTokens.add(dto.tempToken);
-        this.challengeAttempts.delete(userId);
-        throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
-      }
-
-      throw new UnauthorizedException(`رمز التحقق (TOTP) غير صحيح. المتبقي: ${3 - nextAttempts} محاولات`);
+      const remainingAttempts = await this.recordMfaChallengeFailure(dto.tempToken, userId);
+      throw new UnauthorizedException(`رمز التحقق (TOTP) غير صحيح. المتبقي: ${remainingAttempts} محاولات`);
     }
 
-    // SUCCESS: Invalidate challenge token immediately to prevent replay
-    this.usedChallengeTokens.add(dto.tempToken);
-    this.challengeAttempts.delete(userId);
+    // Atomically consume the challenge before issuing tokens. If another
+    // backend instance already used it, Redis rejects this request.
+    await this.consumeMfaChallenge(dto.tempToken, userId);
 
     const tokens = await this.generateTokens(user.id, user.email || user.phone || user.id, user.role);
 
