@@ -12,9 +12,11 @@ import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { ProfitEngineService } from './profit-engine.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { TotpUtil } from '../auth/utils/totp.util';
+import { EncryptionService } from '../../security/encryption.service';
 import {
   CurrencyCode,
   PaymentChannelCode,
+  UserRole,
   OwnerPayoutStatus,
   BeneficiaryVerificationStatus,
   LedgerAccountType,
@@ -78,6 +80,408 @@ export class OwnerEarningsService {
     }
   }
 
+
+  private decryptBeneficiaryAccount(value: string): string {
+    return value.startsWith('v1:') ? this.encryptionService.decrypt(value) : value;
+  }
+
+  private async requirePlatformOwner(ownerUserId: string) {
+    const owner = await this.prisma.user.findUnique({
+      where: { id: ownerUserId },
+      select: { id: true, role: true, tenantId: true, twoFactorSecret: true, isTwoFactorEnabled: true },
+    });
+    if (!owner || owner.role !== UserRole.OWNER || owner.tenantId) {
+      throw new ForbiddenException('A platform OWNER account is required for platform earnings.');
+    }
+    return owner;
+  }
+
+  private async createPersistentBeneficiary(userId: string, dto: CreatePayoutBeneficiaryDto): Promise<InMemoryBeneficiary> {
+    await this.requirePlatformOwner(userId);
+    if (!dto.beneficiaryName?.trim() || !dto.accountNumber?.trim()) {
+      throw new BadRequestException('Beneficiary name and account number are required.');
+    }
+    const created = await this.prisma.payoutBeneficiary.create({
+      data: {
+        userId, beneficiaryName: dto.beneficiaryName.trim(), channelCode: dto.channelCode,
+        accountNumber: this.encryptionService.encrypt(dto.accountNumber.trim()),
+        verificationStatus: 'PENDING_REVIEW', financeApprovedBy: null, notes: dto.notes || null,
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        userId, action: 'OWNER_BENEFICIARY_CREATED',
+        entityName: 'PayoutBeneficiary', entityId: created.id,
+        newValues: { channelCode: dto.channelCode, verificationStatus: 'PENDING_REVIEW' },
+      },
+    });
+    return {
+      id: created.id, userId: created.userId, beneficiaryName: created.beneficiaryName,
+      channelCode: created.channelCode as PaymentChannelCode,
+      accountNumber: this.decryptBeneficiaryAccount(created.accountNumber),
+      verificationStatus: created.verificationStatus as BeneficiaryVerificationStatus,
+      financeApprovedBy: created.financeApprovedBy, notes: created.notes, createdAt: created.createdAt,
+    };
+  }
+
+  private async listPersistentBeneficiaries(userId: string): Promise<InMemoryBeneficiary[]> {
+    await this.requirePlatformOwner(userId);
+    const rows = await this.prisma.payoutBeneficiary.findMany({
+      where: { userId }, orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((b) => ({
+      id: b.id, userId: b.userId, beneficiaryName: b.beneficiaryName,
+      channelCode: b.channelCode as PaymentChannelCode,
+      accountNumber: this.decryptBeneficiaryAccount(b.accountNumber),
+      verificationStatus: b.verificationStatus as BeneficiaryVerificationStatus,
+      financeApprovedBy: b.financeApprovedBy, notes: b.notes, createdAt: b.createdAt,
+    }));
+  }
+
+  async verifyPersistentBeneficiary(staffUserId: string, beneficiaryId: string, notes?: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const staff = await tx.user.findUnique({ where: { id: staffUserId }, select: { role: true, tenantId: true } });
+      if (!staff || staff.tenantId || ![UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER].includes(staff.role)) {
+        throw new ForbiddenException('Platform finance or general manager approval is required.');
+      }
+      const beneficiary = await tx.payoutBeneficiary.findUnique({ where: { id: beneficiaryId } });
+      if (!beneficiary) throw new NotFoundException('Beneficiary record was not found.');
+      if (beneficiary.userId === staffUserId) throw new ForbiddenException('The beneficiary owner cannot approve their own bank account.');
+      if (beneficiary.verificationStatus === 'REJECTED') throw new BadRequestException('Rejected beneficiary cannot be verified; create a new review request.');
+      const updated = await tx.payoutBeneficiary.update({
+        where: { id: beneficiaryId },
+        data: { verificationStatus: 'VERIFIED', financeApprovedBy: staffUserId, notes: notes || beneficiary.notes },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId, action: 'OWNER_BENEFICIARY_VERIFIED',
+          entityName: 'PayoutBeneficiary', entityId: beneficiaryId,
+          newValues: { verificationStatus: 'VERIFIED', beneficiaryOwnerId: beneficiary.userId },
+        },
+      });
+      return {
+        success: true, beneficiary: {
+          id: updated.id, userId: updated.userId, beneficiaryName: updated.beneficiaryName,
+          channelCode: updated.channelCode,
+          accountNumber: this.decryptBeneficiaryAccount(updated.accountNumber),
+          verificationStatus: updated.verificationStatus, financeApprovedBy: updated.financeApprovedBy,
+        },
+      };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async persistentEarningsStatement(userId: string, currency: CurrencyCode) {
+    await this.requirePlatformOwner(userId);
+    const wallet = await this.prisma.ownerEarningsWallet.findFirst({
+      where: { userId, currency, tenantId: null },
+    });
+    const metrics = await this.profitEngine.calculateMetricsForCurrency(currency);
+    const realized = Number(wallet?.realizedEarnings || 0);
+    const locked = Number(wallet?.lockedEarnings || 0);
+    const withdrawn = Number(wallet?.withdrawnEarnings || 0);
+    const netEarningsBalance = Math.max(0, realized - locked - withdrawn);
+    const freeCash = Math.max(0, Number(metrics.actualCashBalance) -
+      Number(metrics.customerWalletLiabilities) - Number(metrics.supplierPayables) - Number(metrics.operatingReserve));
+    const availableForPayout = Math.max(0, Math.min(netEarningsBalance, freeCash));
+    return {
+      userId, currency, realizedEarnings: realized, lockedEarnings: locked,
+      withdrawnEarnings: withdrawn, netEarningsBalance,
+      estimatedUnrealizedProfit: metrics.estimatedProfit,
+      actualCashBalance: metrics.actualCashBalance,
+      customerWalletLiabilities: metrics.customerWalletLiabilities,
+      supplierPayables: metrics.supplierPayables, operatingReserve: metrics.operatingReserve,
+      withdrawableLiquidity: freeCash, availableForPayout, hasSufficientLiquidity: availableForPayout > 0,
+    };
+  }
+
+  async allocateRealizedEarnings(
+    financeUserId: string,
+    dto: { ownerUserId: string; currency: CurrencyCode; amount: number; idempotencyKey: string; notes?: string },
+  ) {
+    if (!dto.idempotencyKey?.trim() || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+      throw new BadRequestException('A positive allocation amount and idempotency key are required.');
+    }
+    const financeUser = await this.prisma.user.findUnique({
+      where: { id: financeUserId }, select: { role: true, tenantId: true },
+    });
+    if (!financeUser || financeUser.tenantId || ![UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER].includes(financeUser.role)) {
+      throw new ForbiddenException('Platform finance or general manager permission is required.');
+    }
+    await this.requirePlatformOwner(dto.ownerUserId);
+    const existing = await this.prisma.ownerEarningsAllocation.findUnique({
+      where: { idempotencyKey: dto.idempotencyKey },
+    });
+    if (existing) {
+      if (existing.userId !== dto.ownerUserId || existing.currency !== dto.currency || Number(existing.amount) !== dto.amount) {
+        throw new ConflictException('Allocation idempotency key was reused with different values.');
+      }
+      return { success: true, allocation: existing };
+    }
+    const metrics = await this.profitEngine.calculateMetricsForCurrency(dto.currency);
+    const [allocated, totalWallets] = await Promise.all([
+      this.prisma.ownerEarningsAllocation.aggregate({
+        where: { currency: dto.currency }, _sum: { amount: true },
+      }),
+      this.prisma.ownerEarningsWallet.aggregate({
+        where: { currency: dto.currency, tenantId: null },
+        _sum: { realizedEarnings: true },
+      }),
+    ]);
+    const alreadyAllocated = Number(allocated._sum.amount || 0);
+    const recordedWalletEarnings = Number(totalWallets._sum.realizedEarnings || 0);
+    const availableProfit = Math.max(0, Number(metrics.realizedProfit) - Math.max(alreadyAllocated, recordedWalletEarnings));
+    const availableCash = Math.max(0, Number(metrics.withdrawableLiquidity) - Math.max(alreadyAllocated, recordedWalletEarnings));
+    const allocatable = Math.min(availableProfit, availableCash);
+    if (dto.amount > allocatable) {
+      throw new BadRequestException('Allocation exceeds posted realized profit or verified free cash for this currency.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const duplicate = await tx.ownerEarningsAllocation.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+      if (duplicate) throw new ConflictException('This earnings allocation was already recorded.');
+      const ledger = await this.ledgerService.recordDoubleEntryTransaction({
+        txNumber: 'LTX-OWNER-ALLOC-' + Date.now(),
+        type: LedgerTransactionType.ADJUSTMENT,
+        referenceType: 'OWNER_EARNINGS_ALLOCATION',
+        referenceId: dto.idempotencyKey,
+        idempotencyKey: 'OWNER-EARNINGS-ALLOC-' + dto.idempotencyKey,
+        notes: dto.notes || 'Allocate realized platform earnings to owner payable',
+        createdByUserId: financeUserId,
+        entries: [
+          {
+            accountCode: '3100-RETAINED_EARNINGS', currency: dto.currency,
+            debitAmount: dto.amount, creditAmount: 0, notes: 'Transfer retained earnings to owner payable',
+          },
+          {
+            accountCode: '2300-OWNER-EARNINGS-PAYABLE', currency: dto.currency,
+            debitAmount: 0, creditAmount: dto.amount, notes: 'Recognize owner earnings payable',
+          },
+        ],
+      }, tx);
+      const existingWallet = await tx.ownerEarningsWallet.findFirst({
+        where: { userId: dto.ownerUserId, currency: dto.currency, tenantId: null },
+      });
+      if (existingWallet) {
+        await tx.ownerEarningsWallet.update({
+          where: { id: existingWallet.id }, data: { realizedEarnings: { increment: new Prisma.Decimal(dto.amount) } },
+        });
+      } else {
+        await tx.ownerEarningsWallet.create({
+          data: { userId: dto.ownerUserId, currency: dto.currency, tenantId: null, realizedEarnings: new Prisma.Decimal(dto.amount) },
+        });
+      }
+      const allocation = await tx.ownerEarningsAllocation.create({
+        data: {
+          userId: dto.ownerUserId, currency: dto.currency, amount: new Prisma.Decimal(dto.amount),
+          idempotencyKey: dto.idempotencyKey, ledgerTxId: ledger.transaction.id,
+          createdByUserId: financeUserId, notes: dto.notes || null,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: financeUserId, action: 'OWNER_EARNINGS_ALLOCATED',
+          entityName: 'OwnerEarningsAllocation', entityId: allocation.id,
+          newValues: { ownerUserId: dto.ownerUserId, currency: dto.currency, amount: dto.amount, ledgerTxId: ledger.transaction.id },
+        },
+      });
+      return { success: true, allocation, ledgerTransaction: ledger.transaction };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async requestPersistentOwnerPayout(userId: string, dto: OwnerPayoutRequestDto) {
+    if (!dto.idempotencyKey?.trim() || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+      throw new BadRequestException('A positive payout amount and idempotency key are required.');
+    }
+    const owner = await this.requirePlatformOwner(userId);
+    if (!owner.isTwoFactorEnabled || !owner.twoFactorSecret) throw new ForbiddenException('TOTP MFA must be enabled before owner payout requests.');
+    const secret = owner.twoFactorSecret.startsWith('v1:') ? this.encryptionService.decrypt(owner.twoFactorSecret) : owner.twoFactorSecret;
+    if (!TotpUtil.verifyCode(dto.totpCode, secret)) throw new ForbiddenException('Invalid or expired TOTP code.');
+    const beneficiary = await this.prisma.payoutBeneficiary.findUnique({ where: { id: dto.beneficiaryId } });
+    if (!beneficiary || beneficiary.userId !== userId || beneficiary.verificationStatus !== 'VERIFIED' || !beneficiary.financeApprovedBy) {
+      throw new ForbiddenException('A finance-verified beneficiary owned by this platform owner is required.');
+    }
+    const existing = await this.prisma.ownerPayoutTransaction.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+    if (existing) {
+      if (existing.userId !== userId || existing.beneficiaryId !== dto.beneficiaryId ||
+          existing.currency !== dto.currency || Number(existing.amount) !== dto.amount) {
+        throw new ConflictException('Owner payout idempotency key was reused with different values.');
+      }
+      return { success: true, payout: existing, message: 'Existing owner payout request returned.' };
+    }
+    const statement = await this.persistentEarningsStatement(userId, dto.currency);
+    if (dto.amount > statement.availableForPayout) throw new BadRequestException('Requested payout exceeds available posted earnings or free cash.');
+    return this.prisma.$transaction(async (tx) => {
+      const duplicate = await tx.ownerPayoutTransaction.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+      if (duplicate) throw new ConflictException('Owner payout was already requested.');
+      const wallet = await tx.ownerEarningsWallet.findFirst({
+        where: { userId, currency: dto.currency, tenantId: null },
+      });
+      if (!wallet) throw new BadRequestException('No realized owner earnings have been allocated for this currency.');
+      const lock = await tx.ownerEarningsWallet.updateMany({
+        where: { id: wallet.id, lockedEarnings: wallet.lockedEarnings, realizedEarnings: wallet.realizedEarnings, withdrawnEarnings: wallet.withdrawnEarnings },
+        data: { lockedEarnings: { increment: new Prisma.Decimal(dto.amount) } },
+      });
+      if (lock.count !== 1) throw new ConflictException('Owner earnings balance changed; refresh and retry.');
+      const payout = await tx.ownerPayoutTransaction.create({
+        data: {
+          payoutNumber: 'OPO-' + Date.now() + '-' + Math.floor(1000 + Math.random() * 9000),
+          userId, beneficiaryId: dto.beneficiaryId, currency: dto.currency,
+          amount: new Prisma.Decimal(dto.amount), status: 'REQUESTED',
+          idempotencyKey: dto.idempotencyKey, approvalNotes: dto.notes || null,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId, action: 'OWNER_PAYOUT_REQUESTED',
+          entityName: 'OwnerPayoutTransaction', entityId: payout.id,
+          newValues: { amount: dto.amount, currency: dto.currency, beneficiaryId: dto.beneficiaryId, locked: true },
+        },
+      });
+      return { success: true, payout, message: 'Owner payout is held and awaiting a separate finance approver.' };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async approvePersistentOwnerPayout(payoutId: string, dto: ApproveOwnerPayoutDto, financeUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const finance = await tx.user.findUnique({ where: { id: financeUserId }, select: { role: true, tenantId: true } });
+      if (!finance || finance.tenantId || ![UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER].includes(finance.role)) {
+        throw new ForbiddenException('Platform finance or general manager permission is required.');
+      }
+      const payout = await tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+      if (!payout) throw new NotFoundException('Owner payout request was not found.');
+      if (payout.status !== 'REQUESTED') throw new BadRequestException('Only requested owner payouts can be reviewed.');
+      if (payout.userId === financeUserId) throw new ForbiddenException('Owner cannot approve their own payout.');
+      if (dto.approved) {
+        const updated = await tx.ownerPayoutTransaction.updateMany({
+          where: { id: payoutId, status: 'REQUESTED' },
+          data: { status: 'APPROVED', approvedByUserId: financeUserId, approvalNotes: dto.financeNotes || 'Finance approval' },
+        });
+        if (updated.count !== 1) throw new ConflictException('Owner payout was concurrently modified.');
+      } else {
+        const wallet = await tx.ownerEarningsWallet.findFirst({
+          where: { userId: payout.userId, currency: payout.currency, tenantId: null },
+        });
+        if (!wallet) throw new NotFoundException('Owner earnings wallet was not found.');
+        const released = await tx.ownerEarningsWallet.updateMany({
+          where: { id: wallet.id, lockedEarnings: { gte: payout.amount } },
+          data: { lockedEarnings: { decrement: payout.amount } },
+        });
+        if (released.count !== 1) throw new ConflictException('Unable to safely release the owner earnings hold.');
+        await tx.ownerPayoutTransaction.update({
+          where: { id: payoutId },
+          data: { status: 'FAILED', approvedByUserId: financeUserId, failureReason: dto.financeNotes || 'Rejected by finance' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: financeUserId, action: dto.approved ? 'OWNER_PAYOUT_APPROVED' : 'OWNER_PAYOUT_REJECTED',
+          entityName: 'OwnerPayoutTransaction', entityId: payoutId,
+          newValues: { approved: dto.approved, ownerUserId: payout.userId, amount: Number(payout.amount), currency: payout.currency },
+        },
+      });
+      return tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async confirmPersistentOwnerTransfer(payoutId: string, externalRef: string, financeUserId: string) {
+    if (!externalRef?.trim()) throw new BadRequestException('Official bank receipt reference is required.');
+    return this.prisma.$transaction(async (tx) => {
+      const finance = await tx.user.findUnique({ where: { id: financeUserId }, select: { role: true, tenantId: true } });
+      if (!finance || finance.tenantId || finance.role !== UserRole.FINANCE_MANAGER) {
+        throw new ForbiddenException('Platform finance manager permission is required.');
+      }
+      const payout = await tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+      if (!payout) throw new NotFoundException('Owner payout request was not found.');
+      if (payout.status !== 'APPROVED') throw new BadRequestException('Only an approved owner payout can be confirmed.');
+      if (payout.userId === financeUserId || payout.approvedByUserId === financeUserId) {
+        throw new ForbiddenException('A different finance officer must confirm the transfer after approval.');
+      }
+      const duplicate = await tx.ownerPayoutTransaction.findFirst({
+        where: { externalReference: externalRef.trim(), id: { not: payoutId } },
+      });
+      if (duplicate) throw new ConflictException('This bank reference has already been used.');
+      const wallet = await tx.ownerEarningsWallet.findFirst({
+        where: { userId: payout.userId, currency: payout.currency, tenantId: null },
+      });
+      if (!wallet) throw new NotFoundException('Owner earnings wallet was not found.');
+      const ledger = await this.ledgerService.recordDoubleEntryTransaction({
+        txNumber: 'LTX-OWNER-PAYOUT-' + payout.payoutNumber,
+        type: LedgerTransactionType.ADJUSTMENT,
+        referenceType: 'OWNER_PAYOUT',
+        referenceId: payout.id,
+        idempotencyKey: 'OWNER-PAYOUT-' + payout.idempotencyKey,
+        notes: 'Owner earnings payout. External reference: ' + externalRef.trim(),
+        createdByUserId: financeUserId,
+        entries: [
+          { accountCode: '2300-OWNER-EARNINGS-PAYABLE', currency: payout.currency, debitAmount: Number(payout.amount), creditAmount: 0, notes: 'Reduce owner earnings payable' },
+          { accountCode: '1110-CASH', currency: payout.currency, debitAmount: 0, creditAmount: Number(payout.amount), notes: 'External owner payout transfer' },
+        ],
+      }, tx);
+      const walletUpdate = await tx.ownerEarningsWallet.updateMany({
+        where: { id: wallet.id, lockedEarnings: { gte: payout.amount } },
+        data: {
+          lockedEarnings: { decrement: payout.amount },
+          withdrawnEarnings: { increment: payout.amount },
+        },
+      });
+      if (walletUpdate.count !== 1) throw new ConflictException('Owner earnings hold changed; transfer has not been finalized.');
+      const updated = await tx.ownerPayoutTransaction.updateMany({
+        where: { id: payoutId, status: 'APPROVED' },
+        data: {
+          status: 'CONFIRMED', externalReference: externalRef.trim(), ledgerTxId: ledger.transaction.id,
+          confirmedByUserId: financeUserId, confirmedAt: new Date(),
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('Owner payout was concurrently confirmed.');
+      await tx.auditLog.create({
+        data: {
+          userId: financeUserId, action: 'OWNER_PAYOUT_CONFIRMED',
+          entityName: 'OwnerPayoutTransaction', entityId: payoutId,
+          newValues: { ledgerTxId: ledger.transaction.id, externalReference: externalRef.trim(), status: 'CONFIRMED' },
+        },
+      });
+      return tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async failPersistentOwnerPayout(payoutId: string, reason: string) {
+    if (!reason?.trim()) throw new BadRequestException('Failure reason is required.');
+    return this.prisma.$transaction(async (tx) => {
+      const payout = await tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+      if (!payout) throw new NotFoundException('Owner payout request was not found.');
+      if (!['REQUESTED', 'APPROVED'].includes(payout.status)) {
+        throw new BadRequestException('Unknown or executed payouts cannot release funds until reconciliation.');
+      }
+      const wallet = await tx.ownerEarningsWallet.findFirst({
+        where: { userId: payout.userId, currency: payout.currency, tenantId: null },
+      });
+      if (!wallet) throw new NotFoundException('Owner earnings wallet was not found.');
+      const released = await tx.ownerEarningsWallet.updateMany({
+        where: { id: wallet.id, lockedEarnings: { gte: payout.amount } },
+        data: { lockedEarnings: { decrement: payout.amount } },
+      });
+      if (released.count !== 1) throw new ConflictException('Unable to safely release the owner earnings hold.');
+      const updated = await tx.ownerPayoutTransaction.update({
+        where: { id: payoutId }, data: { status: 'FAILED', failureReason: reason.trim() },
+      });
+      return updated;
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async listPersistentOwnerPayouts(userId?: string): Promise<InMemoryOwnerPayout[]> {
+    const rows = await this.prisma.ownerPayoutTransaction.findMany({
+      where: userId ? { userId } : undefined, orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((p) => ({
+      id: p.id, payoutNumber: p.payoutNumber, userId: p.userId, beneficiaryId: p.beneficiaryId,
+      currency: p.currency as CurrencyCode, amount: Number(p.amount), status: p.status as OwnerPayoutStatus,
+      idempotencyKey: p.idempotencyKey, approvedByUserId: p.approvedByUserId,
+      approvalNotes: p.approvalNotes, externalReference: p.externalReference,
+      failureReason: p.failureReason, ledgerTxId: p.ledgerTxId,
+      createdAt: p.createdAt, updatedAt: p.updatedAt,
+    }));
+  }
+
+
   // In-memory state for rapid fallback / testing
   private memoryBeneficiaries: Map<string, InMemoryBeneficiary> = new Map();
   private memoryPayouts: Map<string, InMemoryOwnerPayout> = new Map();
@@ -90,6 +494,7 @@ export class OwnerEarningsService {
     private prisma: PrismaService,
     private profitEngine: ProfitEngineService,
     private ledgerService: LedgerService,
+    private encryptionService: EncryptionService,
   ) {
     this.seedDefaultData();
   }
@@ -142,6 +547,7 @@ export class OwnerEarningsService {
     userId: string,
     dto: CreatePayoutBeneficiaryDto,
   ): Promise<InMemoryBeneficiary> {
+    if (process.env.NODE_ENV !== 'test') return this.createPersistentBeneficiary(userId, dto);
     this.assertPlatformOwnerContext();
     if (!dto.beneficiaryName || !dto.accountNumber) {
       throw new BadRequestException('اسم المستفيد ورقم الحساب مطلوبان');
@@ -179,6 +585,7 @@ export class OwnerEarningsService {
   }
 
   async listBeneficiaries(userId: string): Promise<InMemoryBeneficiary[]> {
+    if (process.env.NODE_ENV !== 'test') return this.listPersistentBeneficiaries(userId);
     this.assertPlatformOwnerContext();
     try {
       const dbList = await this.prisma.payoutBeneficiary.findMany({
@@ -207,6 +614,7 @@ export class OwnerEarningsService {
    * 2. Get Owner Statement & Liquidity Breakdown for a currency
    */
   async getEarningsStatement(userId: string, currency: CurrencyCode) {
+    if (process.env.NODE_ENV !== 'test') return this.persistentEarningsStatement(userId, currency);
     this.assertPlatformOwnerContext();
     const key = `${userId}:${currency}`;
     const wallet = this.memoryWallets.get(key) || {
@@ -261,6 +669,7 @@ export class OwnerEarningsService {
     userId: string,
     dto: OwnerPayoutRequestDto,
   ): Promise<{ success: boolean; payout: InMemoryOwnerPayout; message: string }> {
+    if (process.env.NODE_ENV !== 'test') return this.requestPersistentOwnerPayout(userId, dto) as any;
     this.assertPlatformOwnerContext();
     // A. Idempotency Check (AT-18)
     if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
@@ -361,6 +770,7 @@ export class OwnerEarningsService {
     dto: ApproveOwnerPayoutDto,
     financeUserId: string,
   ): Promise<InMemoryOwnerPayout> {
+    if (process.env.NODE_ENV !== 'test') return this.approvePersistentOwnerPayout(payoutId, dto, financeUserId) as any;
     this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
@@ -401,6 +811,7 @@ export class OwnerEarningsService {
     externalRef: string,
     financeUserId: string,
   ): Promise<InMemoryOwnerPayout> {
+    if (process.env.NODE_ENV !== 'test') return this.confirmPersistentOwnerTransfer(payoutId, externalRef, financeUserId) as any;
     this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
@@ -471,6 +882,7 @@ export class OwnerEarningsService {
    * 6. Fail Payout & Release Hold (AT-18 Hold Release)
    */
   async failPayout(payoutId: string, reason: string): Promise<InMemoryOwnerPayout> {
+    if (process.env.NODE_ENV !== 'test') return this.failPersistentOwnerPayout(payoutId, reason) as any;
     this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
@@ -496,6 +908,7 @@ export class OwnerEarningsService {
   }
 
   async listOwnerPayouts(userId?: string): Promise<InMemoryOwnerPayout[]> {
+    if (process.env.NODE_ENV !== 'test') return this.listPersistentOwnerPayouts(userId);
     this.assertPlatformOwnerContext();
     const list = Array.from(this.memoryPayouts.values());
     if (userId) {
