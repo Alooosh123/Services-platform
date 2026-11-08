@@ -113,7 +113,7 @@ export class ServiceAccountsService {
       serviceSlug: 'pubg-mobile',
       accountIdentifier: '5123456789',
       accountName: 'Gamer_Yemen_Pro',
-      status: AccountReviewStatus.PENDING,
+      status: AccountReviewStatus.PENDING as any,
       riskLevel: RiskLevel.MEDIUM,
       riskScore: 45,
       aiRecommendation: AiRecommendation.HUMAN_REVIEW,
@@ -213,7 +213,7 @@ export class ServiceAccountsService {
           serviceNameAr: capability.serviceNameAr,
           accountIdentifierCiphertext: this.encryptionService.encrypt(evaluation.sanitizedIdentifier),
           accountName: dto.accountName || null, serverZoneId: dto.serverZoneId || null,
-          status: initialStatus,
+          status: initialStatus as any,
           verificationSource: evaluation.needsHumanReview ? 'Pending Human Review' : 'Customer Consent - Reference Only',
         },
       });
@@ -318,7 +318,7 @@ export class ServiceAccountsService {
 
   private async listPersistentAccountReviews(status?: AccountReviewStatus, search?: string) {
     const reviews = await this.prisma.serviceAccountReview.findMany({
-      where: status ? { status } : undefined,
+      where: status ? { status: status as any } : undefined,
       include: { serviceAccount: true, user: { select: { id: true, fullName: true, phone: true } } },
       orderBy: { createdAt: 'desc' },
     });
@@ -345,7 +345,7 @@ export class ServiceAccountsService {
       where: { id: reviewId }, include: { serviceAccount: true },
     });
     if (!review) throw new NotFoundException('حالة المراجعة الإدارية غير موجودة');
-    if (![AccountReviewStatus.PENDING, AccountReviewStatus.NEEDS_INFO].includes(review.status)) {
+    if (!['PENDING', 'NEEDS_INFO'].includes(String(review.status))) {
       throw new BadRequestException('تمت معالجة حالة المراجعة مسبقاً.');
     }
     const nextStatus = dto.decision === 'APPROVE' ? AccountReviewStatus.APPROVED
@@ -362,7 +362,7 @@ export class ServiceAccountsService {
       });
       const account = await tx.serviceAccount.update({
         where: { id: review.serviceAccountId },
-        data: { status: nextAccountStatus },
+        data: { status: nextAccountStatus as any },
       });
       if (dto.decision === 'REJECT') {
         await tx.serviceAccountConsent.updateMany({
