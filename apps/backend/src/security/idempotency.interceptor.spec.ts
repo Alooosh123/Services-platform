@@ -17,10 +17,10 @@ describe('IdempotencyInterceptor', () => {
     interceptor = new IdempotencyInterceptor(store);
   });
 
-  const contextFor = (headers: Record<string, string> = {}) => {
+  const contextFor = (headers: Record<string, string> = {}, path = '/api/orders/checkout') => {
     const request = {
       method: 'POST',
-      path: '/api/orders/checkout',
+      path,
       ip: '127.0.0.1',
       user: { id: 'user-1' },
       header: (name: string) => headers[name.toLowerCase()],
@@ -90,6 +90,30 @@ describe('IdempotencyInterceptor', () => {
       }),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('does not require idempotency headers for unrelated administrative POST routes', async () => {
+    const paths = [
+      '/api/orders/admin/order-1/refund',
+      '/api/orders/admin/order-1/retry',
+      '/api/wallet/admin/wallet-1/freeze',
+      '/api/payouts/admin/payout-1/approve',
+      '/api/providers/admin/fund-supplier',
+    ];
+
+    for (const path of paths) {
+      const { context } = contextFor({}, path);
+      const handler = jest.fn(() => of({ success: true }));
+      const result = await new Promise((resolve, reject) => {
+        interceptor.intercept(context, { handle: handler }).subscribe({ next: resolve, error: reject });
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(handler).toHaveBeenCalledTimes(1);
+    }
+
+    expect(store.acquire).not.toHaveBeenCalled();
+    expect(store.get).not.toHaveBeenCalled();
   });
 
   it('rejects reuse of a completed key with a different request body', async () => {
