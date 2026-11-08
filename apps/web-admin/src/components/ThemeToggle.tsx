@@ -9,7 +9,13 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
   const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
-    const saved = window.localStorage.getItem('asaas-theme');
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem('asaas-theme');
+    } catch {
+      // The document attribute remains the source when storage is unavailable.
+    }
+
     const current = document.documentElement.dataset.theme;
     const next: Theme = saved === 'dark' || saved === 'light'
       ? saved

@@ -18,10 +18,10 @@
   --asaas-indigo-50: 249 244 235;
   --asaas-indigo-100: 242 232 214;
   --asaas-indigo-200: 230 213 184;
-  --asaas-indigo-300: 214 190 145;
-  --asaas-indigo-400: 198 164 110;
-  --asaas-indigo-500: 186 149 85;
-  --asaas-indigo-600: 170 130 67;
+  --asaas-indigo-300: 151 109 49;
+  --asaas-indigo-400: 132 96 40;
+  --asaas-indigo-500: 130 94 42;
+  --asaas-indigo-600: 186 149 85;
   --asaas-indigo-700: 145 109 62;
   --asaas-indigo-800: 116 87 51;
   --asaas-indigo-900: 88 67 43;
@@ -50,8 +50,8 @@
   --asaas-indigo-300: 224 190 128;
   --asaas-indigo-400: 216 179 111;
   --asaas-indigo-500: 216 179 111;
-  --asaas-indigo-600: 195 153 88;
-  --asaas-indigo-700: 163 126 70;
+  --asaas-indigo-600: 128 96 43;
+  --asaas-indigo-700: 109 80 35;
   --asaas-indigo-800: 125 94 53;
   --asaas-indigo-900: 83 61 39;
   --asaas-indigo-950: 47 34 25;
@@ -80,6 +80,18 @@ body {
   font-family: Tahoma, 'Segoe UI', Arial, sans-serif;
   line-height: 1.65;
   text-rendering: optimizeLegibility;
+}
+
+main.bg-slate-950 {
+  background-image:
+    radial-gradient(ellipse 46rem 30rem at 8% -8%, rgb(var(--asaas-accent) / 0.13), transparent 68%),
+    radial-gradient(ellipse 40rem 28rem at 96% 18%, rgb(var(--asaas-accent) / 0.075), transparent 70%);
+  background-attachment: fixed;
+}
+
+[class*='bg-slate-900'] {
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
 }
 
 h1,
