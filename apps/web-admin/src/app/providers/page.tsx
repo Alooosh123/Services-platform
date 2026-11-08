@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 import {
   Server,
   RefreshCw,
@@ -19,6 +21,8 @@ import {
 export default function AdminProvidersPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<any | null>(null);
   const [editModal, setEditModal] = useState(false);
@@ -26,69 +30,30 @@ export default function AdminProvidersPage() {
     name: '',
     baseUrl: '',
     apiKey: '',
-    type: 'MOCK',
+    type: 'MANUAL',
     isActive: true,
   });
 
   const fetchProviders = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch('http://localhost:4000/api/providers/admin/list', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const res = await fetch(`${API_BASE_URL}/providers/admin/list`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setProviders(data);
-      } else {
-        loadFallback();
-      }
-    } catch {
-      loadFallback();
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل إعدادات المزودين.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة قائمة المزودين غير صحيحة.');
+      setProviders(rows);
+    } catch (err) {
+      setProviders([]);
+      setLoadError(err instanceof Error ? err.message : 'تعذر تحميل إعدادات المزودين.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadFallback = () => {
-    setProviders([
-      {
-        id: 'prov-mock',
-        code: 'MOCK',
-        name: 'مزود الشحن الفوري التجريبي (Demo Mode)',
-        type: 'MOCK',
-        baseUrl: 'http://localhost:4000/api/mock-provider',
-        apiKey: 'mock****345',
-        balance: '10000.00',
-        currency: 'USD',
-        isActive: true,
-        _count: { orders: 48 },
-      },
-      {
-        id: 'prov-manual',
-        code: 'MANUAL',
-        name: 'طابور التنفيذ اليدوي (Human Operator Queue)',
-        type: 'MANUAL',
-        baseUrl: null,
-        apiKey: null,
-        balance: '999999.00',
-        currency: 'USD',
-        isActive: true,
-        _count: { orders: 12 },
-      },
-      {
-        id: 'prov-ext',
-        code: 'EXTERNAL_API',
-        name: 'بوابة المزود الخارجي (External API Gateway)',
-        type: 'EXTERNAL_API',
-        baseUrl: 'https://api.external-topup.com/v1',
-        apiKey: 'live****990',
-        balance: '1450.50',
-        currency: 'USD',
-        isActive: true,
-        _count: { orders: 5 },
-      },
-    ]);
   };
 
   useEffect(() => {
@@ -97,21 +62,20 @@ export default function AdminProvidersPage() {
 
   const handleTestConnection = async (id: string, name: string) => {
     setTestingId(id);
+    setActionError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/providers/admin/${id}/test-connection`, {
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const res = await fetch(`${API_BASE_URL}/providers/admin/${encodeURIComponent(id)}/test-connection`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        alert(`تم اختبار الاتصال بنجاح مع المزود "${name}". الرصيد الحالي: ${data.balance?.balance} ${data.balance?.currency}`);
-        fetchProviders();
-      } else {
-        alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
-      }
-    } catch {
-      alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || `فشل اختبار الاتصال بالمزود ${name}.`);
+      alert(payload.message || `أعاد الخادم نتيجة اختبار الاتصال للمزود "${name}".`);
+      await fetchProviders();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر التحقق من اتصال المزود.');
     } finally {
       setTestingId(null);
     }
@@ -131,34 +95,33 @@ export default function AdminProvidersPage() {
 
   const handleSaveEdit = async () => {
     if (!selectedProvider) return;
+    setActionError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/providers/admin/${selectedProvider.id}`, {
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const res = await fetch(`${API_BASE_URL}/providers/admin/${encodeURIComponent(selectedProvider.id)}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(editForm),
       });
-
-      if (res.ok) {
-        alert('تم تحديث إعدادات المزود بنجاح!');
-        setEditModal(false);
-        fetchProviders();
-      } else {
-        alert('تم حفظ التعديلات.');
-        setEditModal(false);
-      }
-    } catch {
-      alert('تم حفظ التعديلات.');
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر حفظ إعدادات المزود.');
+      alert(payload.message || 'تم تحديث إعدادات المزود وتأكيدها من الخادم.');
       setEditModal(false);
+      await fetchProviders();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر حفظ إعدادات المزود.');
     }
   };
 
   return (
     <div className="text-right">
       <Header title="مزودو الشحن والمحولات (Provider Adapters & Gateways)" />
+      {loadError && <div role="alert" className="mx-8 mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">{loadError}</div>}
+      {actionError && <div role="alert" className="mx-8 mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">{actionError}</div>}
 
       <div className="p-8 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -180,7 +143,11 @@ export default function AdminProvidersPage() {
 
         {/* Providers Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {providers.map((p) => (
+          {loading ? (
+            <p className="text-xs text-slate-400">جاري تحميل إعدادات المزودين...</p>
+          ) : providers.length === 0 ? (
+            <p className="text-xs text-slate-400">لا توجد إعدادات مزودين مسجلة في قاعدة البيانات.</p>
+          ) : providers.map((p) => (
             <div
               key={p.id}
               className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl hover:border-slate-700 transition-all"

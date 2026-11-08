@@ -59,7 +59,18 @@ describe('Phase 06 — Dynamic Catalog, Package Margins & Dynamic Payment Channe
     priceRuleVersion: {
       create: jest.fn().mockRejectedValue(new Error('Prisma offline in test')),
       findMany: jest.fn().mockRejectedValue(new Error('Prisma offline in test')),
+      updateMany: jest.fn().mockRejectedValue(new Error('Prisma offline in test')),
     },
+    fxRate: {
+      findFirst: jest.fn().mockResolvedValue({
+        fromCurrency: CurrencyCode.USD,
+        toCurrency: CurrencyCode.YER,
+        rate: 530,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        effectiveTo: null,
+      }),
+    },
+    $transaction: jest.fn(async (callback: (tx: any) => Promise<any>) => callback(mockPrisma)),
     paymentChannelConfig: {
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -274,7 +285,7 @@ describe('Phase 06 — Dynamic Catalog, Package Margins & Dynamic Payment Channe
     });
 
     it('calculates multi-currency pricing conversion with FX rate correctly without selling at a loss', async () => {
-      // Cost in USD: $10.00 -> Converted to YER at 530 YER/USD with 10% policy margin
+      // Test fixture supplies an approved USD -> YER FX row at 530 YER/USD; runtime never assumes this rate.
       const preview = await pricingEngine.calculatePrice({
         costPrice: 10.0,
         costCurrency: CurrencyCode.USD,
@@ -282,7 +293,7 @@ describe('Phase 06 — Dynamic Catalog, Package Margins & Dynamic Payment Channe
         scope: PriceRuleScope.DEFAULT,
       });
 
-      // Converted cost = 10 * 530 = 5300 YER
+      // Converted cost = 10 * the configured test fixture rate (530) = 5300 YER.
       // Margin 10% = 530 YER
       // Retail = 5300 + 53 + 530 = 5883 YER (including 1% processing fee)
       expect(preview.recommendedRetailPrice).toBeGreaterThan(5300);

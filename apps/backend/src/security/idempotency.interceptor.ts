@@ -168,13 +168,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
       return false;
     }
     const normalizedPath = path.replace(/^\/api(?=\/|$)/, '');
-    return (
-      /^\/orders(?:\/|$)/i.test(normalizedPath) ||
-      /^\/wallet(?:\/|$)/i.test(normalizedPath) ||
-      /^\/payouts(?:\/|$)/i.test(normalizedPath) ||
-      /^\/ledger(?:\/|$)/i.test(normalizedPath) ||
-      /^\/deposits\/request(?:\/|$)/i.test(normalizedPath) ||
-      /^\/providers\/admin\/fund-supplier(?:\/|$)/i.test(normalizedPath)
-    );
+    // Checkout has an explicit, shared header/body contract across Web and
+    // Flutter. Other financial/admin POST routes must opt in individually;
+    // broad prefixes would break actions that do not send an idempotency key.
+    return /^\/orders\/checkout\/?$/i.test(normalizedPath);
   }
 }

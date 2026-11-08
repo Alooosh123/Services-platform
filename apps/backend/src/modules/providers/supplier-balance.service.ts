@@ -53,7 +53,7 @@ export class SupplierBalanceService {
     private ledgerService: LedgerService,
   ) {
     // Seed mock balances for local demo only. Tenant requests never share this store.
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV === 'test') {
       this.seedDefaultAccounts();
     }
   }
@@ -90,7 +90,7 @@ export class SupplierBalanceService {
   }
 
   private assertDatabaseForFinancialOperation(): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       throw new ServiceUnavailableException(
         'Supplier commercial balances require an available tenant-scoped database.',
       );
@@ -115,7 +115,7 @@ export class SupplierBalanceService {
         updatedAt: account.updatedAt,
       }));
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Supplier account listing failed: ${error?.message || error}`);
         this.assertDatabaseForFinancialOperation();
       }
@@ -162,7 +162,7 @@ export class SupplierBalanceService {
       }
       return { balance: 0, creditLimit: 0, available: 0 };
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Supplier balance read failed: ${error?.message || error}`);
         throw error instanceof NotFoundException
           ? error
@@ -195,7 +195,7 @@ export class SupplierBalanceService {
       };
     }
     if (costPrice === 0) {
-      return { allowed: true, availableBalance: 999999, requiredAmount: 0 };
+      return { allowed: true, availableBalance: 0, requiredAmount: 0 };
     }
 
     const { available, balance } = await this.getSupplierBalance(providerCode, currency);
@@ -302,7 +302,7 @@ export class SupplierBalanceService {
         transaction: result.transaction,
       };
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Supplier funding failed: ${error?.message || error}`);
         throw error;
       }
@@ -418,15 +418,18 @@ export class SupplierBalanceService {
         return { success: true, newBalance: balanceAfter.toNumber() };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Supplier fulfillment deduction failed: ${error?.message || error}`);
         throw error;
       }
       if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
         throw error;
       }
+      if (process.env.NODE_ENV !== 'test') {
+        throw new ServiceUnavailableException('Supplier balance deduction failed; reconciliation is required.');
+      }
       const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      if (!memory) return { success: true, newBalance: 0 };
+      if (!memory) throw new ServiceUnavailableException('No test supplier account is configured.');
       if (memory.balance + memory.creditLimit < costPrice) {
         throw new BadRequestException('Local mock supplier balance is insufficient.');
       }
@@ -473,7 +476,7 @@ export class SupplierBalanceService {
           createdAt: row.createdAt,
         }));
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Supplier transaction listing failed: ${error?.message || error}`);
         this.assertDatabaseForFinancialOperation();
       }

@@ -16,6 +16,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateCardTopupDto, CreateUsdtTopupDto } from './dto/create-global-topup.dto';
 import { PaymentsService } from './payments.service';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 import { PaymentChannelCode } from '@digital-topup/shared';
 import { NotFoundException } from '@nestjs/common';
 
@@ -28,6 +30,8 @@ export class PaymentsController {
   ) {}
 
   @Post('topups/card')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'payment-card-create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   createCardTopup(@CurrentUser('id') userId: string, @Body() dto: CreateCardTopupDto) {
@@ -35,6 +39,8 @@ export class PaymentsController {
   }
 
   @Post('topups/usdt')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'payment-usdt-create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   createUsdtTopup(@CurrentUser('id') userId: string, @Body() dto: CreateUsdtTopupDto) {
@@ -64,6 +70,8 @@ export class PaymentsController {
   }
 
   @Post('webhooks/stripe')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(600, 60_000, 'payment-stripe-webhook')
   handleStripeWebhook(
     @Req() request: RawBodyRequest<Request>,
     @Headers('stripe-signature') signature?: string,
@@ -72,6 +80,8 @@ export class PaymentsController {
   }
 
   @Post('webhooks/usdt/:network')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(600, 60_000, 'payment-usdt-webhook')
   handleUsdtWebhook(
     @Param('network') network: string,
     @Req() request: RawBodyRequest<Request>,

@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -53,7 +54,15 @@ export class PayoutsService {
     private walletService: WalletService,
     private adapterRegistry: PaymentAdapterRegistry,
   ) {
-    this.seedDefaultPayouts();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultPayouts();
+  }
+
+  private assertPersistentPayoutWorkflow(): void {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException(
+        'Payout operations are disabled until wallet holds, payout approvals, provider execution, and ledger settlement are persisted atomically.',
+      );
+    }
   }
 
   private seedDefaultPayouts() {
@@ -81,6 +90,196 @@ export class PayoutsService {
     this.memoryPayouts.set(po1.id, po1);
   }
 
+
+  private mapPersistentPayout(db: any): InMemoryPayout {
+    return {
+      id: db.id, payoutNumber: db.payoutNumber, userId: db.userId, walletId: db.walletId,
+      currency: db.currency as CurrencyCode, amount: Number(db.amount), feeAmount: Number(db.feeAmount),
+      channelCode: db.channelCode as PaymentChannelCode, destinationAccount: db.destinationAccount,
+      beneficiaryName: db.beneficiaryName, idempotencyKey: db.idempotencyKey,
+      status: db.status as PayoutStatus, approvedByUserId: db.approvedByUserId,
+      approvalNotes: db.approvalNotes, externalReference: db.externalReference,
+      failureReason: db.failureReason, ledgerTxId: db.ledgerTxId,
+      createdAt: db.createdAt, updatedAt: db.updatedAt,
+    };
+  }
+
+  private async createPersistentPayoutRequest(userId: string, dto: CreatePayoutDto) {
+    if (!dto.idempotencyKey?.trim()) throw new BadRequestException('Idempotency-Key is required.');
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('Payout amount must be positive.');
+    const existing = await this.prisma.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+    if (existing) {
+      if (existing.userId !== userId || Number(existing.amount) !== dto.amount ||
+          existing.currency !== dto.currency || existing.channelCode !== dto.channelCode ||
+          existing.destinationAccount !== dto.destinationAccount) {
+        throw new ConflictException('Idempotency key was already used for a different payout request.');
+      }
+      return { success: true, payout: this.mapPersistentPayout(existing) };
+    }
+    const adapter = this.adapterRegistry.getAdapter(dto.channelCode);
+    const channelInfo = adapter.getInfo();
+    if (!channelInfo.isActive) throw new BadRequestException('Payout channel is not active.');
+    if (channelInfo.mode === PaymentChannelMode.DISABLED || channelInfo.mode === PaymentChannelMode.BLOCKED_EXTERNAL) {
+      throw new BadRequestException('Payout channel is not enabled for customer withdrawals.');
+    }
+    if (channelInfo.minAmount && dto.amount < channelInfo.minAmount) throw new BadRequestException('Payout amount is below the channel minimum.');
+    if (channelInfo.maxAmount && dto.amount > channelInfo.maxAmount) throw new BadRequestException('Payout amount exceeds the channel maximum.');
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId }, select: { id: true, phoneVerifiedAt: true, createdAt: true },
+    });
+    if (!user) throw new NotFoundException('Customer account was not found.');
+    if (!user.phoneVerifiedAt) throw new ForbiddenException('A verified phone number is required before withdrawal.');
+    const recentCount = await this.prisma.payoutRequest.count({
+      where: { userId, createdAt: { gte: new Date(Date.now() - 86400000) } },
+    });
+    if (recentCount >= 5) throw new BadRequestException('Daily withdrawal request limit exceeded.');
+    const now = new Date();
+    const payoutNumber = 'PO-' + now.toISOString().slice(0,10).replace(/-/g,'') + '-' + Math.floor(100000 + Math.random() * 899999);
+    const record = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+      if (current) {
+        if (current.userId !== userId || Number(current.amount) !== dto.amount ||
+            current.currency !== dto.currency || current.channelCode !== dto.channelCode ||
+            current.destinationAccount !== dto.destinationAccount) {
+          throw new ConflictException('Idempotency key was already used for a different payout request.');
+        }
+        return current;
+      }
+      const wallet = await tx.wallet.findUnique({
+        where: { userId_currency: { userId, currency: dto.currency } },
+      });
+      if (!wallet) throw new NotFoundException('Wallet for the requested currency was not found.');
+      await this.ledgerService.holdWalletBalance(wallet.id, dto.amount, tx);
+      const payout = await tx.payoutRequest.create({
+        data: {
+          payoutNumber, userId, walletId: wallet.id, currency: dto.currency,
+          amount: new Prisma.Decimal(dto.amount), feeAmount: new Prisma.Decimal(0),
+          channelCode: dto.channelCode, destinationAccount: dto.destinationAccount,
+          beneficiaryName: dto.beneficiaryName, idempotencyKey: dto.idempotencyKey,
+          status: PayoutStatus.REQUESTED,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId, action: 'CUSTOMER_PAYOUT_REQUESTED', entityName: 'PayoutRequest', entityId: payout.id,
+          newValues: { amount: dto.amount, currency: dto.currency, channelCode: dto.channelCode, walletHoldPlaced: true },
+        },
+      });
+      return payout;
+    }, { isolationLevel: 'Serializable' });
+    return { success: true, payout: this.mapPersistentPayout(record) };
+  }
+
+  private async approvePersistentPayout(staffUserId: string, payoutId: string, dto?: ApprovePayoutDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const payout = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+      if (!payout) throw new NotFoundException('Payout request was not found.');
+      if (payout.status !== PayoutStatus.REQUESTED) throw new BadRequestException('Only requested payouts can be approved.');
+      if (payout.userId === staffUserId) throw new ForbiddenException('The requester cannot approve their own withdrawal.');
+      const updated = await tx.payoutRequest.updateMany({
+        where: { id: payoutId, status: PayoutStatus.REQUESTED },
+        data: {
+          status: PayoutStatus.APPROVED,
+          approvedByUserId: staffUserId,
+          approvalNotes: dto?.reviewNotes || 'Finance approval',
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('Payout was updated by another operator.');
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId, action: 'CUSTOMER_PAYOUT_APPROVED',
+          entityName: 'PayoutRequest', entityId: payoutId,
+          newValues: { status: PayoutStatus.APPROVED, requesterId: payout.userId },
+        },
+      });
+      return { success: true, payout: this.mapPersistentPayout(await tx.payoutRequest.findUnique({ where: { id: payoutId } })) };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async confirmPersistentManualPayout(staffUserId: string, payoutId: string, externalRef: string, notes?: string) {
+    if (!externalRef?.trim()) throw new BadRequestException('Bank transfer reference is required.');
+    return this.prisma.$transaction(async (tx) => {
+      const payout = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+      if (!payout) throw new NotFoundException('Payout request was not found.');
+      if (payout.status !== PayoutStatus.APPROVED) throw new BadRequestException('Only an approved payout can be manually confirmed.');
+      if (payout.userId === staffUserId || payout.approvedByUserId === staffUserId) {
+        throw new ForbiddenException('The requester and first approver cannot confirm the same transfer.');
+      }
+      const duplicateReference = await tx.payoutRequest.findFirst({
+        where: { externalReference: externalRef.trim(), id: { not: payoutId } },
+      });
+      if (duplicateReference) throw new ConflictException('This external bank reference is already attached to another payout.');
+      const ledgerResult = await this.ledgerService.recordPayoutSettlement({
+        payoutId: payout.id, payoutNumber: payout.payoutNumber, userId: payout.userId,
+        walletId: payout.walletId || undefined, currency: payout.currency as CurrencyCode,
+        amount: Number(payout.amount), channelCode: payout.channelCode as PaymentChannelCode,
+        destinationAccount: payout.destinationAccount, performedByUserId: staffUserId,
+        notes: notes || 'Manual bank transfer reference ' + externalRef.trim(),
+      }, tx);
+      const ledgerTxId = ledgerResult.transaction.id;
+      const updated = await tx.payoutRequest.updateMany({
+        where: { id: payoutId, status: PayoutStatus.APPROVED },
+        data: {
+          status: PayoutStatus.CONFIRMED, externalReference: externalRef.trim(),
+          confirmedByUserId: staffUserId, executedAt: new Date(), ledgerTxId,
+          approvalNotes: notes || payout.approvalNotes,
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('Payout confirmation was concurrently modified.');
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId, action: 'CUSTOMER_PAYOUT_CONFIRMED',
+          entityName: 'PayoutRequest', entityId: payoutId,
+          newValues: { externalReference: externalRef.trim(), ledgerTxId, status: PayoutStatus.CONFIRMED },
+        },
+      });
+      return { success: true, payout: this.mapPersistentPayout(await tx.payoutRequest.findUnique({ where: { id: payoutId } })) };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async rejectPersistentPayout(staffUserId: string, payoutId: string, reason: string) {
+    if (!reason?.trim()) throw new BadRequestException('A rejection reason is required.');
+    return this.prisma.$transaction(async (tx) => {
+      const payout = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+      if (!payout) throw new NotFoundException('Payout request was not found.');
+      if (!['REQUESTED', 'APPROVED'].includes(String(payout.status))) {
+        throw new BadRequestException('Only unexecuted requested or approved payouts can be rejected.');
+      }
+      if (payout.userId === staffUserId || (payout.approvedByUserId && payout.approvedByUserId === staffUserId)) {
+        throw new ForbiddenException('Requester or first approver cannot perform the rejection.');
+      }
+      if (payout.walletId) await this.ledgerService.releaseWalletHold(payout.walletId, Number(payout.amount), tx);
+      const updated = await tx.payoutRequest.updateMany({
+        where: { id: payoutId, status: payout.status },
+        data: {
+          status: PayoutStatus.CANCELLED, failureReason: reason.trim(),
+          rejectedByUserId: staffUserId,
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('Payout was concurrently modified.');
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId, action: 'CUSTOMER_PAYOUT_REJECTED',
+          entityName: 'PayoutRequest', entityId: payoutId,
+          newValues: { reason: reason.trim(), walletHoldReleased: Boolean(payout.walletId) },
+        },
+      });
+      return { success: true, payout: this.mapPersistentPayout(await tx.payoutRequest.findUnique({ where: { id: payoutId } })) };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  private async holdForManualPayoutDispatch(staffUserId: string, payoutId: string) {
+    const payout = await this.prisma.payoutRequest.findUnique({ where: { id: payoutId } });
+    if (!payout) throw new NotFoundException('Payout request was not found.');
+    if (payout.status !== PayoutStatus.APPROVED) throw new BadRequestException('Payout must be approved before execution.');
+    return {
+      success: false, status: PayoutStatus.APPROVED,
+      message: 'This Yemen payment channel has no verified documented outbound API configured. Execute the transfer using the approved finance SOP, then submit the official transfer reference for second-person confirmation.',
+      payout: this.mapPersistentPayout(payout),
+    };
+  }
+
+
   /**
    * Customer or Admin creates a Payout Request
    * Validates:
@@ -93,6 +292,8 @@ export class PayoutsService {
     userId: string,
     dto: CreatePayoutDto,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.createPersistentPayoutRequest(userId, dto);
+    this.assertPersistentPayoutWorkflow();
     if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
       throw new BadRequestException('مفتاح عدم التكرار (idempotencyKey) إلزامي لمنع الازدواج المالي');
     }
@@ -254,6 +455,8 @@ export class PayoutsService {
     payoutId: string,
     dto?: ApprovePayoutDto,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.approvePersistentPayout(staffUserId, payoutId, dto) as any;
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status !== PayoutStatus.REQUESTED) {
@@ -299,6 +502,8 @@ export class PayoutsService {
     staffUserId: string,
     payoutId: string,
   ): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.holdForManualPayoutDispatch(staffUserId, payoutId) as any;
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status !== PayoutStatus.APPROVED && payout.status !== PayoutStatus.REQUESTED) {
@@ -444,6 +649,8 @@ export class PayoutsService {
     externalRef: string,
     notes?: string,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.confirmPersistentManualPayout(staffUserId, payoutId, externalRef, notes) as any;
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (
@@ -497,6 +704,8 @@ export class PayoutsService {
     payoutId: string,
     reason: string,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.rejectPersistentPayout(staffUserId, payoutId, reason) as any;
+    this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
     if (payout.status === PayoutStatus.CONFIRMED) {
@@ -545,10 +754,16 @@ export class PayoutsService {
           updatedAt: db.updatedAt,
         };
       }
-    } catch {
-      // fallback
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout records are temporarily unavailable.');
+      }
     }
 
+    if (process.env.NODE_ENV !== 'test') {
+      throw new NotFoundException(`طلب السحب ${payoutId} غير موجود`);
+    }
     const mem = this.memoryPayouts.get(payoutId);
     if (!mem) {
       throw new NotFoundException(`طلب السحب ${payoutId} غير موجود`);
@@ -579,12 +794,56 @@ export class PayoutsService {
           updatedAt: db.updatedAt,
         };
       }
-    } catch {
-      // fallback
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout idempotency lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout idempotency could not be verified.');
+      }
     }
 
+    if (process.env.NODE_ENV !== 'test') return null;
     for (const p of this.memoryPayouts.values()) {
       if (p.idempotencyKey === key) return p;
+    }
+    return null;
+  }
+
+  async findByExternalReference(reference: string): Promise<InMemoryPayout | null> {
+    if (!reference?.trim()) return null;
+    try {
+      const db = await this.prisma.payoutRequest.findFirst({
+        where: { externalReference: reference.trim() },
+      });
+      if (db) {
+        return {
+          id: db.id,
+          payoutNumber: db.payoutNumber,
+          userId: db.userId,
+          walletId: db.walletId,
+          currency: db.currency as CurrencyCode,
+          amount: Number(db.amount),
+          feeAmount: Number(db.feeAmount),
+          channelCode: db.channelCode as PaymentChannelCode,
+          destinationAccount: db.destinationAccount,
+          beneficiaryName: db.beneficiaryName,
+          idempotencyKey: db.idempotencyKey,
+          status: db.status as PayoutStatus,
+          externalReference: db.externalReference,
+          createdAt: db.createdAt,
+          updatedAt: db.updatedAt,
+        };
+      }
+      return null;
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout external reference lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout reference could not be verified.');
+      }
+    }
+    if (process.env.NODE_ENV === 'test') {
+      for (const payout of this.memoryPayouts.values()) {
+        if (payout.externalReference === reference.trim()) return payout;
+      }
     }
     return null;
   }
@@ -600,7 +859,7 @@ export class PayoutsService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (db && db.length > 0) {
+      if (Array.isArray(db)) {
         return db.map((p) => ({
           id: p.id,
           payoutNumber: p.payoutNumber,
@@ -623,10 +882,14 @@ export class PayoutsService {
           updatedAt: p.updatedAt,
         }));
       }
-    } catch {
-      // fallback
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Payout list lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Payout records are temporarily unavailable.');
+      }
     }
 
+    if (process.env.NODE_ENV !== 'test') return [];
     let results = Array.from(this.memoryPayouts.values());
     if (filters?.status) results = results.filter((p) => p.status === filters.status);
     if (filters?.userId) results = results.filter((p) => p.userId === filters.userId);

@@ -59,7 +59,7 @@ export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
 
   private failClosedForTenant(error: any): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       this.logger.error(`Reconciliation persistence failed: ${error?.message || error}`);
       throw new ServiceUnavailableException('Reconciliation data is unavailable from the tenant database.');
     }
@@ -72,7 +72,7 @@ export class ReconciliationService {
     private depositsService: DepositsService,
     private payoutsService: PayoutsService,
   ) {
-    this.seedDefaultBatch();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultBatch();
   }
 
   private seedDefaultBatch() {
@@ -220,7 +220,7 @@ export class ReconciliationService {
       }
 
       // 2. Check Internal Payouts
-      const payout = await this.payoutsService.findByIdempotencyKey(ref);
+      const payout = await this.payoutsService.findByExternalReference(ref);
       if (payout) {
         const expectedAmount = Number(payout.amount);
         if (Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === payout.currency) {
@@ -308,10 +308,14 @@ export class ReconciliationService {
       });
     } catch (err: any) {
       this.failClosedForTenant(err);
-      this.logger.warn(`Local unscoped development reconciliation fallback (${err?.message})`);
+      this.logger.warn(`Test-only in-memory reconciliation fallback (${err?.message})`);
     }
 
-    // Save in memory
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException('Reconciliation batch was not persisted.');
+    }
+
+    // Test-only memory fixture
     const memBatch: InMemoryReconciliationBatch = {
       id: batchId,
       batchNumber,
@@ -360,6 +364,170 @@ export class ReconciliationService {
     };
   }
 
+
+  private async proposePersistentAdjustment(
+    staffUserId: string,
+    itemId: string,
+    notes: string,
+    action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
+    debitAccountCode?: string,
+    creditAccountCode?: string,
+  ) {
+    if (action !== 'ADJUST_LEDGER') {
+      throw new BadRequestException('Production discrepancy resolution requires a balanced ledger adjustment and a separate finance approval.');
+    }
+    if (!notes?.trim() || !debitAccountCode?.trim() || !creditAccountCode?.trim()) {
+      throw new BadRequestException('Reason, debit account code and credit account code are required.');
+    }
+    if (debitAccountCode === creditAccountCode) {
+      throw new BadRequestException('Debit and credit ledger accounts must be different.');
+    }
+    const item = await this.prisma.reconciliationItem.findUnique({
+      where: { id: itemId }, include: { batch: true },
+    });
+    if (!item) throw new NotFoundException('Reconciliation discrepancy was not found.');
+    if (!['DISCREPANCY', 'UNKNOWN_EXTERNAL', 'UNKNOWN_INTERNAL'].includes(String(item.status))) {
+      throw new BadRequestException('This reconciliation item is not an open financial discrepancy.');
+    }
+    const difference = new Prisma.Decimal(item.expectedAmount).sub(item.actualAmount).abs();
+    if (difference.lessThanOrEqualTo(0)) throw new BadRequestException('The discrepancy amount must be greater than zero.');
+    const [debit, credit] = await Promise.all([
+      this.prisma.ledgerAccount.findUnique({ where: { code: debitAccountCode.trim() } }),
+      this.prisma.ledgerAccount.findUnique({ where: { code: creditAccountCode.trim() } }),
+    ]);
+    if (!debit || !credit) throw new BadRequestException('Both ledger accounts must already exist in the chart of accounts.');
+    if (debit.currency !== item.currency || credit.currency !== item.currency) {
+      throw new BadRequestException('Both ledger accounts must use the reconciliation item currency; currency conversion is not permitted.');
+    }
+    const existing = await this.prisma.reconciliationAdjustmentRequest.findFirst({
+      where: { itemId, status: { in: ['PENDING_APPROVAL', 'APPROVED', 'POSTED'] } },
+    });
+    if (existing) throw new BadRequestException('An adjustment request is already pending or has been posted for this discrepancy.');
+    const request = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.reconciliationAdjustmentRequest.create({
+        data: {
+          itemId, debitAccountCode: debitAccountCode.trim(), creditAccountCode: creditAccountCode.trim(),
+          amount: difference, currency: item.currency, reason: notes.trim(), proposedByUserId: staffUserId,
+          status: 'PENDING_APPROVAL',
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId, action: 'RECONCILIATION_ADJUSTMENT_PROPOSED',
+          entityName: 'ReconciliationAdjustmentRequest', entityId: created.id,
+          newValues: {
+            itemId, amount: difference.toFixed(4), currency: item.currency,
+            debitAccountCode: debitAccountCode.trim(), creditAccountCode: creditAccountCode.trim(),
+            approvalRequired: true,
+          },
+        },
+      });
+      return created;
+    }, { isolationLevel: 'Serializable' });
+    return {
+      success: true,
+      adjustmentRequest: request,
+      message: 'تم تسجيل طلب التسوية بانتظار اعتماد مسؤول مالي آخر. لم يتم ترحيل أي قيد حتى الآن.',
+    };
+  }
+
+  async approvePersistentAdjustment(staffUserId: string, requestId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const request = await tx.reconciliationAdjustmentRequest.findUnique({
+        where: { id: requestId }, include: { item: { include: { batch: true } } },
+      });
+      if (!request) throw new NotFoundException('Reconciliation adjustment request was not found.');
+      if (request.status !== 'PENDING_APPROVAL') {
+        throw new BadRequestException('Only pending reconciliation adjustments can be approved.');
+      }
+      if (request.proposedByUserId === staffUserId) {
+        throw new BadRequestException('Four-eyes control: the proposer cannot approve their own reconciliation adjustment.');
+      }
+      const amount = new Prisma.Decimal(request.amount);
+      const currentDifference = new Prisma.Decimal(request.item.expectedAmount).sub(request.item.actualAmount).abs();
+      if (!amount.equals(currentDifference) || amount.lessThanOrEqualTo(0)) {
+        throw new BadRequestException('The stored adjustment no longer matches the open discrepancy amount.');
+      }
+      const [debit, credit] = await Promise.all([
+        tx.ledgerAccount.findUnique({ where: { code: request.debitAccountCode } }),
+        tx.ledgerAccount.findUnique({ where: { code: request.creditAccountCode } }),
+      ]);
+      if (!debit || !credit || debit.id === credit.id) {
+        throw new BadRequestException('The debit and credit accounts must both exist and be different.');
+      }
+      if (debit.currency !== request.currency || credit.currency !== request.currency) {
+        throw new BadRequestException('Ledger account currencies must match the adjustment currency.');
+      }
+      const claimed = await tx.reconciliationAdjustmentRequest.updateMany({
+        where: { id: requestId, status: 'PENDING_APPROVAL' },
+        data: { status: 'APPROVED', approvedByUserId: staffUserId, approvedAt: new Date() },
+      });
+      if (claimed.count !== 1) throw new BadRequestException('This adjustment was already processed by another operator.');
+      const ledgerResult = await this.ledgerService.recordDoubleEntryTransaction({
+        txNumber: 'LTX-RECON-' + requestId,
+        type: 'ADJUSTMENT' as any,
+        referenceType: 'RECONCILIATION_ADJUSTMENT',
+        referenceId: requestId,
+        idempotencyKey: 'RECON-ADJUST-' + requestId,
+        notes: 'Approved reconciliation adjustment: ' + request.reason,
+        createdByUserId: staffUserId,
+        entries: [
+          {
+            accountCode: request.debitAccountCode, debitAmount: Number(amount), creditAmount: 0,
+            currency: request.currency as CurrencyCode, notes: 'Reconciliation discrepancy debit',
+          },
+          {
+            accountCode: request.creditAccountCode, debitAmount: 0, creditAmount: Number(amount),
+            currency: request.currency as CurrencyCode, notes: 'Reconciliation discrepancy credit',
+          },
+        ],
+      }, tx);
+      const ledgerTxId = ledgerResult.transaction.id;
+      await tx.reconciliationAdjustmentRequest.update({
+        where: { id: requestId },
+        data: { status: 'POSTED', ledgerTxId, postedAt: new Date() },
+      });
+      await tx.reconciliationItem.update({
+        where: { id: request.itemId },
+        data: {
+          status: ReconciliationStatus.RESOLVED_MANUAL,
+          resolvedAt: new Date(), resolvedByUserId: staffUserId,
+          internalTxId: ledgerTxId,
+          notes: (request.item.notes || '') + ' | Approved ledger adjustment ' + ledgerTxId,
+        },
+      });
+      const remaining = await tx.reconciliationItem.count({
+        where: {
+          batchId: request.item.batchId,
+          status: { in: [ReconciliationStatus.DISCREPANCY, ReconciliationStatus.UNKNOWN_EXTERNAL, ReconciliationStatus.UNKNOWN_INTERNAL] },
+        },
+      });
+      if (remaining === 0) {
+        await tx.reconciliationBatch.update({
+          where: { id: request.item.batchId }, data: { status: 'RESOLVED' },
+        });
+      } else {
+        await tx.reconciliationBatch.update({
+          where: { id: request.item.batchId }, data: { status: 'PENDING_REVIEW' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId, action: 'RECONCILIATION_ADJUSTMENT_POSTED',
+          entityName: 'ReconciliationAdjustmentRequest', entityId: requestId,
+          newValues: { ledgerTxId, amount: amount.toFixed(4), currency: request.currency, itemId: request.itemId },
+        },
+      });
+      return {
+        success: true,
+        ledgerTransaction: ledgerResult.transaction,
+        status: 'POSTED',
+        message: 'تم اعتماد فرق المطابقة وترحيله بقيد مزدوج متوازن داخل معاملة قاعدة بيانات واحدة.',
+      };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+
   /**
    * List all reconciliation batches
    */
@@ -369,7 +537,7 @@ export class ReconciliationService {
         orderBy: { statementDate: 'desc' },
         include: { items: true },
       });
-      if (dbBatches.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (Array.isArray(dbBatches)) {
         return dbBatches.map((b) => ({
           id: b.id,
           batchNumber: b.batchNumber,
@@ -404,9 +572,10 @@ export class ReconciliationService {
       }
     } catch (error: any) {
       this.failClosedForTenant(error);
-      this.logger.warn(`Local unscoped development reconciliation listing fallback: ${error?.message || error}`);
+      this.logger.warn(`Test-only reconciliation listing fallback: ${error?.message || error}`);
     }
 
+    if (process.env.NODE_ENV !== 'test') return [];
     return Array.from(this.memoryBatches.values()).sort(
       (a, b) => b.statementDate.getTime() - a.statementDate.getTime(),
     );
@@ -433,10 +602,15 @@ export class ReconciliationService {
     itemId: string,
     notes: string,
     action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
-  ): Promise<{ success: boolean; message: string }> {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    debitAccountCode?: string,
+    creditAccountCode?: string,
+  ): Promise<any> {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
+      return this.proposePersistentAdjustment(staffUserId, itemId, notes, action, debitAccountCode, creditAccountCode);
+    }
+    if (getCurrentTenantId()) {
       throw new ServiceUnavailableException(
-        'Discrepancy resolution is disabled until the resolution workflow is fully database-backed.',
+        'Discrepancy resolution is disabled outside automated tests until database-backed resolution and ledger-adjustment approvals are implemented.',
       );
     }
     for (const batch of this.memoryBatches.values()) {

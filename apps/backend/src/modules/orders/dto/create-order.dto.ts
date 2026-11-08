@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CurrencyCode, PaymentChannelCode } from '@digital-topup/shared';
 
 export class CreateOrderDto {
@@ -37,6 +37,7 @@ export class CreateOrderDto {
   })
   @IsNotEmpty()
   @IsString()
+  @MaxLength(128)
   idempotencyKey: string;
 
   @ApiProperty({

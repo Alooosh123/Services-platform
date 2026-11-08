@@ -32,6 +32,15 @@ redis.call("DEL", KEYS[1])
 return #tokenHashes
 `;
 
+const INCREMENT_RATE_LIMIT_SCRIPT = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+  redis.call("PEXPIRE", KEYS[1], ARGV[1])
+end
+local ttl = redis.call("PTTL", KEYS[1])
+return { count, ttl }
+`;
+
 @Injectable()
 export class RedisIdempotencyStore implements OnModuleDestroy {
   private readonly logger = new Logger(RedisIdempotencyStore.name);
@@ -53,6 +62,25 @@ export class RedisIdempotencyStore implements OnModuleDestroy {
   async get(key: string): Promise<string | null> {
     await this.ensureConnected();
     return this.client.get(key);
+  }
+
+  async incrementRateLimit(key: string, windowMs: number): Promise<{ count: number; ttlMs: number }> {
+    if (!Number.isInteger(windowMs) || windowMs < 1000 || windowMs > 24 * 60 * 60 * 1000) {
+      throw new ServiceUnavailableException('Rate-limit window configuration is invalid.');
+    }
+    await this.ensureConnected();
+    const digest = createHash('sha256').update(key).digest('hex');
+    const result = await this.client.eval(INCREMENT_RATE_LIMIT_SCRIPT, {
+      keys: [`rate-limit:${digest}`],
+      arguments: [String(windowMs)],
+    }) as unknown as [number | string, number | string];
+    if (!Array.isArray(result) || result.length < 2) {
+      throw new ServiceUnavailableException('Rate-limit storage returned an invalid response.');
+    }
+    return {
+      count: Number(result[0]),
+      ttlMs: Math.max(0, Number(result[1])),
+    };
   }
 
   async ping(): Promise<number> {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Gamepad2,
@@ -31,17 +31,12 @@ export default function GameTopupPage() {
   // Form State
   const [playerInputs, setPlayerInputs] = useState<Record<string, string>>({});
   const [selectedPackage, setSelectedPackage] = useState<any>(null);
-  const [playerValidation, setPlayerValidation] = useState<{
-    tested: boolean;
-    valid?: boolean;
-    playerName?: string;
-    message?: string;
-  }>({ tested: false });
-  const [isValidating, setIsValidating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [orderResult, setOrderResult] = useState<any>(null);
   const [linkedAccounts, setLinkedAccounts] = useState<any[]>([]);
+  const [transactionPin, setTransactionPin] = useState('');
+  const idempotencyKeyRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
   // Fetch Service Catalog and User Wallets
   useEffect(() => {
@@ -49,36 +44,6 @@ export default function GameTopupPage() {
     fetchCustomerWallets();
     fetchLinkedAccounts();
   }, [slug]);
-
-  const fetchLinkedAccountsLegacy = async () => {
-    try {
-      const res = await fetch(apiUrl('/service-accounts'), {
-        headers: { Authorization: 'Bearer mock-customer-token' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setLinkedAccounts(data.data || []);
-      }
-    } catch {}
-  };
-
-  const fetchCustomerWalletsLegacy = async () => {
-    try {
-      const token = getCustomerToken();
-      if (!token) return;
-      const res = await fetch(apiUrl('/wallet/balances'), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const map: Record<string, any> = {};
-        for (const w of data) {
-          map[w.currency] = w;
-        }
-        setUserWallets(map);
-      }
-    } catch {}
-  };
 
   const fetchLinkedAccounts = async () => {
     if (!getCustomerToken()) return;
@@ -146,40 +111,7 @@ export default function GameTopupPage() {
 
   const handleInputChange = (key: string, val: string) => {
     setPlayerInputs((prev) => ({ ...prev, [key]: val }));
-    setPlayerValidation({ tested: false });
     setCheckoutError(null);
-  };
-
-  const handleValidatePlayer = async () => {
-    if (!playerInputs.player_id && !playerInputs.userId) {
-      alert('يرجى إدخال معرف اللاعب أولاً');
-      return;
-    }
-    setIsValidating(true);
-    try {
-      const data = await apiRequest<any>('/providers/validate-player', {
-        method: 'POST',
-        body: JSON.stringify({
-          providerCode: 'MOCK',
-          serviceId: game?.id,
-          fields: playerInputs,
-        }),
-      });
-      setPlayerValidation({
-        tested: true,
-        valid: data.isValid === true,
-        playerName: data.isValid === true ? data.playerName : undefined,
-        message: data.errorMessage || (data.isValid === true ? undefined : 'لم يتم التحقق من معرف اللاعب'),
-      });
-    } catch (err) {
-      setPlayerValidation({
-        tested: true,
-        valid: false,
-        message: err instanceof Error ? err.message : 'تعذر الاتصال بخدمة التحقق',
-      });
-    } finally {
-      setIsValidating(false);
-    }
   };
 
   const handleCheckout = async () => {
@@ -225,8 +157,30 @@ export default function GameTopupPage() {
       return;
     }
 
+    if (!/^[0-9]{6}$/.test(transactionPin)) {
+      setCheckoutError('أدخل رمز المعاملة المالي الصحيح المكوّن من 6 أرقام.');
+      return;
+    }
+
+    if (!window.crypto?.randomUUID) {
+      setCheckoutError('المتصفح لا يدعم إنشاء مفتاح آمن لمنع تكرار الطلب. يرجى تحديث المتصفح.');
+      return;
+    }
+
+    const requestBody = {
+      productId: selectedPackage.id,
+      currency: selectedCurrency,
+      playerFields: playerInputs,
+      paymentMethod: 'WALLET',
+    };
+    const fingerprint = JSON.stringify(requestBody);
+    const idempotencyKey =
+      idempotencyKeyRef.current?.fingerprint === fingerprint
+        ? idempotencyKeyRef.current.key
+        : window.crypto.randomUUID();
+    idempotencyKeyRef.current = { fingerprint, key: idempotencyKey };
+
     setIsSubmitting(true);
-    const idempotencyKey = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     try {
       const res = await fetch(apiUrl('/orders/checkout'), {
@@ -234,20 +188,18 @@ export default function GameTopupPage() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'Idempotency-Key': idempotencyKey,
+          'x-transaction-pin': transactionPin,
         },
-        body: JSON.stringify({
-          productId: selectedPackage.id,
-          currency: selectedCurrency,
-          playerFields: playerInputs,
-          idempotencyKey,
-          paymentMethod: 'WALLET',
-        }),
+        body: JSON.stringify({ ...requestBody, idempotencyKey }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
         setOrderResult(data);
+        idempotencyKeyRef.current = null;
+        setTransactionPin('');
         // Refresh wallets
         fetchCustomerWallets();
       } else {
@@ -371,32 +323,9 @@ export default function GameTopupPage() {
                 </div>
               ))}
 
-              {/* Verify Player ID Button & Badge */}
-              <div className="pt-2 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleValidatePlayer}
-                  disabled={isValidating}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white rounded-xl transition-colors"
-                >
-                  {isValidating ? 'جاري الفحص المباشر...' : 'التحقق من اسم الحساب'}
-                </button>
-
-                {playerValidation.tested && (
-                  <div>
-                    {playerValidation.valid ? (
-                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-lg border border-emerald-500/20">
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        اسم اللاعب الموثق: <strong>{playerValidation.playerName}</strong>
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-400 bg-rose-500/10 px-3 py-1 rounded-lg border border-rose-500/20">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {playerValidation.message || 'معرف اللاعب غير موجود'}
-                      </div>
-                    )}
-                  </div>
-                )}
+              <div className="pt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+                التحقق الآلي من اسم اللاعب غير متاح لهذا المنتج حالياً؛ لم يتم ربط واجهة مزود موثقة.
+                راجع معرف المستفيد قبل الدفع. يتحقق النظام من صيغة الحقول المطلوبة فقط، ولا يدّعي التحقق من الحساب لدى اللعبة.
               </div>
             </div>
           </div>
@@ -529,6 +458,27 @@ export default function GameTopupPage() {
                   يتم حجز الرصيد ذرياً فوراً والتسوية عبر السجل المزدوج.
                 </p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="checkout-transaction-pin" className="block text-xs font-semibold text-slate-200">
+                رمز المعاملة المالي
+              </label>
+              <input
+                id="checkout-transaction-pin"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={transactionPin}
+                onChange={(event) => setTransactionPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+                placeholder="أدخل الرمز المكوّن من 6 أرقام"
+                className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-white tracking-[0.35em] text-center focus:outline-none focus:border-indigo-500"
+                aria-describedby="checkout-transaction-pin-help"
+              />
+              <p id="checkout-transaction-pin-help" className="text-[11px] text-slate-400">
+                يُطلب الرمز لتأكيد الدفع من المحفظة، ولا يُحفظ في المتصفح.
+              </p>
             </div>
 
             <button

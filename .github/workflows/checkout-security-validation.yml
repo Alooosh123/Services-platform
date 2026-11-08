@@ -1,0 +1,107 @@
+name: Checkout Security Validation
+
+on:
+  push:
+    branches:
+      - 'fix/checkout-idempotency-pin-*'
+  pull_request:
+    branches:
+      - production-completion
+    paths:
+      - 'apps/backend/src/**'
+      - 'apps/web-customer/**'
+      - 'apps/web-admin/src/app/orders/**'
+      - 'apps/mobile-customer/**'
+      - 'packages/shared/**'
+      - 'packages/database/prisma/schema.prisma'
+      - '.github/workflows/checkout-security-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checkout-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-and-web:
+    name: Backend tests and web type checks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: digital_topup_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: test-jwt-access-token-secret-for-ci-pipeline-minimum-32-chars-long
+      JWT_REFRESH_SECRET: test-jwt-refresh-token-secret-for-ci-pipeline-minimum-32-chars-long
+      NODE_ENV: test
+      SEED_SUPER_ADMIN_EMAIL: ci-admin@example.test
+      SEED_SUPER_ADMIN_PASSWORD: ci-only-super-admin-password-32-chars
+      SEED_FINANCE_PASSWORD: ci-only-finance-password-32-chars
+      SEED_CUSTOMER_PASSWORD: ci-only-customer-password-32-chars
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build shared package and generate Prisma client
+        run: |
+          npm run build --workspace=packages/shared
+          npm run db:generate
+      - name: Prepare disposable CI database
+        run: |
+          npx prisma db push --schema=packages/database/prisma/schema.prisma
+          npm run db:seed
+      - name: Run backend tests
+        run: npm test --workspace=apps/backend
+      - name: Check customer web types
+        run: npx tsc --noEmit --project apps/web-customer/tsconfig.json
+      - name: Check admin web types
+        run: npx tsc --noEmit --project apps/web-admin/tsconfig.json
+
+  flutter:
+    name: Flutter analyze and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        working-directory: apps/mobile-customer
+        run: flutter pub get
+      - name: Analyze source
+        working-directory: apps/mobile-customer
+        run: flutter analyze
+      - name: Run unit tests
+        working-directory: apps/mobile-customer
+        run: flutter test

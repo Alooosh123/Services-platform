@@ -5,11 +5,13 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { CurrencyCode, PaymentChannelCode, PaymentStatus } from '@digital-topup/shared';
 import { DepositFundsDto } from '../ledger/dto/ledger-adjustment.dto';
+import { Prisma } from '@prisma/client';
 
 interface InMemoryWallet {
   id: string;
@@ -33,38 +35,44 @@ export class WalletService {
     private prisma: PrismaService,
     private ledgerService: LedgerService,
   ) {
-    // Seed initial test customer wallets in memory
-    const custId = 'user-customer-003';
-    this.memoryWallets.set(`w-cust-yer`, {
-      id: `w-cust-yer`,
-      userId: custId,
-      currency: CurrencyCode.YER,
-      balance: 50000.0,
-      lockedBalance: 0.0,
-      isFrozen: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    this.memoryWallets.set(`w-cust-usd`, {
-      id: `w-cust-usd`,
-      userId: custId,
-      currency: CurrencyCode.USD,
-      balance: 100.0,
-      lockedBalance: 0.0,
-      isFrozen: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    this.memoryWallets.set(`w-cust-sar`, {
-      id: `w-cust-sar`,
-      userId: custId,
-      currency: CurrencyCode.SAR,
-      balance: 200.0,
-      lockedBalance: 0.0,
-      isFrozen: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    // Fake wallets exist only in automated tests; never seed demo money at runtime.
+    if (process.env.NODE_ENV === 'test') {
+      const custId = 'user-customer-003';
+      this.memoryWallets.set('w-cust-yer', {
+        id: 'w-cust-yer',
+        userId: custId,
+        currency: CurrencyCode.YER,
+        balance: 50000,
+        lockedBalance: 0,
+        isFrozen: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      this.memoryWallets.set('w-cust-usd', {
+        id: 'w-cust-usd',
+        userId: custId,
+        currency: CurrencyCode.USD,
+        balance: 100,
+        lockedBalance: 0,
+        isFrozen: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      this.memoryWallets.set('w-cust-sar', {
+        id: 'w-cust-sar',
+        userId: custId,
+        currency: CurrencyCode.SAR,
+        balance: 200,
+        lockedBalance: 0,
+        isFrozen: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  private allowMemoryFallback(): boolean {
+    return process.env.NODE_ENV === 'test';
   }
 
   private enrichWallet(wallet: any) {
@@ -114,7 +122,11 @@ export class WalletService {
 
       return wallets.map((w) => this.enrichWallet(w));
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getWalletsByUserId: using memory wallets (${err?.message})`);
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Wallet list lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Wallet balances are temporarily unavailable.');
+      }
+      this.logger.warn(`Prisma unavailable in test; using in-memory wallets: ${err?.message}`);
 
       const userWallets: InMemoryWallet[] = [];
       for (const w of this.memoryWallets.values()) {
@@ -175,7 +187,11 @@ export class WalletService {
 
       return this.enrichWallet(wallet);
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getWallet: using memory wallet (${err?.message})`);
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Wallet lookup failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Wallet balance is temporarily unavailable.');
+      }
+      this.logger.warn(`Prisma unavailable in test; using in-memory wallet: ${err?.message}`);
 
       for (const w of this.memoryWallets.values()) {
         if (w.userId === userId && w.currency === currency) {
@@ -207,19 +223,17 @@ export class WalletService {
     }
 
     try {
-      const updated = await this.prisma.wallet.update({
-        where: { id: walletId },
-        data: {
-          isFrozen: true,
-          frozenReason: reason,
-          frozenAt: new Date(),
-          version: { increment: 1 },
-        },
-      });
-
-      // Audit log
-      try {
-        await this.prisma.auditLog.create({
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const wallet = await tx.wallet.update({
+          where: { id: walletId },
+          data: {
+            isFrozen: true,
+            frozenReason: reason,
+            frozenAt: new Date(),
+            version: { increment: 1 },
+          },
+        });
+        await tx.auditLog.create({
           data: {
             userId: staffUserId,
             action: 'WALLET_FROZEN',
@@ -228,26 +242,24 @@ export class WalletService {
             newValues: { isFrozen: true, reason },
           },
         });
-      } catch {}
-
+        return wallet;
+      });
       return {
         success: true,
         message: 'تم تجميد المحفظة بنجاح وتوقيف العمليات الصادرة',
         wallet: this.enrichWallet(updated),
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during freezeWallet: updating memory (${err?.message})`);
-
-      const memWallet = this.memoryWallets.get(walletId);
-      if (!memWallet) {
-        throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Wallet freeze transaction failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Wallet freeze could not be saved and audited.');
       }
-
+      const memWallet = this.memoryWallets.get(walletId);
+      if (!memWallet) throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
       memWallet.isFrozen = true;
       memWallet.frozenReason = reason;
       memWallet.frozenAt = new Date();
       memWallet.updatedAt = new Date();
-
       return {
         success: true,
         message: 'تم تجميد المحفظة بنجاح وتوقيف العمليات الصادرة',
@@ -256,24 +268,19 @@ export class WalletService {
     }
   }
 
-  /**
-   * Admin: Unfreeze a customer wallet
-   */
   async unfreezeWallet(staffUserId: string, walletId: string) {
     try {
-      const updated = await this.prisma.wallet.update({
-        where: { id: walletId },
-        data: {
-          isFrozen: false,
-          frozenReason: null,
-          frozenAt: null,
-          version: { increment: 1 },
-        },
-      });
-
-      // Audit log
-      try {
-        await this.prisma.auditLog.create({
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const wallet = await tx.wallet.update({
+          where: { id: walletId },
+          data: {
+            isFrozen: false,
+            frozenReason: null,
+            frozenAt: null,
+            version: { increment: 1 },
+          },
+        });
+        await tx.auditLog.create({
           data: {
             userId: staffUserId,
             action: 'WALLET_UNFROZEN',
@@ -282,26 +289,24 @@ export class WalletService {
             newValues: { isFrozen: false },
           },
         });
-      } catch {}
-
+        return wallet;
+      });
       return {
         success: true,
         message: 'تم إلغاء تجميد المحفظة واستئناف العمليات بنجاح',
         wallet: this.enrichWallet(updated),
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during unfreezeWallet: updating memory (${err?.message})`);
-
-      const memWallet = this.memoryWallets.get(walletId);
-      if (!memWallet) {
-        throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Wallet unfreeze transaction failed: ${err?.message}`);
+        throw new ServiceUnavailableException('Wallet unfreeze could not be saved and audited.');
       }
-
+      const memWallet = this.memoryWallets.get(walletId);
+      if (!memWallet) throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
       memWallet.isFrozen = false;
       memWallet.frozenReason = null;
       memWallet.frozenAt = null;
       memWallet.updatedAt = new Date();
-
       return {
         success: true,
         message: 'تم إلغاء تجميد المحفظة واستئناف العمليات بنجاح',
@@ -310,9 +315,6 @@ export class WalletService {
     }
   }
 
-  /**
-   * Admin: Get all wallets for a specific customer
-   */
   async getWalletsForAdmin(customerId: string) {
     return this.getWalletsByUserId(customerId);
   }
@@ -384,12 +386,15 @@ export class WalletService {
       ) {
         throw new ConflictException(`رقم الحوالة المرجعي "${dto.referenceNumber}" مسجل مسبقاً لهذه الطريقة.`);
       }
-      this.logger.warn(`Prisma offline during requestTopup: simulated response (${err?.message})`);
+      if (!this.allowMemoryFallback()) {
+        this.logger.error(`Wallet topup request could not be persisted: ${err?.message}`);
+        throw new ServiceUnavailableException('The deposit request could not be saved. Please retry after service recovery.');
+      }
 
       return {
-        message: 'تم تقديم طلب الإيداع بنجاح وهو قيد المراجعة المالية.',
+        message: 'Test-only simulated deposit request; no persistent deposit was created.',
         topup: {
-          id: `topup-${Date.now()}`,
+          id: `test-topup-${Date.now()}`,
           userId,
           walletId: wallet.id,
           currency: dto.currency,
@@ -407,58 +412,52 @@ export class WalletService {
    */
   async confirmTopup(staffUserId: string, topupId: string) {
     try {
-      const topup = await this.prisma.walletTopup.findUnique({
-        where: { id: topupId },
-        include: { paymentMethod: true, wallet: true },
+      return await this.prisma.$transaction(async (tx) => {
+        const topup = await tx.walletTopup.findUnique({
+          where: { id: topupId },
+          include: { paymentMethod: true, wallet: true },
+        });
+
+        if (!topup) {
+          throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
+        }
+        if (topup.status === PaymentStatus.Confirmed) {
+          throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
+        }
+
+        const ledgerResult = await this.ledgerService.recordTopup({
+          userId: topup.userId,
+          walletId: topup.walletId,
+          currency: topup.currency as CurrencyCode,
+          amount: Number(topup.amount),
+          paymentChannel: topup.paymentMethod.code as PaymentChannelCode,
+          referenceId: topup.id,
+          performedByUserId: staffUserId,
+          notes: `Admin confirmed manual topup ref: ${topup.referenceNumber}`,
+        }, tx);
+
+        const updatedTopup = await tx.walletTopup.update({
+          where: { id: topupId },
+          data: {
+            status: PaymentStatus.Confirmed,
+            confirmedAt: new Date(),
+          },
+        });
+
+        return {
+          message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
+          topup: updatedTopup,
+          ledgerTransaction: ledgerResult.transaction,
+        };
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
-
-      if (!topup) {
-        throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
-      }
-
-      if (topup.status === PaymentStatus.Confirmed) {
-        throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
-      }
-
-      // Post Double-Entry Ledger Transaction
-      const ledgerResult = await this.ledgerService.recordTopup({
-        userId: topup.userId,
-        walletId: topup.walletId,
-        currency: topup.currency as CurrencyCode,
-        amount: Number(topup.amount),
-        paymentChannel: topup.paymentMethod.code as PaymentChannelCode,
-        referenceId: topup.id,
-        performedByUserId: staffUserId,
-        notes: `Admin confirmed manual topup ref: ${topup.referenceNumber}`,
-      });
-
-      const updatedTopup = await this.prisma.walletTopup.update({
-        where: { id: topupId },
-        data: {
-          status: PaymentStatus.Confirmed,
-          confirmedAt: new Date(),
-        },
-      });
-
-      return {
-        message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
-        topup: updatedTopup,
-        ledgerTransaction: ledgerResult.transaction,
-      };
     } catch (err: any) {
       if (err instanceof NotFoundException || err instanceof ConflictException) {
         throw err;
       }
-      this.logger.warn(`Prisma offline during confirmTopup: simulated confirmation (${err?.message})`);
-
-      return {
-        message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
-        topup: {
-          id: topupId,
-          status: PaymentStatus.Confirmed,
-          confirmedAt: new Date(),
-        },
-      };
+      this.logger.error(`Topup confirmation transaction failed: ${err?.message}`);
+      throw new ServiceUnavailableException('Topup confirmation could not be committed to the ledger.');
     }
   }
 
@@ -466,9 +465,9 @@ export class WalletService {
    * Instant dev / test balance deposit.
    */
   async depositFunds(userId: string, dto: DepositFundsDto) {
-    if (process.env.NODE_ENV === 'production') {
+    if (!this.allowMemoryFallback()) {
       throw new ForbiddenException(
-        'الإيداع المباشر التجريبي محظور نهائياً في بيئة الإنتاج. يجب تمرير كافة عمليات الشحن عبر القنوات البنكية المعتمدة والتأكيد المالي.',
+        'الإيداع المباشر التجريبي متاح لبيئة الاختبار الآلية فقط. يجب تمرير جميع عمليات الشحن خارج الاختبارات عبر قنوات دفع موثقة وتأكيد مالي.',
       );
     }
 
@@ -494,20 +493,8 @@ export class WalletService {
         ledgerTransaction: ledgerResult.transaction,
       };
     } catch (err: any) {
-      this.logger.warn(`Ledger recording offline: updating memory wallet directly (${err?.message})`);
-
-      const memWallet = this.memoryWallets.get(wallet.id);
-      if (memWallet) {
-        memWallet.balance += dto.amount;
-        memWallet.updatedAt = new Date();
-      }
-
-      return {
-        message: 'تم إيداع الرصيد بنجاح',
-        referenceId: depositRefId,
-        currency,
-        wallet: memWallet || wallet,
-      };
+      this.logger.error(`Test deposit ledger entry failed: ${err?.message}`);
+      throw new ServiceUnavailableException('The test deposit could not be posted to the ledger.');
     }
   }
 }

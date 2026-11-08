@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
   Logger,
   Optional,
 } from '@nestjs/common';
@@ -22,10 +23,18 @@ import {
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
+const serializePlayerFields = (value: unknown): string => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return JSON.stringify([]);
+  }
+  return JSON.stringify(
+    Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)),
+  );
+};
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly userOrderTimestamps = new Map<string, number[]>();
 
   constructor(
     private prisma: PrismaService,
@@ -39,18 +48,10 @@ export class OrdersService {
    * Complete topup checkout flow with atomic balance hold, immutable snapshotting, and decoupled fulfillment.
    */
   async createOrder(userId: string, dto: CreateOrderDto) {
-    // Anti-Fraud Velocity Limit: Max 10 orders per minute
-    const now = Date.now();
-    const timestamps = (this.userOrderTimestamps.get(userId) || []).filter((t) => now - t < 60000);
-    if (timestamps.length >= 10) {
-      throw new BadRequestException(
-        'تم تجاوز حد السرعة المسموح للطلبات (أقصى حد: 10 طلبات في الدقيقة). يرجى الانتظار قليلاً.',
-      );
-    }
-    timestamps.push(now);
-    this.userOrderTimestamps.set(userId, timestamps);
+    const targetProductId = dto.productId || dto.packageId;
 
-    // 1. Idempotency Check: Return existing order if identical key was already submitted
+    // 1. Idempotency Check: only the original customer may replay an order,
+    // and the key may only be replayed with the same checkout payload.
     const existingOrder = await this.prisma.order.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
       include: {
@@ -62,12 +63,29 @@ export class OrdersService {
     });
 
     if (existingOrder) {
-      this.logger.warn(`Duplicate order attempt suppressed via idempotency key: ${dto.idempotencyKey}`);
+      if (existingOrder.userId !== userId) {
+        throw new ConflictException('This idempotency key is already associated with another customer order.');
+      }
+
+      const sameCheckout =
+        existingOrder.productId === targetProductId &&
+        existingOrder.snapshotCurrency === (dto.currency || CurrencyCode.YER) &&
+        existingOrder.snapshotPaymentMethodCode === (dto.paymentMethod || PaymentChannelCode.WALLET) &&
+        serializePlayerFields(existingOrder.snapshotBeneficiaryFields) === serializePlayerFields(dto.playerFields);
+
+      if (!sameCheckout) {
+        throw new ConflictException('This idempotency key was already used with different checkout details.');
+      }
+
+      this.logger.warn(`Duplicate order attempt safely replayed for customer ${userId}.`);
       return existingOrder;
     }
 
+    // The RedisRateLimitGuard on OrdersController enforces the 10/minute
+    // distributed limit after authentication; avoid a second process-local
+    // counter that would drift between replicas and grow without a bounded key lifecycle.
+
     // 2. Fetch Product, Prices, and Service
-    const targetProductId = dto.productId || dto.packageId;
     if (!targetProductId) {
       throw new BadRequestException('productId must be specified');
     }
@@ -205,69 +223,69 @@ export class OrdersService {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const orderNumber = `ORD-${Date.now()}-${randomSuffix}`;
 
-    let walletRecord: any = null;
-
-    // 5. Payment Validation & Atomic Balance Reservation
-    if (paymentMethod === PaymentChannelCode.WALLET) {
-      // Find customer wallet for this currency
-      walletRecord = await this.prisma.wallet.findUnique({
-        where: {
-          userId_currency: {
-            userId,
-            currency,
-          },
-        },
-      });
-
-      if (!walletRecord) {
-        throw new BadRequestException(`Customer wallet not found for currency ${currency}`);
-      }
-
-      // Atomically hold balance in lockedBalance (prevents double-spending & validates freezing/balance)
-      await this.ledgerService.holdWalletBalance(walletRecord.id, retailPriceNumber);
-    }
-
+    // 5–6. Reserve wallet funds and create the order in one Serializable
+    // transaction. A failed order insert must never leave an orphaned wallet hold.
     const initialStatus = paymentMethod === PaymentChannelCode.WALLET
       ? OrderStatus.Queued
       : OrderStatus.AwaitingPayment;
 
-    // 6. Create Order with Immutable Snapshots
-    const order = await this.prisma.order.create({
-      data: {
-        orderNumber,
-        userId,
-        serviceId: product.serviceId,
-        productId: product.id,
-        status: initialStatus,
-        snapshotServiceName: product.service.name,
-        snapshotServiceNameAr: product.service.nameAr,
-        snapshotProductName: product.name,
-        snapshotProductNameAr: product.nameAr,
-        snapshotRetailPrice: new Prisma.Decimal(retailPriceNumber),
-        snapshotCostPrice: new Prisma.Decimal(costPriceNumber),
-        snapshotProfit: new Prisma.Decimal(profitNumber),
-        snapshotCurrency: currency,
-        snapshotBeneficiaryFields: dto.playerFields as any,
-        snapshotPaymentMethodCode: paymentMethod,
-        agentParentUserId,
-        agentCommissionAmount: new Prisma.Decimal(agentCommissionAmount),
-        idempotencyKey: dto.idempotencyKey,
-        statusHistory: {
-          create: {
-            oldStatus: OrderStatus.AwaitingPayment,
-            newStatus: initialStatus,
-            reason: paymentMethod === PaymentChannelCode.WALLET
-              ? 'Wallet funds reserved in locked balance. Enqueued for fulfillment.'
-              : `Awaiting payment confirmation via ${paymentMethod}`,
-            changedByUserId: userId,
+    const order = await this.prisma.$transaction(async (tx) => {
+      if (paymentMethod === PaymentChannelCode.WALLET) {
+        const walletRecord = await tx.wallet.findUnique({
+          where: {
+            userId_currency: {
+              userId,
+              currency,
+            },
+          },
+        });
+
+        if (!walletRecord) {
+          throw new BadRequestException(`Customer wallet not found for currency ${currency}`);
+        }
+
+        await this.ledgerService.holdWalletBalance(walletRecord.id, retailPriceNumber, tx);
+      }
+
+      return tx.order.create({
+        data: {
+          orderNumber,
+          userId,
+          serviceId: product.serviceId,
+          productId: product.id,
+          status: initialStatus,
+          snapshotServiceName: product.service.name,
+          snapshotServiceNameAr: product.service.nameAr,
+          snapshotProductName: product.name,
+          snapshotProductNameAr: product.nameAr,
+          snapshotRetailPrice: new Prisma.Decimal(retailPriceNumber),
+          snapshotCostPrice: new Prisma.Decimal(costPriceNumber),
+          snapshotProfit: new Prisma.Decimal(profitNumber),
+          snapshotCurrency: currency,
+          snapshotBeneficiaryFields: dto.playerFields as any,
+          snapshotPaymentMethodCode: paymentMethod,
+          agentParentUserId,
+          agentCommissionAmount: new Prisma.Decimal(agentCommissionAmount),
+          idempotencyKey: dto.idempotencyKey,
+          statusHistory: {
+            create: {
+              oldStatus: OrderStatus.AwaitingPayment,
+              newStatus: initialStatus,
+              reason: paymentMethod === PaymentChannelCode.WALLET
+                ? 'Wallet funds reserved in locked balance. Enqueued for fulfillment.'
+                : `Awaiting payment confirmation via ${paymentMethod}`,
+              changedByUserId: userId,
+            },
           },
         },
-      },
-      include: {
-        service: true,
-        product: true,
-        statusHistory: true,
-      },
+        include: {
+          service: true,
+          product: true,
+          statusHistory: true,
+        },
+      });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
 
     // 7. If paid via WALLET, dispatch through fulfillment engine

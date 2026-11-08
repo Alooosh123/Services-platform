@@ -4,6 +4,7 @@ import { DailyCloseService } from './daily-close.service';
 import { OwnerEarningsService } from './owner-earnings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PrismaService } from '../../database/prisma.service';
+import { EncryptionService } from '../../security/encryption.service';
 import {
   CurrencyCode,
   OrderStatus,
@@ -62,6 +63,7 @@ describe('Phase 07 — Owner Earnings, Payouts, Liquidity & Daily Close Reports'
         OwnerEarningsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: LedgerService, useValue: mockLedgerService },
+        EncryptionService,
       ],
     }).compile();
 

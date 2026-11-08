@@ -66,7 +66,7 @@ export class DepositsService {
   private memoryDeposits: Map<string, InMemoryDeposit> = new Map();
 
   private assertMemoryFallbackAllowed(operation: string, error?: any): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       this.logger.error(
         `Refusing in-memory deposit fallback for ${operation}: ${error?.message || error || 'record unavailable'}`,
       );
@@ -76,6 +76,17 @@ export class DepositsService {
     }
   }
 
+  /**
+   * DepositRequest has no tenantId column. Tenant ownership is enforced through
+   * its required User relation, which is the authoritative tenant membership.
+   */
+  private getDepositTenantScopeWhere(): Record<string, any> {
+    const tenantId = getCurrentTenantId();
+    return tenantId
+      ? { user: { is: { tenantId } } }
+      : {};
+  }
+
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
@@ -83,7 +94,9 @@ export class DepositsService {
     private adapterRegistry: PaymentAdapterRegistry,
     private hmacSignatureService: HmacSignatureService,
   ) {
-    this.seedInitialMemoryDeposits();
+    if (process.env.NODE_ENV === 'test') {
+      this.seedInitialMemoryDeposits();
+    }
   }
 
   private seedInitialMemoryDeposits() {
@@ -233,19 +246,18 @@ export class DepositsService {
         }));
       }
     } catch (err: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Payment channel query failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Verified payment channels are unavailable from the tenant database.');
       }
-      this.logger.warn(`Local unscoped development payment channel registry fallback (${err?.message})`);
+      this.logger.warn(`Test-only payment channel registry fallback: ${err?.message}`);
     }
 
-    // Mock/default adapters are visible only in local unscoped development
-    // when no persistent channel configuration exists at all.
-    if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return [];
+    // Mock/default payment channel adapters are visible only in automated tests.
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) return [];
     const channels = this.adapterRegistry.getAllChannels();
     return channels.filter(
-      (c: any) => c.isActive && (!c.verificationStatus || c.verificationStatus === ChannelVerificationStatus.VERIFIED),
+      (channel: any) => channel.isActive && channel.verificationStatus === ChannelVerificationStatus.VERIFIED,
     );
   }
 
@@ -257,7 +269,7 @@ export class DepositsService {
     const activeChannel = (await this.getPaymentChannels()).find(
       (channel) => channel.code === dto.paymentMethodCode && channel.isActive,
     );
-    if ((process.env.NODE_ENV === 'production' || getCurrentTenantId()) && !activeChannel) {
+    if ((process.env.NODE_ENV !== 'test' || getCurrentTenantId()) && !activeChannel) {
       throw new BadRequestException('قناة الدفع غير مفعلة أو غير موثقة حالياً.');
     }
     if (activeChannel) {
@@ -391,7 +403,10 @@ export class DepositsService {
   async getCustomerDeposits(userId: string) {
     try {
       const deposits = await this.prisma.depositRequest.findMany({
-        where: { userId },
+        where: {
+          userId,
+          ...this.getDepositTenantScopeWhere(),
+        },
         orderBy: { createdAt: 'desc' },
         include: {
           statusHistory: { orderBy: { createdAt: 'desc' } },
@@ -419,10 +434,15 @@ export class DepositsService {
    */
   async getDepositById(depositId: string, userId?: string, isAdmin = false) {
     try {
-      const deposit = await this.prisma.depositRequest.findUnique({
-        where: { id: depositId },
+      const where: Record<string, any> = {
+        id: depositId,
+        ...this.getDepositTenantScopeWhere(),
+      };
+      if (!isAdmin && userId) where.userId = userId;
+      const deposit = await this.prisma.depositRequest.findFirst({
+        where,
         include: {
-          user: { select: { id: true, fullName: true, email: true, phone: true } },
+          user: { select: { id: true, fullName: true, email: true, phone: true, tenantId: true } },
           wallet: true,
           statusHistory: { orderBy: { createdAt: 'desc' } },
         },
@@ -460,7 +480,7 @@ export class DepositsService {
    */
   async getAllDepositsForAdmin(filters?: { status?: DepositStatus; search?: string }) {
     try {
-      const where: any = {};
+      const where: any = { ...this.getDepositTenantScopeWhere() };
       if (filters?.status) {
         where.status = filters.status;
       }
@@ -518,23 +538,39 @@ export class DepositsService {
     }
 
     try {
-      const updated = await this.prisma.depositRequest.update({
-        where: { id: depositId },
-        data: {
-          status: DepositStatus.UNDER_REVIEW,
-          reviewedByUserId: staffUserId,
-          reviewNotes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
-          statusHistory: {
-            create: {
-              fromStatus: DepositStatus.PENDING,
-              toStatus: DepositStatus.UNDER_REVIEW,
-              changedByUserId: staffUserId,
-              notes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
-            },
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.depositRequest.updateMany({
+          where: {
+            id: depositId,
+            status: DepositStatus.PENDING,
+            ...this.getDepositTenantScopeWhere(),
           },
-        },
-        include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
-      });
+          data: {
+            status: DepositStatus.UNDER_REVIEW,
+            reviewedByUserId: staffUserId,
+            reviewNotes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر.');
+        }
+        await tx.depositStatusHistory.create({
+          data: {
+            depositRequestId: depositId,
+            fromStatus: DepositStatus.PENDING,
+            toStatus: DepositStatus.UNDER_REVIEW,
+            changedByUserId: staffUserId,
+            notes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
+          },
+        });
+        return tx.depositRequest.findFirst({
+          where: {
+            id: depositId,
+            ...this.getDepositTenantScopeWhere(),
+          },
+          include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
         success: true,
@@ -574,9 +610,6 @@ export class DepositsService {
    * Strictly posts double-entry transaction and credits customer wallet atomically.
    */
   async approveAndCredit(staffUserId: string, depositId: string, dto?: ReviewDepositDto) {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      throw new ServiceUnavailableException('Deposit approval must use a persisted tenant-owned request.');
-    }
     if (process.env.NODE_ENV === 'test' && this.memoryDeposits.has(depositId)) {
       const deposit = this.memoryDeposits.get(depositId)!;
       if (deposit.status === DepositStatus.CREDITED || deposit.status === DepositStatus.APPROVED) {
@@ -605,9 +638,12 @@ export class DepositsService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const deposit = await tx.depositRequest.findUnique({
-        where: { id: depositId },
-        include: { wallet: true },
+      const deposit = await tx.depositRequest.findFirst({
+        where: {
+          id: depositId,
+          ...this.getDepositTenantScopeWhere(),
+        },
+        include: { wallet: true, user: { select: { id: true, tenantId: true } } },
       });
       if (!deposit) {
         throw new NotFoundException(`طلب الإيداع ${depositId} غير موجود`);
@@ -620,7 +656,11 @@ export class DepositsService {
       }
 
       const claimed = await tx.depositRequest.updateMany({
-        where: { id: depositId, status: deposit.status },
+        where: {
+          id: depositId,
+          status: deposit.status,
+          ...this.getDepositTenantScopeWhere(),
+        },
         data: {
           status: DepositStatus.APPROVED,
           reviewedByUserId: staffUserId,
@@ -701,24 +741,40 @@ export class DepositsService {
     }
 
     try {
-      const updated = await this.prisma.depositRequest.update({
-        where: { id: depositId },
-        data: {
-          status: DepositStatus.REJECTED,
-          reviewedByUserId: staffUserId,
-          rejectionReason: dto.rejectionReason,
-          reviewNotes: dto.notes || dto.rejectionReason,
-          statusHistory: {
-            create: {
-              fromStatus: deposit.status,
-              toStatus: DepositStatus.REJECTED,
-              changedByUserId: staffUserId,
-              notes: `تم الرفض: ${dto.rejectionReason}`,
-            },
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.depositRequest.updateMany({
+          where: {
+            id: depositId,
+            status: deposit.status,
+            ...this.getDepositTenantScopeWhere(),
           },
-        },
-        include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
-      });
+          data: {
+            status: DepositStatus.REJECTED,
+            reviewedByUserId: staffUserId,
+            rejectionReason: dto.rejectionReason,
+            reviewNotes: dto.notes || dto.rejectionReason,
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر.');
+        }
+        await tx.depositStatusHistory.create({
+          data: {
+            depositRequestId: depositId,
+            fromStatus: deposit.status,
+            toStatus: DepositStatus.REJECTED,
+            changedByUserId: staffUserId,
+            notes: `تم الرفض: ${dto.rejectionReason}`,
+          },
+        });
+        return tx.depositRequest.findFirst({
+          where: {
+            id: depositId,
+            ...this.getDepositTenantScopeWhere(),
+          },
+          include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
         success: true,
@@ -767,6 +823,7 @@ export class DepositsService {
         where: {
           referenceNumber: trimmed,
           ...(paymentMethodCode ? { paymentMethodCode } : {}),
+          ...this.getDepositTenantScopeWhere(),
         },
         include: {
           user: { select: { id: true, fullName: true, phone: true } },
@@ -843,7 +900,7 @@ export class DepositsService {
     timestampHeader?: string,
     rawBody?: Buffer,
   ): Promise<DepositConfirmResult> {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       const config = await this.prisma.paymentChannelConfig.findFirst({
         where: { tenantId: getCurrentTenantId() || null, code: channelCode },
       });
@@ -883,7 +940,7 @@ export class DepositsService {
 
     // 2. Verify timestamped HMAC whenever a shared webhook secret is configured.
     const webhookSecret = process.env.WEBHOOK_HMAC_SECRET;
-    if (process.env.NODE_ENV === 'production' && !webhookSecret) {
+    if (String(process.env.NODE_ENV) === 'production' && !webhookSecret) {
       throw new UnauthorizedException('Webhook signature verification is not configured.');
     }
     if (webhookSecret) {
@@ -997,8 +1054,8 @@ export class DepositsService {
           const w = matchedUser.wallets.find((wl) => wl.currency === payload.currency);
           if (w) targetWalletId = w.id;
         }
-      } catch {
-        // memory fallback
+      } catch (error: any) {
+        this.assertMemoryFallbackAllowed('resolve webhook sender account', error);
         if (payload.senderPhone === '+967770000003') {
           matchedUserId = 'user-customer-003';
           targetWalletId = 'w-cust-yer';
@@ -1077,17 +1134,21 @@ export class DepositsService {
     action: string,
     channelCode: PaymentChannelCode,
     newValues: Record<string, any>,
+    existingTx?: Prisma.TransactionClient,
   ): Promise<void> {
-    await this.prisma.auditLog.create({
-      data: {
-        userId: actorUserId,
-        userRole: actorUserRole as any,
-        action,
-        entityName: 'PaymentChannelConfig',
-        entityId: channelCode,
-        newValues,
-      },
-    });
+    const data = {
+      userId: actorUserId,
+      userRole: actorUserRole as any,
+      action,
+      entityName: 'PaymentChannelConfig',
+      entityId: channelCode,
+      newValues,
+    };
+    if (existingTx) {
+      await existingTx.auditLog.create({ data });
+      return;
+    }
+    await this.prisma.auditLog.create({ data });
   }
 
   async switchChannelMode(
@@ -1107,34 +1168,51 @@ export class DepositsService {
     });
     if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
 
-    if (mode === PaymentChannelMode.MANUAL) {
-      if (
-        config.verificationStatus !== ChannelVerificationStatus.VERIFIED ||
-        !config.accountNumber ||
-        config.accountNumber === 'NOT_CONFIGURED'
-      ) {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findFirst({
+        where: {
+          id: config.id,
+          tenantId: getCurrentTenantId() || null,
+        },
+      });
+      if (!current) throw new ConflictException('Payment channel changed while the request was being processed.');
+
+      if (mode === PaymentChannelMode.MANUAL && (
+        current.verificationStatus !== ChannelVerificationStatus.VERIFIED ||
+        !current.accountNumber ||
+        current.accountNumber === 'NOT_CONFIGURED'
+      )) {
         throw new BadRequestException('Finance must verify the receiver account before enabling this channel.');
       }
-    }
 
-    const enabled = mode === PaymentChannelMode.MANUAL;
-    const updated = await this.prisma.paymentChannelConfig.update({
-      where: { id: config.id },
-      data: {
-        mode,
-        isActive: enabled,
-        killSwitchReason: null,
-        killSwitchAt: null,
-      },
-    });
+      const enabled = mode === PaymentChannelMode.MANUAL;
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: {
+          mode,
+          isActive: enabled,
+          killSwitchReason: null,
+          killSwitchAt: null,
+        },
+      });
 
-    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_MODE_CHANGED', channelCode, {
-      tenantId: config.tenantId,
-      previousMode: config.mode,
-      mode,
-      isActive: enabled,
+      await this.auditPaymentChannelChange(
+        actorUserId,
+        actorUserRole,
+        'PAYMENT_CHANNEL_MODE_CHANGED',
+        channelCode,
+        {
+          tenantId: current.tenantId,
+          previousMode: current.mode,
+          mode,
+          isActive: enabled,
+        },
+        tx,
+      );
+      return updated;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    return updated;
   }
 
   async failoverChannel(
@@ -1148,26 +1226,46 @@ export class DepositsService {
     });
     if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
 
-    const manualAvailable =
-      config.verificationStatus === ChannelVerificationStatus.VERIFIED &&
-      !!config.accountNumber &&
-      config.accountNumber !== 'NOT_CONFIGURED';
-    const updated = await this.prisma.paymentChannelConfig.update({
-      where: { id: config.id },
-      data: {
-        mode: manualAvailable ? PaymentChannelMode.MANUAL : PaymentChannelMode.BLOCKED_EXTERNAL,
-        isActive: manualAvailable,
-        killSwitchReason: reason?.trim() || 'Emergency failover requested.',
-        killSwitchAt: new Date(),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findFirst({
+        where: {
+          id: config.id,
+          tenantId: getCurrentTenantId() || null,
+        },
+      });
+      if (!current) throw new ConflictException('Payment channel changed while failover was being processed.');
+
+      const manualAvailable =
+        current.verificationStatus === ChannelVerificationStatus.VERIFIED &&
+        !!current.accountNumber &&
+        current.accountNumber !== 'NOT_CONFIGURED';
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: {
+          mode: manualAvailable ? PaymentChannelMode.MANUAL : PaymentChannelMode.BLOCKED_EXTERNAL,
+          isActive: manualAvailable,
+          killSwitchReason: reason?.trim() || 'Emergency failover requested.',
+          killSwitchAt: new Date(),
+        },
+      });
+
+      await this.auditPaymentChannelChange(
+        actorUserId,
+        actorUserRole,
+        'PAYMENT_CHANNEL_FAILOVER',
+        channelCode,
+        {
+          tenantId: current.tenantId,
+          mode: updated.mode,
+          isActive: updated.isActive,
+          reason: reason?.trim() || null,
+        },
+        tx,
+      );
+      return updated;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_FAILOVER', channelCode, {
-      tenantId: config.tenantId,
-      mode: updated.mode,
-      isActive: updated.isActive,
-      reason: reason?.trim() || null,
-    });
-    return updated;
   }
 
   async verifyLegalAccounts() {
@@ -1227,39 +1325,50 @@ export class DepositsService {
       throw new BadRequestException('Payment channel amount limits are invalid.');
     }
 
-    const existing = await this.prisma.paymentChannelConfig.findFirst({
-      where: this.currentChannelTenantWhere(dto.code),
-    });
-    if (existing) throw new ConflictException('This payment channel is already configured for this store.');
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.paymentChannelConfig.findFirst({
+        where: this.currentChannelTenantWhere(dto.code),
+      });
+      if (existing) throw new ConflictException('This payment channel is already configured for this store.');
 
-    const config = await this.prisma.paymentChannelConfig.create({
-      data: {
-        code: dto.code,
-        name: dto.name.trim(),
-        nameAr: dto.nameAr.trim(),
-        accountNumber: 'NOT_CONFIGURED',
-        accountHolderName: 'بانتظار اعتماد بيانات حساب الاستقبال',
-        instructionsAr: 'قناة غير مفعلة حتى اعتماد بيانات الاستقبال من مسؤول مالي مستقل.',
-        supportedCurrencies: dto.supportedCurrencies,
-        minAmount: new Prisma.Decimal(dto.minAmount),
-        maxAmount: new Prisma.Decimal(dto.maxAmount),
-        mode: PaymentChannelMode.BLOCKED_EXTERNAL,
-        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
-        financeApprovalRequired: true,
-        proposedByUserId: actorUserId,
-        pendingAccountNumber: dto.accountNumber.trim(),
-        pendingAccountHolderName: dto.accountHolderName.trim(),
-        pendingInstructionsAr: dto.instructionsAr.trim(),
-        isActive: false,
-      },
-    });
+      const config = await tx.paymentChannelConfig.create({
+        data: {
+          code: dto.code,
+          name: dto.name.trim(),
+          nameAr: dto.nameAr.trim(),
+          accountNumber: 'NOT_CONFIGURED',
+          accountHolderName: 'بانتظار اعتماد بيانات حساب الاستقبال',
+          instructionsAr: 'قناة غير مفعلة حتى اعتماد بيانات الاستقبال من مسؤول مالي مستقل.',
+          supportedCurrencies: dto.supportedCurrencies,
+          minAmount: new Prisma.Decimal(dto.minAmount),
+          maxAmount: new Prisma.Decimal(dto.maxAmount),
+          mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+          verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+          financeApprovalRequired: true,
+          proposedByUserId: actorUserId,
+          pendingAccountNumber: dto.accountNumber.trim(),
+          pendingAccountHolderName: dto.accountHolderName.trim(),
+          pendingInstructionsAr: dto.instructionsAr.trim(),
+          isActive: false,
+        },
+      });
 
-    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_CREATED_PENDING_REVIEW', dto.code, {
-      tenantId: config.tenantId,
-      channelId: config.id,
-      proposedReceiverAccount: dto.accountNumber.trim(),
+      await this.auditPaymentChannelChange(
+        actorUserId,
+        actorUserRole,
+        'PAYMENT_CHANNEL_CREATED_PENDING_REVIEW',
+        dto.code,
+        {
+          tenantId: config.tenantId,
+          channelId: config.id,
+          proposedReceiverAccount: dto.accountNumber.trim(),
+        },
+        tx,
+      );
+      return config;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    return config;
   }
 
   async proposeChannelAccountChange(
@@ -1275,31 +1384,45 @@ export class DepositsService {
       throw new BadRequestException('Channel fee percentage must be between 0 and 100.');
     }
 
-    const config = await this.prisma.paymentChannelConfig.findFirst({
-      where: this.currentChannelTenantWhere(channelCode),
-    });
-    if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+    return this.prisma.$transaction(async (tx) => {
+      const config = await tx.paymentChannelConfig.findFirst({
+        where: this.currentChannelTenantWhere(channelCode),
+      });
+      if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
+      if (config.financeApprovalRequired || config.verificationStatus === ChannelVerificationStatus.PENDING_REVIEW) {
+        throw new ConflictException('A receiver-account proposal is already awaiting independent finance approval.');
+      }
 
-    const updated = await this.prisma.paymentChannelConfig.update({
-      where: { id: config.id },
-      data: {
-        pendingAccountNumber: accountNumber,
-        pendingFeePercentage: feePercentage === undefined ? config.pendingFeePercentage : new Prisma.Decimal(feePercentage),
-        proposedByUserId: actorUserId,
-        financeApprovalRequired: true,
-        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
-        isActive: false,
-        mode: PaymentChannelMode.BLOCKED_EXTERNAL,
-      },
-    });
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: config.id },
+        data: {
+          pendingAccountNumber: accountNumber,
+          pendingFeePercentage: feePercentage === undefined ? config.pendingFeePercentage : new Prisma.Decimal(feePercentage),
+          proposedByUserId: actorUserId,
+          financeApprovalRequired: true,
+          verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+          isActive: false,
+          mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+        },
+      });
 
-    await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_ACCOUNT_CHANGE_PROPOSED', channelCode, {
-      tenantId: config.tenantId,
-      proposedAccountNumber: accountNumber,
-      feePercentage: feePercentage ?? null,
-      previousAccountNumber: config.accountNumber,
+      await this.auditPaymentChannelChange(
+        actorUserId,
+        actorUserRole,
+        'PAYMENT_CHANNEL_ACCOUNT_CHANGE_PROPOSED',
+        channelCode,
+        {
+          tenantId: config.tenantId,
+          proposedAccountNumber: accountNumber,
+          feePercentage: feePercentage ?? null,
+          previousAccountNumber: config.accountNumber,
+        },
+        tx,
+      );
+      return updated;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    return updated;
   }
 
   async approveChannelFinanceReview(
@@ -1401,19 +1524,39 @@ export class DepositsService {
     });
     if (!config) throw new NotFoundException('Payment channel configuration was not found for this store.');
 
-    const updated = await this.prisma.paymentChannelConfig.update({
-      where: { id: config.id },
-      data: {
-        isActive: false,
-        mode: PaymentChannelMode.DISABLED,
-        killSwitchReason: reason.trim(),
-        killSwitchAt: new Date(),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findFirst({
+        where: {
+          id: config.id,
+          tenantId: getCurrentTenantId() || null,
+        },
+      });
+      if (!current) throw new ConflictException('Payment channel changed while the kill switch was being processed.');
+
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: {
+          isActive: false,
+          mode: PaymentChannelMode.DISABLED,
+          killSwitchReason: reason.trim(),
+          killSwitchAt: new Date(),
+        },
+      });
+      await this.auditPaymentChannelChange(
+        adminUserId,
+        adminUserRole,
+        'PAYMENT_CHANNEL_KILL_SWITCH',
+        channelCode,
+        {
+          tenantId: current.tenantId,
+          reason: reason.trim(),
+        },
+        tx,
+      );
+      return updated;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    await this.auditPaymentChannelChange(adminUserId, adminUserRole, 'PAYMENT_CHANNEL_KILL_SWITCH', channelCode, {
-      tenantId: config.tenantId,
-      reason: reason.trim(),
-    });
-    return updated;
   }
+
 }

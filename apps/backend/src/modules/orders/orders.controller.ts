@@ -6,8 +6,10 @@ import {
   Param,
   Query,
   UseGuards,
+  Headers,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto, RetryOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -24,10 +26,12 @@ import { RequireTransactionPin } from '../auth/decorators/require-transaction-pi
 import { TransactionPinGuard } from '../auth/guards/transaction-pin.guard';
 import { PoliciesGuard } from '../auth/guards/policies.guard';
 import { RequirePolicy } from '../auth/decorators/require-policy.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 
 @ApiTags('Orders')
 @Controller('orders')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RedisRateLimitGuard)
 @ApiBearerAuth()
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
@@ -36,12 +40,20 @@ export class OrdersController {
   @RequireTransactionPin()
   @RequirePolicy('orders:create')
   @UseGuards(PoliciesGuard, TransactionPinGuard)
+  @RateLimit(10, 60_000, 'orders-checkout')
   @ApiOperation({ summary: 'Submit a topup checkout order with atomic balance hold' })
+  @ApiHeader({ name: 'Idempotency-Key', required: true, description: 'Must exactly match body.idempotencyKey' })
   @ApiResponse({ status: 201, description: 'Order created with dynamic snapshots and double-entry payment' })
   async checkout(
     @CurrentUser('id') userId: string,
     @Body() dto: CreateOrderDto,
+    @Headers('Idempotency-Key') idempotencyHeader?: string,
   ) {
+    const headerKey = idempotencyHeader?.trim();
+    const bodyKey = typeof dto?.idempotencyKey === 'string' ? dto.idempotencyKey.trim() : '';
+    if (!headerKey || !bodyKey || bodyKey !== headerKey || dto.idempotencyKey !== bodyKey) {
+      throw new BadRequestException('Idempotency-Key header must exactly match body.idempotencyKey.');
+    }
     return this.ordersService.createOrder(userId, dto);
   }
 
@@ -92,6 +104,7 @@ export class OrdersController {
 
   @Post('admin/:id/fulfill-manual')
   @UseGuards(RolesGuard)
+  @RateLimit(10, 60_000, 'orders-admin-manual-fulfill')
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR)
   @ApiOperation({ summary: 'Admin: Manually fulfill order with voucher pin or proof' })
   async fulfillManual(
@@ -104,6 +117,7 @@ export class OrdersController {
 
   @Post('admin/:id/refund')
   @UseGuards(RolesGuard)
+  @RateLimit(5, 60_000, 'orders-admin-refund')
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE, UserRole.ADMIN)
   @ApiOperation({ summary: 'Admin: Refund order and reverse ledger entries' })
   async refundOrder(
@@ -116,6 +130,7 @@ export class OrdersController {
 
   @Post('admin/:id/retry')
   @UseGuards(RolesGuard)
+  @RateLimit(5, 60_000, 'orders-admin-retry')
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR)
   @ApiOperation({ summary: 'Admin: Trigger manual fulfillment/retry' })
   async retryOrder(

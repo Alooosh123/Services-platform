@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  NotFoundException,
   HttpException,
   HttpStatus,
   ServiceUnavailableException,
@@ -120,12 +121,6 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private memoryUsers: Map<string, InMemoryUser> = new Map();
 
-  // Single-use challenge token blacklist for Anti-Replay protection
-  private usedChallengeTokens = new Set<string>();
-
-  // Failed challenge attempts tracker for Brute-Force protection (max 3 tries)
-  private challengeAttempts = new Map<string, number>();
-
   // Track user session revocations timestamp (for revoking active JWTs)
   private revokedUsersAt = new Map<string, number>();
 
@@ -135,8 +130,9 @@ export class AuthService {
     private redisStore: RedisIdempotencyStore,
     private encryptionService: EncryptionService,
   ) {
-    // Only load fallback memory seeds in non-production environments
-    if (process.env.NODE_ENV !== 'production') {
+    // Test fixtures only: never provision fallback identities in development,
+    // staging, or production runtimes.
+    if (process.env.NODE_ENV === 'test') {
       for (const u of SEED_USERS) {
         this.memoryUsers.set(u.id, u);
       }
@@ -223,7 +219,7 @@ export class AuthService {
       }
     } catch (err: any) {
       if (err instanceof ConflictException) throw err;
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Registration lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Registration is unavailable because the account database could not be reached.');
       }
@@ -263,7 +259,7 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Persistent account creation failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Account registration failed because the account database is unavailable.');
       }
@@ -324,14 +320,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -383,14 +379,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Admin login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Administrative login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development admin login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -446,17 +442,54 @@ export class AuthService {
     };
   }
 
+  private getMfaChallengeRedisKey(tempToken: string): string {
+    const digest = createHash('sha256').update(tempToken).digest('hex');
+    return `auth:mfa:challenge-used:${digest}`;
+  }
+
+  private async assertMfaChallengeNotUsed(tempToken: string): Promise<void> {
+    const used = await this.redisStore.get(this.getMfaChallengeRedisKey(tempToken));
+    if (used) {
+      throw new UnauthorizedException(
+        'تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.',
+      );
+    }
+  }
+
+  private async consumeMfaChallenge(tempToken: string, userId: string): Promise<void> {
+    const consumed = await this.redisStore.acquire(
+      this.getMfaChallengeRedisKey(tempToken),
+      JSON.stringify({ userId, consumedAt: new Date().toISOString() }),
+      5 * 60 * 1000,
+    );
+    if (!consumed) {
+      throw new UnauthorizedException(
+        'تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.',
+      );
+    }
+  }
+
+  private async recordMfaChallengeFailure(tempToken: string, userId: string): Promise<number> {
+    const digest = createHash('sha256').update(tempToken).digest('hex');
+    const { count } = await this.redisStore.incrementRateLimit(
+      `auth:mfa:challenge-attempts:${digest}`,
+      5 * 60 * 1000,
+    );
+    if (count >= 3) {
+      await this.consumeMfaChallenge(tempToken, userId);
+      throw new UnauthorizedException(
+        'تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.',
+      );
+    }
+    return 3 - count;
+  }
+
   /**
    * Completes Admin MFA verification using authentic RFC 6238 TOTP with anti-replay and rate limiting.
    */
   async verifyAdminMfa(dto: VerifyMfaDto) {
     if (!dto.tempToken) {
       throw new BadRequestException('رمز الجلسة المؤقت (tempToken) مطلوب');
-    }
-
-    // SG-02: Challenge Replay Prevention
-    if (this.usedChallengeTokens.has(dto.tempToken)) {
-      throw new UnauthorizedException('تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.');
     }
 
     let payload: any;
@@ -472,6 +505,9 @@ export class AuthService {
       throw new UnauthorizedException('رمز التحقق غير صالح لعملية التوثيق الثنائي');
     }
 
+    // Redis is the shared anti-replay source for all backend instances.
+    await this.assertMfaChallengeNotUsed(dto.tempToken);
+
     if (!dto.code || dto.code.trim().length !== 6) {
       throw new BadRequestException('يجب أن يتكون رمز التحقق من 6 أرقام');
     }
@@ -482,16 +518,8 @@ export class AuthService {
       throw new UnauthorizedException('المستخدم غير موجود');
     }
 
-    // SG-02: Brute-Force Rate Limiting (Max 3 failed attempts per challenge)
-    const currentAttempts = this.challengeAttempts.get(userId) || 0;
-    if (currentAttempts >= 3) {
-      this.usedChallengeTokens.add(dto.tempToken);
-      this.challengeAttempts.delete(userId);
-      throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
-    }
-
-    const isProduction = process.env.NODE_ENV === 'production';
-    const disableBypass = process.env.DISABLE_MFA_BYPASS === 'true';
+    const allowTestMfaBypass =
+      process.env.NODE_ENV === 'test' && process.env.DISABLE_MFA_BYPASS !== 'true';
     let isTotpValid = false;
 
     // Check TOTP if user has a configured secret
@@ -499,33 +527,25 @@ export class AuthService {
     if (totpSecret) {
       isTotpValid = TotpUtil.verifyCode(dto.code, totpSecret);
     } else {
-      // In production or when bypass is disabled, users MUST have configured TOTP
-      if (isProduction || disableBypass) {
+      // Real environments must always have a configured TOTP secret.
+      if (!allowTestMfaBypass) {
         throw new ForbiddenException('لم يتم إعداد المصادقة الثنائية (MFA) لهذا الحساب بعد. يرجى التواصل مع الإدارة العليا.');
       }
 
-      // Legacy fallback in isolated local dev ONLY (strictly blocked in production/test with DISABLE_MFA_BYPASS)
-      if (dto.code === '123456') {
+      // A fixed test code is available only to isolated automated test fixtures.
+      if (allowTestMfaBypass && dto.code === '123456') {
         isTotpValid = true;
       }
     }
 
     if (!isTotpValid) {
-      const nextAttempts = currentAttempts + 1;
-      this.challengeAttempts.set(userId, nextAttempts);
-
-      if (nextAttempts >= 3) {
-        this.usedChallengeTokens.add(dto.tempToken);
-        this.challengeAttempts.delete(userId);
-        throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
-      }
-
-      throw new UnauthorizedException(`رمز التحقق (TOTP) غير صحيح. المتبقي: ${3 - nextAttempts} محاولات`);
+      const remainingAttempts = await this.recordMfaChallengeFailure(dto.tempToken, userId);
+      throw new UnauthorizedException(`رمز التحقق (TOTP) غير صحيح. المتبقي: ${remainingAttempts} محاولات`);
     }
 
-    // SUCCESS: Invalidate challenge token immediately to prevent replay
-    this.usedChallengeTokens.add(dto.tempToken);
-    this.challengeAttempts.delete(userId);
+    // Atomically consume the challenge before issuing tokens. If another
+    // backend instance already used it, Redis rejects this request.
+    await this.consumeMfaChallenge(dto.tempToken, userId);
 
     const tokens = await this.generateTokens(user.id, user.email || user.phone || user.id, user.role);
 
@@ -588,12 +608,15 @@ export class AuthService {
           isTwoFactorEnabled: true,
         },
       });
-    } catch {
-      const memUser = this.memoryUsers.get(userId);
-      if (memUser) {
-        memUser.twoFactorSecret = dto.secret;
-        memUser.isTwoFactorEnabled = true;
+    } catch (error: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`MFA activation could not be persisted for user ${userId}: ${error?.message || error}`);
+        throw new ServiceUnavailableException('MFA activation could not be saved to the account database.');
       }
+      const memUser = this.memoryUsers.get(userId);
+      if (!memUser) throw new NotFoundException('Test account fixture was not found.');
+      memUser.twoFactorSecret = dto.secret;
+      memUser.isTwoFactorEnabled = true;
     }
 
     return {
@@ -677,7 +700,7 @@ export class AuthService {
         createdAt: created.createdAt,
       };
     } catch (err: any) {
-      if (caller.tenantId || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || caller.tenantId) {
         this.logger.error(`Staff account persistence failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Staff account creation is unavailable because the account database could not be reached.');
       }
@@ -827,9 +850,9 @@ export class AuthService {
         include: { wallets: true },
       });
       if (dbUser) return dbUser;
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return null;
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) return null;
     } catch (error: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Persistent user lookup failed: ${error?.message || error}`);
         throw new ServiceUnavailableException('The authenticated account database is unavailable.');
       }

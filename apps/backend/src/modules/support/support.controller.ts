@@ -12,6 +12,8 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SupportService } from './support.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import {
@@ -36,6 +38,8 @@ export class SupportController {
   // ----------------------------------------------------
 
   @Post('tickets')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'support-ticket-create')
   @ApiOperation({ summary: 'Create support ticket (linked to order/deposit with idempotency)' })
   async createTicket(@Request() req: any, @Body() dto: CreateSupportTicketDto) {
     const userId = req.user?.id || req.user?.userId;
@@ -63,6 +67,8 @@ export class SupportController {
   }
 
   @Post('tickets/:id/messages')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'support-customer-reply')
   @ApiOperation({ summary: 'Reply to support ticket' })
   async addCustomerReply(
     @Request() req: any,
@@ -93,6 +99,8 @@ export class SupportController {
   }
 
   @Patch('admin/tickets/:id/status')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'support-admin-status')
   @Roles(UserRole.SUPPORT, UserRole.ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Update ticket status (Resolved, Closed, In Progress)' })
   async updateTicketStatus(
@@ -105,6 +113,8 @@ export class SupportController {
   }
 
   @Post('admin/tickets/:id/assign')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'support-admin-assign')
   @Roles(UserRole.SUPPORT, UserRole.ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Assign ticket to support agent' })
   async assignTicket(
@@ -117,6 +127,8 @@ export class SupportController {
   }
 
   @Post('admin/tickets/:id/internal-notes')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'support-admin-note')
   @Roles(UserRole.SUPPORT, UserRole.ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Add confidential internal note (strictly hidden from customer)' })
   async addInternalNote(
@@ -145,6 +157,8 @@ export class SupportController {
   }
 
   @Post('admin/tickets/:id/resolve-dispute')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'support-dispute-review')
   @Roles(UserRole.FINANCE_MANAGER, UserRole.ADMIN, UserRole.OWNER)
   @ApiOperation({ summary: 'AR-01: Resolve dispute refund request with audit notes' })
   async resolveDispute(

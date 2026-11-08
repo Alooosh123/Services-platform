@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+
 import {
   Wallet,
   ShieldCheck,
@@ -13,6 +14,8 @@ import {
   Building2,
   CheckCircle,
 } from 'lucide-react';
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 
 interface CustomerWalletItem {
   id: string;
@@ -30,121 +33,125 @@ interface CustomerWalletItem {
 }
 
 export default function AdminWalletsPage() {
-  const [wallets, setWallets] = useState<CustomerWalletItem[]>([
-    {
-      id: 'w-cust-yer',
-      userId: 'user-customer-003',
-      userName: 'أحمد محمد الحاشدي',
-      userPhone: '+967770000003',
-      userEmail: 'customer@gmail.com',
-      currency: 'YER',
-      balance: 50000,
-      lockedBalance: 0,
-      availableBalance: 50000,
-      isFrozen: false,
-    },
-    {
-      id: 'w-cust-usd',
-      userId: 'user-customer-003',
-      userName: 'أحمد محمد الحاشدي',
-      userPhone: '+967770000003',
-      userEmail: 'customer@gmail.com',
-      currency: 'USD',
-      balance: 100,
-      lockedBalance: 0,
-      availableBalance: 100,
-      isFrozen: false,
-    },
-    {
-      id: 'w-cust-sar',
-      userId: 'user-customer-003',
-      userName: 'أحمد محمد الحاشدي',
-      userPhone: '+967770000003',
-      userEmail: 'customer@gmail.com',
-      currency: 'SAR',
-      balance: 200,
-      lockedBalance: 0,
-      availableBalance: 200,
-      isFrozen: false,
-    },
-  ]);
-
+  const [wallets, setWallets] = useState<CustomerWalletItem[]>([]);
+  const [customerId, setCustomerId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedWalletForFreeze, setSelectedWalletForFreeze] = useState<CustomerWalletItem | null>(
-    null,
-  );
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [selectedWalletForFreeze, setSelectedWalletForFreeze] = useState<CustomerWalletItem | null>(null);
   const [freezeReason, setFreezeReason] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  const fetchCustomerWallets = async () => {
+    const id = customerId.trim();
+    if (!id) {
+      setListError('أدخل معرف العميل أولاً لتحميل محافظه من الخادم.');
+      return;
+    }
+    setListLoading(true);
+    setListError(null);
+    try {
+      const token = typeof window !== 'undefined'
+        ? localStorage.getItem('admin_token') || localStorage.getItem('token')
+        : null;
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const res = await fetch(`${API_BASE_URL}/wallet/admin/customer/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل محافظ العميل.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة الخادم لمحافظ العميل غير صحيحة.');
+      setWallets(rows.map((wallet: any) => ({
+        ...wallet,
+        userId: wallet.userId || id,
+        userName: wallet.user?.fullName || wallet.userName || id,
+        userPhone: wallet.user?.phone || wallet.userPhone || '',
+        userEmail: wallet.user?.email || wallet.userEmail || '',
+      })));
+    } catch (err) {
+      setWallets([]);
+      setListError(err instanceof Error ? err.message : 'تعذر تحميل محافظ العميل.');
+    } finally {
+      setListLoading(false);
+    }
+  };
 
   const handleFreeze = async (walletId: string) => {
     if (!freezeReason.trim()) {
-      alert('سبب تجميد المحفظة إجباري');
+      setActionError('سبب تجميد المحفظة إجباري');
       return;
     }
 
     setLoadingAction(true);
+    setActionError(null);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/wallet/admin/${walletId}/freeze`, {
+      const token = typeof window !== 'undefined'
+        ? localStorage.getItem('admin_token') || localStorage.getItem('token')
+        : null;
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const res = await fetch(`${API_BASE_URL}/wallet/admin/${encodeURIComponent(walletId)}/freeze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ reason: freezeReason }),
       });
-      if (!res.ok) throw new Error();
-    } catch {}
-
-    setWallets((prev) =>
-      prev.map((w) =>
-        w.id === walletId
-          ? {
-              ...w,
-              isFrozen: true,
-              frozenReason: freezeReason,
-              frozenAt: new Date().toISOString(),
-            }
-          : w,
-      ),
-    );
-
-    setLoadingAction(false);
-    setSelectedWalletForFreeze(null);
-    setFreezeReason('');
-    setActionSuccess('تم تجميد المحفظة بنجاح وتوقيف العمليات المالية الصادرة');
-    setTimeout(() => setActionSuccess(null), 3000);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'فشل تجميد المحفظة.');
+      const updated = payload.wallet;
+      setWallets((prev) => prev.map((wallet) =>
+        wallet.id === walletId
+          ? { ...wallet, ...(updated || {}), isFrozen: true, frozenReason: updated?.frozenReason ?? freezeReason }
+          : wallet,
+      ));
+      setSelectedWalletForFreeze(null);
+      setFreezeReason('');
+      setActionSuccess('تم تجميد المحفظة واعتماد سجل التدقيق من الخادم.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر تأكيد تجميد المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const handleUnfreeze = async (walletId: string) => {
     setLoadingAction(true);
+    setActionError(null);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      await fetch(`http://localhost:4000/api/wallet/admin/${walletId}/unfreeze`, {
+      const token = typeof window !== 'undefined'
+        ? localStorage.getItem('admin_token') || localStorage.getItem('token')
+        : null;
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const res = await fetch(`${API_BASE_URL}/wallet/admin/${encodeURIComponent(walletId)}/unfreeze`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-    } catch {}
-
-    setWallets((prev) =>
-      prev.map((w) =>
-        w.id === walletId
-          ? { ...w, isFrozen: false, frozenReason: null, frozenAt: null }
-          : w,
-      ),
-    );
-
-    setLoadingAction(false);
-    setActionSuccess('تم رفع التجميد عن المحفظة واستئناف العمليات بنجاح');
-    setTimeout(() => setActionSuccess(null), 3000);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'فشل رفع تجميد المحفظة.');
+      const updated = payload.wallet;
+      setWallets((prev) => prev.map((wallet) =>
+        wallet.id === walletId
+          ? { ...wallet, ...(updated || {}), isFrozen: false, frozenReason: null, frozenAt: null }
+          : wallet,
+      ));
+      setActionSuccess('تم رفع التجميد وتسجيل العملية لدى الخادم.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر تأكيد رفع التجميد.');
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const filteredWallets = wallets.filter(
     (w) =>
       !searchTerm ||
-      w.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      w.userPhone.includes(searchTerm) ||
+      (w.userName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (w.userId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (w.userPhone || '').includes(searchTerm) ||
       (w.userEmail && w.userEmail.toLowerCase().includes(searchTerm.toLowerCase())),
   );
 
@@ -162,6 +169,25 @@ export default function AdminWalletsPage() {
           </p>
         </div>
 
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <input
+            type="text"
+            value={customerId}
+            onChange={(event) => setCustomerId(event.target.value)}
+            onKeyDown={(event) => event.key === 'Enter' && fetchCustomerWallets()}
+            placeholder="معرف العميل"
+            className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+          />
+          <button
+            type="button"
+            onClick={fetchCustomerWallets}
+            disabled={listLoading || !customerId.trim()}
+            className="inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-xl text-xs font-bold"
+          >
+            <RefreshCw className={`w-4 h-4 ${listLoading ? 'animate-spin' : ''}`} />
+            تحميل المحافظ
+          </button>
+        </div>
         <div className="relative w-full sm:w-72">
           <input
             type="text"
@@ -174,6 +200,8 @@ export default function AdminWalletsPage() {
         </div>
       </div>
 
+      {listError && <div role="alert" className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs">{listError}</div>}
+      {actionError && <div role="alert" className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs">{actionError}</div>}
       {actionSuccess && (
         <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center gap-3 text-emerald-400 text-xs font-bold">
           <CheckCircle className="w-5 h-5 shrink-0" />
@@ -197,12 +225,16 @@ export default function AdminWalletsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredWallets.map((w) => (
+              {listLoading ? (
+                <tr><td colSpan={7} className="p-10 text-center text-slate-400">جاري تحميل المحافظ من الخادم...</td></tr>
+              ) : filteredWallets.length === 0 ? (
+                <tr><td colSpan={7} className="p-10 text-center text-slate-400">لا توجد محافظ محملة. أدخل معرف العميل لتحميل بياناته الحقيقية.</td></tr>
+              ) : filteredWallets.map((w) => (
                 <tr key={w.id} className="hover:bg-slate-800/30 transition-colors">
                   <td className="py-4 px-4">
-                    <span className="font-bold text-white block">{w.userName}</span>
+                    <span className="font-bold text-white block">{w.userName || w.userId}</span>
                     <span className="text-[10px] text-slate-400 font-mono block">
-                      {w.userPhone} | {w.userEmail}
+                      {w.userId} {w.userPhone ? `| ${w.userPhone}` : ''} {w.userEmail ? `| ${w.userEmail}` : ''}
                     </span>
                   </td>
                   <td className="py-4 px-4 font-bold font-mono text-indigo-300">

@@ -9,7 +9,7 @@ import {
   OrderStatus,
   PaymentChannelCode,
 } from '@digital-topup/shared';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
@@ -54,7 +54,7 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
     frozenReason: null,
   };
 
-  const mockPrisma = {
+  const mockPrisma: any = {
     order: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -81,6 +81,10 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
       findUnique: jest.fn(),
     },
   };
+
+  mockPrisma.$transaction = jest.fn(
+    (callback: (tx: any) => Promise<any>) => callback(mockPrisma),
+  );
 
   const mockLedgerService = {
     holdWalletBalance: jest.fn(),
@@ -153,7 +157,7 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
         paymentMethod: PaymentChannelCode.WALLET,
       });
 
-      expect(mockLedgerService.holdWalletBalance).toHaveBeenCalledWith('wallet-cust-yer', 550);
+      expect(mockLedgerService.holdWalletBalance).toHaveBeenCalledWith('wallet-cust-yer', 550, mockPrisma);
       expect(mockPrisma.order.create).toHaveBeenCalled();
       expect(mockFulfillmentService.dispatchOrder).toHaveBeenCalledWith('ord-created-1');
       expect(result).toBeDefined();
@@ -207,6 +211,11 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
       const existing = {
         id: 'ord-existing-99',
         orderNumber: 'ORD-EXISTING-99',
+        userId: 'cust-101',
+        productId: 'prod-pubg-60',
+        snapshotCurrency: CurrencyCode.YER,
+        snapshotPaymentMethodCode: PaymentChannelCode.WALLET,
+        snapshotBeneficiaryFields: { player_id: '5123456789' },
         status: OrderStatus.Completed,
       };
       mockPrisma.order.findUnique.mockResolvedValue(existing);
@@ -220,6 +229,52 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
       expect(result).toEqual(existing);
       expect(mockLedgerService.holdWalletBalance).not.toHaveBeenCalled();
       expect(mockPrisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an idempotency key already owned by another customer', async () => {
+      mockPrisma.order.findUnique.mockResolvedValue({
+        id: 'ord-other-customer',
+        userId: 'cust-202',
+        productId: 'prod-pubg-60',
+        snapshotCurrency: CurrencyCode.YER,
+        snapshotPaymentMethodCode: PaymentChannelCode.WALLET,
+        snapshotBeneficiaryFields: { player_id: '5123456789' },
+      });
+
+      await expect(
+        service.createOrder('cust-101', {
+          productId: 'prod-pubg-60',
+          currency: CurrencyCode.YER,
+          playerFields: { player_id: '5123456789' },
+          idempotencyKey: 'IDEMP-CROSS-CUSTOMER',
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(mockLedgerService.holdWalletBalance).not.toHaveBeenCalled();
+      expect(mockPrisma.product.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rejects replay of the same key with different beneficiary details', async () => {
+      mockPrisma.order.findUnique.mockResolvedValue({
+        id: 'ord-existing-100',
+        userId: 'cust-101',
+        productId: 'prod-pubg-60',
+        snapshotCurrency: CurrencyCode.YER,
+        snapshotPaymentMethodCode: PaymentChannelCode.WALLET,
+        snapshotBeneficiaryFields: { player_id: '11111111' },
+      });
+
+      await expect(
+        service.createOrder('cust-101', {
+          productId: 'prod-pubg-60',
+          currency: CurrencyCode.YER,
+          playerFields: { player_id: '22222222' },
+          idempotencyKey: 'IDEMP-DIFFERENT-PAYLOAD',
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(mockLedgerService.holdWalletBalance).not.toHaveBeenCalled();
+      expect(mockPrisma.product.findUnique).not.toHaveBeenCalled();
     });
 
     it('5. should reject checkout if submitted player field fails regex validation', async () => {

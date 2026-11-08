@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { Prisma } from '@prisma/client';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import {
   CurrencyCode,
@@ -42,15 +43,10 @@ export class PricingEngineService {
   // In-memory fallback repository for resilience and unit testing
   private memoryRules: Map<string, InMemoryPriceRule> = new Map();
 
-  // Exchange rates relative to USD (USD = 1.0)
-  private readonly defaultFxRates: Record<CurrencyCode, number> = {
-    [CurrencyCode.USD]: 1.0,
-    [CurrencyCode.YER]: 530.0, // Standard market conversion rate
-    [CurrencyCode.SAR]: 3.75,  // Standard pegged SAR conversion rate
-  };
-
   constructor(private readonly prisma: PrismaService) {
-    this.seedDefaultRules();
+    if (process.env.NODE_ENV === 'test') {
+      this.seedDefaultRules();
+    }
   }
 
   private seedDefaultRules() {
@@ -78,11 +74,37 @@ export class PricingEngineService {
   /**
    * Calculate FX exchange rate between two currencies safely
    */
-  getFxRate(fromCurrency: CurrencyCode, toCurrency: CurrencyCode): number {
-    if (fromCurrency === toCurrency) return 1.0;
-    const fromRateToUsd = this.defaultFxRates[fromCurrency] || 1.0;
-    const toRateToUsd = this.defaultFxRates[toCurrency] || 1.0;
-    return toRateToUsd / fromRateToUsd;
+  async getFxRate(fromCurrency: CurrencyCode, toCurrency: CurrencyCode): Promise<number> {
+    if (fromCurrency === toCurrency) return 1;
+
+    try {
+      const now = new Date();
+      const fxRate = await this.prisma.fxRate.findFirst({
+        where: {
+          fromCurrency,
+          toCurrency,
+          effectiveFrom: { lte: now },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+        },
+        orderBy: { effectiveFrom: 'desc' },
+      });
+
+      if (!fxRate) {
+        throw new NotFoundException(
+          `No active approved FX rate is configured from ${fromCurrency} to ${toCurrency}.`,
+        );
+      }
+
+      const rate = Number(fxRate.rate);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new BadRequestException('The configured FX rate must be a positive finite number.');
+      }
+      return rate;
+    } catch (error: any) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) throw error;
+      this.logger.error(`FX rate lookup failed: ${error?.message || error}`);
+      throw new ServiceUnavailableException('Pricing cannot convert currencies until an active FX rate is available.');
+    }
   }
 
   /**
@@ -129,22 +151,9 @@ export class PricingEngineService {
     );
     if (defaultRule) return defaultRule;
 
-    // Fallback emergency rule
-    return {
-      id: 'emergency-rule',
-      version: 1,
-      scope: PriceRuleScope.DEFAULT,
-      targetId: null,
-      marginType: MarginType.PERCENTAGE,
-      marginValue: 10.0,
-      feeFixed: 0,
-      feePercentage: 0,
-      validFrom: new Date(),
-      validTo: null,
-      isActive: true,
-      changeReason: 'Emergency Fallback Rule',
-      createdAt: new Date(),
-    };
+    throw new ServiceUnavailableException(
+      'No active matching pricing rule or approved default rule is configured.',
+    );
   }
 
   /**
@@ -167,7 +176,7 @@ export class PricingEngineService {
     );
 
     // 1. Currency Conversion
-    const fxRate = this.getFxRate(dto.costCurrency, dto.targetCurrency);
+    const fxRate = await this.getFxRate(dto.costCurrency, dto.targetCurrency);
     const convertedCost = cost * fxRate;
 
     // 2. Fees Calculation
@@ -224,105 +233,135 @@ export class PricingEngineService {
     if (!dto.changeReason || dto.changeReason.trim().length === 0) {
       throw new BadRequestException('سبب تعديل/إصدار قاعدة التسعير مطلوب إجبارياً للرقابة المالية والتدقيق');
     }
-
-    if (dto.marginValue < 0) {
-      throw new BadRequestException('قيمة هامش الربح لا يمكن أن تكون سالبة (حظر البيع بخسارة)');
+    if (!Number.isFinite(dto.marginValue) || dto.marginValue < 0) {
+      throw new BadRequestException('قيمة هامش الربح لا يمكن أن تكون سالبة أو غير صالحة');
     }
-
-    // Calculate version number & deactivate previous active versions for this target
-    const existingRules = await this.getAllActiveRules();
-    const targetRules = existingRules.filter(
-      (r) => r.scope === dto.scope && (dto.targetId ? r.targetId === dto.targetId : !r.targetId),
-    );
-    const nextVersion = targetRules.length + 1;
-
-    for (const r of targetRules) {
-      if (r.isActive) {
-        this.memoryRules.set(r.id, { ...r, isActive: false, validTo: new Date() });
+    for (const value of [dto.feeFixed ?? 0, dto.feePercentage ?? 0]) {
+      if (!Number.isFinite(value) || value < 0) {
+        throw new BadRequestException('رسوم التسعير يجب أن تكون قيماً موجبة وصالحة.');
       }
     }
+    if (
+      dto.minMargin !== undefined && dto.minMargin !== null &&
+      (!Number.isFinite(dto.minMargin) || dto.minMargin < 0)
+    ) {
+      throw new BadRequestException('الحد الأدنى للهامش غير صالح.');
+    }
+    if (
+      dto.maxMargin !== undefined && dto.maxMargin !== null &&
+      (!Number.isFinite(dto.maxMargin) || dto.maxMargin < 0)
+    ) {
+      throw new BadRequestException('الحد الأعلى للهامش غير صالح.');
+    }
+
+    const targetWhere = {
+      scope: dto.scope,
+      targetId: dto.targetId || null,
+    };
+    const now = new Date();
+    const toMemoryRule = (created: any): InMemoryPriceRule => ({
+      id: created.id,
+      version: created.version,
+      scope: created.scope as PriceRuleScope,
+      targetId: created.targetId,
+      marginType: created.marginType as MarginType,
+      marginValue: Number(created.marginValue),
+      minMargin: created.minMargin === null || created.minMargin === undefined ? null : Number(created.minMargin),
+      maxMargin: created.maxMargin === null || created.maxMargin === undefined ? null : Number(created.maxMargin),
+      feeFixed: Number(created.feeFixed),
+      feePercentage: Number(created.feePercentage),
+      validFrom: created.validFrom,
+      validTo: created.validTo,
+      isActive: created.isActive,
+      changeReason: created.changeReason,
+      createdByUserId: created.createdByUserId,
+      createdAt: created.createdAt,
+    });
 
     try {
-      await this.prisma.priceRuleVersion.updateMany({
-        where: {
-          scope: dto.scope,
-          targetId: dto.targetId || null,
-          isActive: true,
-        },
-        data: {
-          isActive: false,
-          validTo: new Date(),
-        },
+      const created = await this.prisma.$transaction(async (tx) => {
+        const versions = await tx.priceRuleVersion.findMany({
+          where: targetWhere,
+          orderBy: { version: 'desc' },
+        });
+        const nextVersion = versions.reduce(
+          (max: number, rule: any) => Math.max(max, Number(rule.version) || 0),
+          0,
+        ) + 1;
+
+        await tx.priceRuleVersion.updateMany({
+          where: { ...targetWhere, isActive: true },
+          data: { isActive: false, validTo: now },
+        });
+
+        return tx.priceRuleVersion.create({
+          data: {
+            version: nextVersion,
+            scope: dto.scope,
+            targetId: dto.targetId || null,
+            marginType: dto.marginType,
+            marginValue: dto.marginValue,
+            minMargin: dto.minMargin ?? null,
+            maxMargin: dto.maxMargin ?? null,
+            feeFixed: dto.feeFixed ?? 0,
+            feePercentage: dto.feePercentage ?? 0,
+            validFrom: dto.validFrom ? new Date(dto.validFrom) : now,
+            validTo: dto.validTo ? new Date(dto.validTo) : null,
+            isActive: true,
+            changeReason: dto.changeReason.trim(),
+            createdByUserId: userId,
+          },
+        });
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
 
-      const created = await this.prisma.priceRuleVersion.create({
-        data: {
-          version: nextVersion,
-          scope: dto.scope,
-          targetId: dto.targetId || null,
-          marginType: dto.marginType,
-          marginValue: dto.marginValue,
-          minMargin: dto.minMargin || null,
-          maxMargin: dto.maxMargin || null,
-          feeFixed: dto.feeFixed || 0,
-          feePercentage: dto.feePercentage || 0,
-          validFrom: dto.validFrom ? new Date(dto.validFrom) : new Date(),
-          validTo: dto.validTo ? new Date(dto.validTo) : null,
-          isActive: true,
-          changeReason: dto.changeReason,
-          createdByUserId: userId,
-        },
-      });
-
-      // Mirror to memory
-      const memRule: InMemoryPriceRule = {
-        id: created.id,
-        version: created.version,
-        scope: created.scope as PriceRuleScope,
-        targetId: created.targetId,
-        marginType: created.marginType as MarginType,
-        marginValue: Number(created.marginValue),
-        minMargin: created.minMargin ? Number(created.minMargin) : null,
-        maxMargin: created.maxMargin ? Number(created.maxMargin) : null,
-        feeFixed: Number(created.feeFixed),
-        feePercentage: Number(created.feePercentage),
-        validFrom: created.validFrom,
-        validTo: created.validTo,
-        isActive: created.isActive,
-        changeReason: created.changeReason,
-        createdByUserId: created.createdByUserId,
-        createdAt: created.createdAt,
-      };
-      this.memoryRules.set(created.id, memRule);
-      return memRule;
-    } catch (err: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        this.logger.error(`Price rule persistence failed: ${err?.message || err}`);
-        throw new ServiceUnavailableException('Tenant pricing rules are unavailable from the database.');
+      const rule = toMemoryRule(created);
+      if (process.env.NODE_ENV === 'test') {
+        for (const existing of this.memoryRules.values()) {
+          if (existing.scope === dto.scope && (existing.targetId || null) === (dto.targetId || null) && existing.isActive) {
+            this.memoryRules.set(existing.id, { ...existing, isActive: false, validTo: now });
+          }
+        }
+        this.memoryRules.set(rule.id, rule);
       }
-      this.logger.warn(`Local unscoped development pricing rule fallback (${err?.message})`);
+      return rule;
+    } catch (err: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`Price rule transaction failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Pricing rules could not be saved atomically.');
+      }
 
-      const newId = `prule-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const memRule: InMemoryPriceRule = {
-        id: newId,
+      const existingRules = Array.from(this.memoryRules.values()).filter(
+        (rule) => rule.scope === dto.scope && (rule.targetId || null) === (dto.targetId || null),
+      );
+      const nextVersion = existingRules.reduce((max, rule) => Math.max(max, rule.version), 0) + 1;
+      for (const rule of existingRules) {
+        if (rule.isActive) {
+          this.memoryRules.set(rule.id, { ...rule, isActive: false, validTo: now });
+        }
+      }
+
+      const memoryRule: InMemoryPriceRule = {
+        id: `test-prule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         version: nextVersion,
         scope: dto.scope,
         targetId: dto.targetId || null,
         marginType: dto.marginType,
         marginValue: dto.marginValue,
-        minMargin: dto.minMargin || null,
-        maxMargin: dto.maxMargin || null,
-        feeFixed: dto.feeFixed || 0,
-        feePercentage: dto.feePercentage || 0,
-        validFrom: dto.validFrom ? new Date(dto.validFrom) : new Date(),
+        minMargin: dto.minMargin ?? null,
+        maxMargin: dto.maxMargin ?? null,
+        feeFixed: dto.feeFixed ?? 0,
+        feePercentage: dto.feePercentage ?? 0,
+        validFrom: dto.validFrom ? new Date(dto.validFrom) : now,
         validTo: dto.validTo ? new Date(dto.validTo) : null,
         isActive: true,
-        changeReason: dto.changeReason,
+        changeReason: dto.changeReason.trim(),
         createdByUserId: userId,
-        createdAt: new Date(),
+        createdAt: now,
       };
-      this.memoryRules.set(newId, memRule);
-      return memRule;
+      this.memoryRules.set(memoryRule.id, memoryRule);
+      return memoryRule;
     }
   }
 
@@ -336,36 +375,38 @@ export class PricingEngineService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (dbRules.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        return dbRules.map((r) => ({
-          id: r.id,
-          version: r.version,
-          scope: r.scope as PriceRuleScope,
-          targetId: r.targetId,
-          marginType: r.marginType as MarginType,
-          marginValue: Number(r.marginValue),
-          minMargin: r.minMargin ? Number(r.minMargin) : null,
-          maxMargin: r.maxMargin ? Number(r.maxMargin) : null,
-          feeFixed: Number(r.feeFixed),
-          feePercentage: Number(r.feePercentage),
-          validFrom: r.validFrom,
-          validTo: r.validTo,
-          isActive: r.isActive,
-          changeReason: r.changeReason,
-          createdByUserId: r.createdByUserId,
-          createdAt: r.createdAt,
-        }));
-      }
+      const mapped = dbRules.map((r) => ({
+        id: r.id,
+        version: r.version,
+        scope: r.scope as PriceRuleScope,
+        targetId: r.targetId,
+        marginType: r.marginType as MarginType,
+        marginValue: Number(r.marginValue),
+        minMargin: r.minMargin === null || r.minMargin === undefined ? null : Number(r.minMargin),
+        maxMargin: r.maxMargin === null || r.maxMargin === undefined ? null : Number(r.maxMargin),
+        feeFixed: Number(r.feeFixed),
+        feePercentage: Number(r.feePercentage),
+        validFrom: r.validFrom,
+        validTo: r.validTo,
+        isActive: r.isActive,
+        changeReason: r.changeReason,
+        createdByUserId: r.createdByUserId,
+        createdAt: r.createdAt,
+      }));
+      if (mapped.length > 0 || process.env.NODE_ENV !== 'test') return mapped;
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Tenant pricing rule query failed: ${error?.message || error}`);
         throw new ServiceUnavailableException('Tenant pricing rules are unavailable from the database.');
       }
-      this.logger.warn('Local unscoped development pricing rules fallback.');
+      this.logger.warn(`Test-only in-memory pricing rule fallback: ${error?.message || error}`);
     }
 
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException('Pricing rules are unavailable from the database.');
+    }
     return Array.from(this.memoryRules.values())
-      .filter((r) => r.isActive)
+      .filter((rule) => rule.isActive)
       .sort((a, b) => b.version - a.version);
   }
 }

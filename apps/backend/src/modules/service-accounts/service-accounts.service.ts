@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../database/prisma.service';
@@ -17,6 +18,7 @@ import { ServiceCapabilitiesConfig } from './capabilities/service-capabilities.c
 import { AiRiskEvaluatorService, AiEvaluationReport } from './engine/ai-risk-evaluator.service';
 import { CreateServiceAccountDto } from './dto/create-service-account.dto';
 import { ResolveReviewDto } from './dto/resolve-review.dto';
+import { EncryptionService } from '../../security/encryption.service';
 
 export interface InMemoryServiceAccount {
   id: string;
@@ -79,8 +81,9 @@ export class ServiceAccountsService {
   constructor(
     private prisma: PrismaService,
     private aiEvaluator: AiRiskEvaluatorService,
+    private encryptionService: EncryptionService,
   ) {
-    this.seedInitialAccounts();
+    if (process.env.NODE_ENV === 'test') this.seedInitialAccounts();
   }
 
   private seedInitialAccounts() {
@@ -110,7 +113,7 @@ export class ServiceAccountsService {
       serviceSlug: 'pubg-mobile',
       accountIdentifier: '5123456789',
       accountName: 'Gamer_Yemen_Pro',
-      status: AccountReviewStatus.PENDING,
+      status: AccountReviewStatus.PENDING as any,
       riskLevel: RiskLevel.MEDIUM,
       riskScore: 45,
       aiRecommendation: AiRecommendation.HUMAN_REVIEW,
@@ -165,6 +168,230 @@ export class ServiceAccountsService {
     return ServiceCapabilitiesConfig.getAllCapabilities();
   }
 
+  private assertPersistentStorageAvailable(): void {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ServiceUnavailableException(
+        'Linked service accounts are disabled until durable account, consent, and review storage is implemented.',
+      );
+    }
+  }
+
+
+  private async persistLinkedAccount(
+    userId: string, dto: CreateServiceAccountDto, ipAddress?: string, userAgent?: string,
+  ) {
+    if (!dto.consentGranted) throw new BadRequestException('Explicit customer consent is required.');
+    const capability = ServiceCapabilitiesConfig.getCapability(dto.serviceSlug);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId }, include: { orders: { where: { status: 'Completed' } } },
+    });
+    if (!user) throw new NotFoundException('Customer account was not found.');
+    const [recentAttempts, priorRevocations] = await Promise.all([
+      this.prisma.serviceAccount.count({
+        where: { userId, createdAt: { gte: new Date(Date.now() - 86400000) } },
+      }),
+      this.prisma.serviceAccount.count({ where: { userId, status: ServiceAccountStatus.REVOKED } }),
+    ]);
+    const evaluation = this.aiEvaluator.evaluate({
+      userId, serviceSlug: dto.serviceSlug, accountIdentifier: dto.accountIdentifier,
+      isPhoneVerified: Boolean(user.phoneVerifiedAt),
+      userAccountAgeDays: Math.max(1, Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000)),
+      completedOrdersCount: user.orders?.length || 0,
+      recentLinkAttempts24h: recentAttempts, hasPriorRevocations: priorRevocations > 0,
+      hasExplicitConsent: true,
+    });
+    if (evaluation.recommendation === AiRecommendation.REJECT) {
+      throw new BadRequestException(evaluation.reasonsAr[0] || 'تم رفض ربط الحساب وفق ضوابط الأمان.');
+    }
+    const scopes = dto.consentScopes?.length ? dto.consentScopes : ['READ_ACCOUNT_INFO', 'AUTOPROMPT_CHECKOUT'];
+    const initialStatus = evaluation.recommendation === AiRecommendation.AUTO_APPROVE
+      ? capability.defaultStatus : ServiceAccountStatus.REFERENCE_ONLY;
+    const result = await this.prisma.$transaction(async (tx) => {
+      const account = await tx.serviceAccount.create({
+        data: {
+          userId, serviceSlug: capability.serviceSlug, serviceName: capability.serviceName,
+          serviceNameAr: capability.serviceNameAr,
+          accountIdentifierCiphertext: this.encryptionService.encrypt(evaluation.sanitizedIdentifier),
+          accountName: dto.accountName || null, serverZoneId: dto.serverZoneId || null,
+          status: initialStatus as any,
+          verificationSource: evaluation.needsHumanReview ? 'Pending Human Review' : 'Customer Consent - Reference Only',
+        },
+      });
+      const consent = await tx.serviceAccountConsent.create({
+        data: {
+          userId, serviceAccountId: account.id, serviceSlug: capability.serviceSlug, scopes,
+          consentText: 'أوافق صراحة على حفظ معرّف حساب الخدمة لتسهيل عمليات الشراء المستقبلية، مع إمكانية إلغاء الربط وسحب الموافقة في أي وقت.',
+          consentVersion: '1.0', ipAddress: ipAddress || null, userAgent: userAgent || null,
+        },
+      });
+      const review = evaluation.needsHumanReview
+        ? await tx.serviceAccountReview.create({
+            data: {
+              userId, serviceAccountId: account.id, serviceSlug: capability.serviceSlug,
+              status: AccountReviewStatus.PENDING, riskLevel: evaluation.riskLevel,
+              riskScore: evaluation.riskScore, aiRecommendation: evaluation.recommendation,
+              aiReasons: evaluation.reasons, aiReasonsAr: evaluation.reasonsAr,
+            },
+          })
+        : null;
+      return { account, consent, review };
+    }, { isolationLevel: 'Serializable' });
+    return {
+      success: true,
+      account: {
+        ...result.account,
+        accountIdentifier: this.encryptionService.decrypt(result.account.accountIdentifierCiphertext),
+        accountIdentifierCiphertext: undefined,
+      },
+      consent: { consentId: result.consent.id, scopes, grantedAt: result.consent.grantedAt },
+      reviewCaseId: result.review?.id || null,
+      aiEvaluation: evaluation,
+      message: evaluation.needsHumanReview
+        ? 'تم حفظ الحساب والموافقة بصورة دائمة، والحساب بانتظار المراجعة.'
+        : 'تم حفظ مرجع الحساب وموافقة العميل بصورة دائمة.',
+    };
+  }
+
+  private async getPersistentLinkedAccounts(userId: string) {
+    const accounts = await this.prisma.serviceAccount.findMany({
+      where: { userId, status: { not: ServiceAccountStatus.REVOKED } },
+      include: { consents: { where: { revokedAt: null }, orderBy: { grantedAt: 'desc' }, take: 1 } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return {
+      data: accounts.map((account) => ({
+        ...account,
+        accountIdentifier: this.encryptionService.decrypt(account.accountIdentifierCiphertext),
+        accountIdentifierCiphertext: undefined,
+        activeConsent: account.consents?.[0] || null,
+        consents: undefined,
+      })),
+      total: accounts.length,
+    };
+  }
+
+  private async unlinkPersistentAccount(userId: string, accountId: string) {
+    const account = await this.prisma.serviceAccount.findUnique({ where: { id: accountId } });
+    if (!account) throw new NotFoundException('حساب الخدمة المطلوب غير موجود');
+    if (account.userId !== userId) throw new ForbiddenException('ليس لديك صلاحية لإلغاء ربط هذا الحساب');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.serviceAccount.update({ where: { id: accountId }, data: { status: ServiceAccountStatus.REVOKED } });
+      await tx.serviceAccountConsent.updateMany({
+        where: { serviceAccountId: accountId, userId, revokedAt: null },
+        data: { revokedAt: new Date(), revokeReason: 'CUSTOMER_REVOKED' },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId, action: 'SERVICE_ACCOUNT_CONSENT_REVOKED',
+          entityName: 'CustomerServiceAccount', entityId: accountId,
+          newValues: { consentRevoked: true, accountStatus: ServiceAccountStatus.REVOKED },
+        },
+      });
+    }, { isolationLevel: 'Serializable' });
+    return { success: true, message: 'تم إلغاء ربط الحساب وسحب الموافقة بصورة دائمة.' };
+  }
+
+  private async evaluatePersistentAccountRisk(userId: string, accountId: string): Promise<AiEvaluationReport> {
+    const account = await this.prisma.serviceAccount.findUnique({ where: { id: accountId } });
+    if (!account) throw new NotFoundException('حساب الخدمة غير موجود');
+    if (account.userId !== userId) throw new ForbiddenException('ليس لديك صلاحية لعرض تقرير هذا الحساب');
+    const [user, recentAttempts, priorRevocations, completedOrdersCount, activeConsent] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { createdAt: true, phoneVerifiedAt: true } }),
+      this.prisma.serviceAccount.count({ where: { userId, createdAt: { gte: new Date(Date.now() - 86400000) } } }),
+      this.prisma.serviceAccount.count({ where: { userId, status: ServiceAccountStatus.REVOKED } }),
+      this.prisma.order.count({ where: { userId, status: 'Completed' } }),
+      this.prisma.serviceAccountConsent.findFirst({
+        where: { serviceAccountId: accountId, userId, revokedAt: null },
+        orderBy: { grantedAt: 'desc' },
+      }),
+    ]);
+    if (!user) throw new NotFoundException('Customer account was not found.');
+    return this.aiEvaluator.evaluate({
+      userId, serviceSlug: account.serviceSlug,
+      accountIdentifier: this.encryptionService.decrypt(account.accountIdentifierCiphertext),
+      isPhoneVerified: Boolean(user.phoneVerifiedAt),
+      userAccountAgeDays: Math.max(1, Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000)),
+      completedOrdersCount, recentLinkAttempts24h: recentAttempts,
+      hasPriorRevocations: priorRevocations > 0, hasExplicitConsent: Boolean(activeConsent),
+    });
+  }
+
+  private async listPersistentAccountReviews(status?: AccountReviewStatus, search?: string) {
+    const reviews = await this.prisma.serviceAccountReview.findMany({
+      where: status ? { status: status as any } : undefined,
+      include: { serviceAccount: true, user: { select: { id: true, fullName: true, phone: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const query = search?.trim().toLowerCase();
+    const data = reviews.map((review) => ({
+      id: review.id, userId: review.userId, serviceAccountId: review.serviceAccountId,
+      serviceSlug: review.serviceSlug,
+      accountIdentifier: this.encryptionService.decrypt(review.serviceAccount.accountIdentifierCiphertext),
+      accountName: review.serviceAccount.accountName || undefined,
+      status: review.status, riskLevel: review.riskLevel, riskScore: review.riskScore,
+      aiRecommendation: review.aiRecommendation, aiReasons: review.aiReasons as string[],
+      aiReasonsAr: review.aiReasonsAr as string[], operatorId: review.operatorId,
+      operatorNotes: review.operatorNotes, resolvedAt: review.resolvedAt,
+      createdAt: review.createdAt, updatedAt: review.updatedAt, customer: review.user,
+    })).filter((review) => !query ||
+      review.serviceSlug.toLowerCase().includes(query) ||
+      (review.accountName || '').toLowerCase().includes(query) ||
+      review.accountIdentifier.toLowerCase().includes(query));
+    return { data, total: data.length };
+  }
+
+  private async resolvePersistentAccountReview(staffId: string, reviewId: string, dto: ResolveReviewDto) {
+    const review = await this.prisma.serviceAccountReview.findUnique({
+      where: { id: reviewId }, include: { serviceAccount: true },
+    });
+    if (!review) throw new NotFoundException('حالة المراجعة الإدارية غير موجودة');
+    if (!['PENDING', 'NEEDS_INFO'].includes(String(review.status))) {
+      throw new BadRequestException('تمت معالجة حالة المراجعة مسبقاً.');
+    }
+    const nextStatus = dto.decision === 'APPROVE' ? AccountReviewStatus.APPROVED
+      : dto.decision === 'REJECT' ? AccountReviewStatus.REJECTED : AccountReviewStatus.NEEDS_INFO;
+    const nextAccountStatus = dto.decision === 'APPROVE' ? ServiceAccountStatus.VERIFIED_PROVIDER
+      : dto.decision === 'REJECT' ? ServiceAccountStatus.REVOKED : review.serviceAccount.status;
+    const resolvedAt = dto.decision === 'NEEDS_INFO' ? null : new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedReview = await tx.serviceAccountReview.update({
+        where: { id: reviewId },
+        data: {
+          status: nextStatus, operatorId: staffId, operatorNotes: dto.operatorNotes || null, resolvedAt,
+        },
+      });
+      const account = await tx.serviceAccount.update({
+        where: { id: review.serviceAccountId },
+        data: { status: nextAccountStatus as any },
+      });
+      if (dto.decision === 'REJECT') {
+        await tx.serviceAccountConsent.updateMany({
+          where: { serviceAccountId: review.serviceAccountId, revokedAt: null },
+          data: { revokedAt: new Date(), revokeReason: 'ADMIN_REJECTED' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: staffId, action: 'SERVICE_ACCOUNT_REVIEW_RESOLVED',
+          entityName: 'CustomerServiceAccount', entityId: review.serviceAccountId,
+          newValues: { decision: dto.decision, notes: dto.operatorNotes || null, financialImpact: 'NONE' },
+        },
+      });
+      return { updatedReview, account };
+    }, { isolationLevel: 'Serializable' });
+    return {
+      success: true, message: 'تم تسجيل القرار الإداري بصورة دائمة.',
+      reviewCase: updated.updatedReview,
+      account: {
+        ...updated.account,
+        accountIdentifier: this.encryptionService.decrypt(updated.account.accountIdentifierCiphertext),
+        accountIdentifierCiphertext: undefined,
+      },
+      financialImpact: 'NONE',
+    };
+  }
+
+
   /**
    * Link a service account with explicit consent and explainable AI risk evaluation.
    */
@@ -174,6 +401,8 @@ export class ServiceAccountsService {
     ipAddress = '127.0.0.1',
     userAgent = 'Web-Client',
   ) {
+    if (process.env.NODE_ENV !== 'test') return this.persistLinkedAccount(userId, dto, ipAddress, userAgent);
+    this.assertPersistentStorageAvailable();
     const capability = ServiceCapabilitiesConfig.getCapability(dto.serviceSlug);
 
     // 1. Check user details (Phone verification status, orders count)
@@ -315,6 +544,8 @@ export class ServiceAccountsService {
    * Customer: Get all active linked accounts with strict BOLA authorization
    */
   async getMyAccounts(userId: string) {
+    if (process.env.NODE_ENV !== 'test') return this.getPersistentLinkedAccounts(userId);
+    this.assertPersistentStorageAvailable();
     const list = Array.from(this.memoryAccounts.values()).filter(
       (a) => a.userId === userId && a.status !== ServiceAccountStatus.REVOKED,
     );
@@ -329,6 +560,8 @@ export class ServiceAccountsService {
    * Customer: Unlink service account and revoke consent with strict BOLA check
    */
   async unlinkAccount(userId: string, accountId: string) {
+    if (process.env.NODE_ENV !== 'test') return this.unlinkPersistentAccount(userId, accountId);
+    this.assertPersistentStorageAvailable();
     const account = this.memoryAccounts.get(accountId);
     if (!account) {
       throw new NotFoundException('حساب الخدمة المطلوب غير موجود');
@@ -360,6 +593,8 @@ export class ServiceAccountsService {
    * Evaluates risk of an existing account with BOLA check
    */
   async evaluateAccountRisk(userId: string, accountId: string): Promise<AiEvaluationReport> {
+    if (process.env.NODE_ENV !== 'test') return this.evaluatePersistentAccountRisk(userId, accountId);
+    this.assertPersistentStorageAvailable();
     const account = this.memoryAccounts.get(accountId);
     if (!account) {
       throw new NotFoundException('حساب الخدمة غير موجود');
@@ -386,6 +621,8 @@ export class ServiceAccountsService {
    * Admin: List pending review cases
    */
   async getAdminReviewCases(status?: AccountReviewStatus, search?: string) {
+    if (process.env.NODE_ENV !== 'test') return this.listPersistentAccountReviews(status, search);
+    this.assertPersistentStorageAvailable();
     let cases = Array.from(this.memoryReviews.values());
 
     if (status) {
@@ -415,6 +652,8 @@ export class ServiceAccountsService {
    * Admin: Resolve a review case (Approve, Reject, Needs Info) with zero financial impact
    */
   async resolveAdminReview(staffId: string, reviewId: string, dto: ResolveReviewDto) {
+    if (process.env.NODE_ENV !== 'test') return this.resolvePersistentAccountReview(staffId, reviewId, dto);
+    this.assertPersistentStorageAvailable();
     const reviewCase = this.memoryReviews.get(reviewId);
     if (!reviewCase) {
       throw new NotFoundException('حالة المراجعة الإدارية غير موجودة');

@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 import {
   TrendingUp,
   DollarSign,
@@ -32,6 +34,7 @@ export default function AdminReportsPage() {
   const [activeMainTab, setActiveMainTab] = useState<'dailyClose' | 'ownerEarnings' | 'analytics'>('dailyClose');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<'today' | '7d' | '30d' | 'all'>('30d');
   const [activeCurrencyTab, setActiveCurrencyTab] = useState<'YER' | 'USD' | 'SAR'>('YER');
 
@@ -72,11 +75,13 @@ export default function AdminReportsPage() {
 
   const getAuthHeader = (): Record<string, string> => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+    return { Authorization: `Bearer ${token}` };
   };
 
   const fetchAll = async () => {
     setLoading(true);
+    setLoadError(null);
     await Promise.all([
       fetchDailyCloseReports(),
       fetchOwnerStatement(activeCurrencyTab),
@@ -93,243 +98,73 @@ export default function AdminReportsPage() {
 
   const fetchDailyCloseReports = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/daily-close', {
-        headers: getAuthHeader(),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setDailyReports(json);
-      } else {
-        loadFallbackDailyReports();
-      }
-    } catch {
-      loadFallbackDailyReports();
+      const res = await fetch(`${API_BASE_URL}/reports/daily-close`, { headers: getAuthHeader() });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل تقارير الإغلاق اليومي.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة تقارير الإغلاق غير صحيحة.');
+      setDailyReports(rows);
+    } catch (err) {
+      setDailyReports([]);
+      setLoadError(err instanceof Error ? err.message : 'تعذر تحميل تقارير الإغلاق اليومي.');
     }
   };
 
   const fetchOwnerStatement = async (cur: string) => {
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/statement?currency=${cur}`, {
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/statement?currency=${encodeURIComponent(cur)}`, {
         headers: getAuthHeader(),
       });
-      if (res.ok) {
-        const json = await res.json();
-        setOwnerStatement(json);
-      } else {
-        loadFallbackOwnerStatement(cur);
-      }
-    } catch {
-      loadFallbackOwnerStatement(cur);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'بيان أرباح المالك غير متاح حالياً.');
+      setOwnerStatement(payload);
+    } catch (err) {
+      setOwnerStatement(null);
+      setLoadError(err instanceof Error ? err.message : 'بيان أرباح المالك غير متاح حالياً.');
     }
   };
 
   const fetchOwnerBeneficiaries = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/beneficiaries', {
-        headers: getAuthHeader(),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setOwnerBeneficiaries(json);
-        if (json.length > 0 && !payoutBeneficiaryId) {
-          setPayoutBeneficiaryId(json[0].id);
-        }
-      }
-    } catch {}
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/beneficiaries`, { headers: getAuthHeader() });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل مستفيدي السحب.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة المستفيدين غير صحيحة.');
+      setOwnerBeneficiaries(rows);
+      if (rows.length > 0 && !payoutBeneficiaryId) setPayoutBeneficiaryId(rows[0].id);
+    } catch (err) {
+      setOwnerBeneficiaries([]);
+      setLoadError(err instanceof Error ? err.message : 'تعذر تحميل مستفيدي السحب.');
+    }
   };
 
   const fetchOwnerPayouts = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/payouts', {
-        headers: getAuthHeader(),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setOwnerPayouts(json);
-      } else {
-        loadFallbackPayouts();
-      }
-    } catch {
-      loadFallbackPayouts();
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/payouts`, { headers: getAuthHeader() });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل طلبات السحب.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة طلبات السحب غير صحيحة.');
+      setOwnerPayouts(rows);
+    } catch (err) {
+      setOwnerPayouts([]);
+      setLoadError(err instanceof Error ? err.message : 'تعذر تحميل طلبات السحب.');
     }
   };
 
   const fetchAnalyticsReport = async () => {
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/profit-and-performance?dateRange=${dateRange}`, {
+      const res = await fetch(`${API_BASE_URL}/reports/profit-and-performance?dateRange=${encodeURIComponent(dateRange)}`, {
         headers: getAuthHeader(),
       });
-      if (res.ok) {
-        const report = await res.json();
-        setData(report);
-      } else {
-        loadFallbackAnalytics();
-      }
-    } catch {
-      loadFallbackAnalytics();
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل مؤشرات الأداء المالي.');
+      setData(payload);
+    } catch (err) {
+      setData(null);
+      setLoadError(err instanceof Error ? err.message : 'تعذر تحميل مؤشرات الأداء المالي.');
     }
-  };
-
-  const loadFallbackDailyReports = () => {
-    setDailyReports([
-      {
-        id: 'dclose-2026-10-10',
-        closeDate: '2026-10-10',
-        status: 'CLOSED',
-        isImmutable: true,
-        closedAt: '2026-10-10T23:59:00Z',
-        notes: 'إغلاق نهاية اليوم المالي المعتمد',
-        adjustments: [],
-        metricsByCurrency: {
-          YER: {
-            currency: 'YER',
-            totalOrdersCount: 45,
-            completedOrdersCount: 42,
-            failedOrdersCount: 3,
-            pendingOrdersCount: 0,
-            grossSales: 245000,
-            supplierCost: 215000,
-            channelFees: 2450,
-            estimatedProfit: 0,
-            realizedProfit: 27550,
-            customerWalletLiabilities: 120000,
-            supplierPayables: 20000,
-            operatingReserve: 12250,
-            actualCashBalance: 300000,
-            withdrawableLiquidity: 27550,
-          },
-          USD: {
-            currency: 'USD',
-            totalOrdersCount: 12,
-            completedOrdersCount: 12,
-            failedOrdersCount: 0,
-            pendingOrdersCount: 0,
-            grossSales: 150.0,
-            supplierCost: 132.0,
-            channelFees: 1.5,
-            estimatedProfit: 0,
-            realizedProfit: 16.5,
-            customerWalletLiabilities: 150,
-            supplierPayables: 20,
-            operatingReserve: 7.5,
-            actualCashBalance: 500,
-            withdrawableLiquidity: 16.5,
-          },
-          SAR: {
-            currency: 'SAR',
-            totalOrdersCount: 5,
-            completedOrdersCount: 5,
-            failedOrdersCount: 0,
-            pendingOrdersCount: 0,
-            grossSales: 350.0,
-            supplierCost: 310.0,
-            channelFees: 3.5,
-            estimatedProfit: 0,
-            realizedProfit: 36.5,
-            customerWalletLiabilities: 80,
-            supplierPayables: 15,
-            operatingReserve: 17.5,
-            actualCashBalance: 1000,
-            withdrawableLiquidity: 36.5,
-          },
-        },
-      },
-    ]);
-  };
-
-  const loadFallbackOwnerStatement = (cur: string) => {
-    setOwnerStatement({
-      userId: 'user-owner-001',
-      currency: cur,
-      realizedEarnings: cur === 'YER' ? 500000 : cur === 'USD' ? 2500 : 3500,
-      lockedEarnings: 0,
-      withdrawnEarnings: cur === 'YER' ? 100000 : cur === 'USD' ? 500 : 700,
-      netEarningsBalance: cur === 'YER' ? 400000 : cur === 'USD' ? 2000 : 2800,
-      estimatedUnrealizedProfit: 0,
-      actualCashBalance: cur === 'YER' ? 1000000 : cur === 'USD' ? 5000 : 8000,
-      customerWalletLiabilities: cur === 'YER' ? 150000 : cur === 'USD' ? 600 : 1000,
-      supplierPayables: cur === 'YER' ? 50000 : cur === 'USD' ? 200 : 300,
-      operatingReserve: cur === 'YER' ? 25000 : cur === 'USD' ? 150 : 200,
-      withdrawableLiquidity: cur === 'YER' ? 775000 : cur === 'USD' ? 4050 : 6500,
-      availableForPayout: cur === 'YER' ? 400000 : cur === 'USD' ? 2000 : 2800,
-      hasSufficientLiquidity: true,
-    });
-  };
-
-  const loadFallbackPayouts = () => {
-    setOwnerPayouts([
-      {
-        id: 'po-test-01',
-        payoutNumber: 'PO-20261011-001',
-        userId: 'user-owner-001',
-        currency: 'YER',
-        amount: 50000,
-        status: 'CONFIRMED',
-        beneficiaryName: 'حساب إدارة المنصة - بنك الكريمي',
-        channelCode: 'JAIB',
-        accountNumber: '770123456',
-        financeApprovedBy: 'user-finance-002',
-        externalReference: 'BANK-TRF-998822',
-        createdAt: '2026-10-10T14:30:00Z',
-      },
-    ]);
-  };
-
-  const loadFallbackAnalytics = () => {
-    setData({
-      statusBreakdown: {
-        total: 142,
-        completed: 128,
-        processing: 4,
-        manualReview: 5,
-        failed: 3,
-        refunded: 2,
-        successRate: 90.1,
-      },
-      financialSummary: {
-        YER: {
-          currency: 'YER',
-          ordersCount: 89,
-          realizedSales: 1485000,
-          cogs: 1336500,
-          netProfit: 148500,
-          marginPercentage: 10.0,
-        },
-        USD: {
-          currency: 'USD',
-          ordersCount: 38,
-          realizedSales: 2840.5,
-          cogs: 2556.45,
-          netProfit: 284.05,
-          marginPercentage: 10.0,
-        },
-        SAR: {
-          currency: 'SAR',
-          ordersCount: 15,
-          realizedSales: 4200.0,
-          cogs: 3780.0,
-          netProfit: 420.0,
-          marginPercentage: 10.0,
-        },
-      },
-      providerPerformance: [
-        {
-          providerId: 'prov-mock',
-          providerCode: 'MOCK',
-          providerName: 'مزود الشحن الفوري (Automated Adapter)',
-          type: 'MOCK',
-          isActive: true,
-          balance: 10000,
-          currency: 'USD',
-          totalOrders: 98,
-          completedOrders: 94,
-          failedOrders: 2,
-          manualReviewOrders: 2,
-          successRate: 95.9,
-          averageCompletionTimeMs: 1420,
-        },
-      ],
-    });
   };
 
   // 1. Submit Daily Close
@@ -338,7 +173,7 @@ export default function AdminReportsPage() {
     setActionError(null);
     setActionSuccess(null);
     try {
-      const res = await fetch('http://localhost:4000/api/reports/daily-close', {
+      const res = await fetch(`${API_BASE_URL}/reports/daily-close`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -370,7 +205,7 @@ export default function AdminReportsPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/daily-close/${adjDate}/adjustment`, {
+      const res = await fetch(`${API_BASE_URL}/reports/daily-close/${adjDate}/adjustment`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -397,10 +232,14 @@ export default function AdminReportsPage() {
 
   // 3. Submit Owner Payout Request (TOTP MFA)
   const handleRequestPayout = async () => {
+    if (!payoutBeneficiaryId) {
+      setActionError('لا يوجد مستفيد مسجل وموثق. لا يمكن إرسال طلب السحب.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/payouts/request', {
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/payouts/request`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -409,7 +248,7 @@ export default function AdminReportsPage() {
         body: JSON.stringify({
           currency: payoutCurrency,
           amount: Number(payoutAmount),
-          beneficiaryId: payoutBeneficiaryId || 'ben-owner-001',
+          beneficiaryId: payoutBeneficiaryId,
           totpCode: payoutTotpCode,
           idempotencyKey: payoutIdempotencyKey,
           notes: payoutNotes,
@@ -435,7 +274,7 @@ export default function AdminReportsPage() {
   const handleApprovePayout = async (id: string) => {
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/payouts/${id}/approve`, {
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/payouts/${id}/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -462,7 +301,7 @@ export default function AdminReportsPage() {
     }
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/payouts/${selectedPayoutId}/confirm`, {
+      const res = await fetch(`${API_BASE_URL}/reports/owner-earnings/payouts/${selectedPayoutId}/confirm`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -494,6 +333,11 @@ export default function AdminReportsPage() {
   return (
     <div className="flex-1 bg-slate-950 text-slate-100 min-h-screen p-8 pr-72 font-sans text-right" dir="rtl">
       <Header title="التقارير المالية وإغلاق اليوم وسحب أرباح المالك" />
+      {loadError && (
+        <div role="alert" className="mx-auto mt-4 max-w-7xl rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          لا تُعرض بيانات تجريبية في التقارير المالية. بعض البيانات غير متاحة من الخادم حالياً: {loadError}
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto space-y-6 pt-4">
         {/* Page Top Title */}
@@ -689,7 +533,7 @@ export default function AdminReportsPage() {
                           </td>
                           <td className="p-3 text-center space-x-2 space-x-reverse">
                             <a
-                              href={`http://localhost:4000/api/reports/daily-close/${report.closeDate}/export`}
+                              href={`${API_BASE_URL}/reports/daily-close/${report.closeDate}/export`}
                               target="_blank"
                               rel="noreferrer"
                               className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 transition-colors"
@@ -1346,7 +1190,7 @@ export default function AdminReportsPage() {
                     </option>
                   ))}
                   {ownerBeneficiaries.length === 0 && (
-                    <option value="ben-owner-001">حساب إدارة المنصة - بنك الكريمي (افتراضي)</option>
+                    <option value="" disabled>لا يوجد مستفيد معتمد متاح حالياً</option>
                   )}
                 </select>
               </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Header } from '../../components/Header';
 import {
   Search,
@@ -23,6 +23,7 @@ import {
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [search, setSearch] = useState('');
 
@@ -40,73 +41,47 @@ export default function AdminOrdersPage() {
   const [operatorNotesInput, setOperatorNotesInput] = useState('');
   const [refundReasonInput, setRefundReasonInput] = useState('');
 
+  const actionIdempotencyKeys = useRef(new Map<string, { fingerprint: string; key: string }>());
+
+  const getActionIdempotencyKey = (action: string, orderId: string, payload: unknown) => {
+    const mapKey = `${action}:${orderId}`;
+    const fingerprint = JSON.stringify(payload);
+    const existing = actionIdempotencyKeys.current.get(mapKey);
+    if (existing?.fingerprint === fingerprint) return existing.key;
+    const key = window.crypto.randomUUID();
+    actionIdempotencyKeys.current.set(mapKey, { fingerprint, key });
+    return key;
+  };
+
+  const clearActionIdempotencyKey = (action: string, orderId: string) => {
+    actionIdempotencyKeys.current.delete(`${action}:${orderId}`);
+  };
+
   const fetchOrders = async () => {
     setLoading(true);
+    setOrdersError(null);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const url = new URL('http://localhost:4000/api/orders/admin/all');
+      if (!token) throw new Error('جلسة الإدارة غير متوفرة. سجّل الدخول مجدداً.');
+      const baseUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
+      const url = new URL(`${baseUrl}/orders/admin/all`);
       if (filterStatus !== 'ALL') url.searchParams.append('status', filterStatus);
       if (search) url.searchParams.append('search', search);
 
       const res = await fetch(url.toString(), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setOrders(data.data || []);
-      } else {
-        loadFallbackOrders();
-      }
-    } catch {
-      loadFallbackOrders();
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.message || 'تعذر تحميل الطلبات من الخادم.');
+      const rows = Array.isArray(payload) ? payload : payload.data;
+      if (!Array.isArray(rows)) throw new Error('استجابة قائمة الطلبات غير صحيحة.');
+      setOrders(rows);
+    } catch (err) {
+      setOrders([]);
+      setOrdersError(err instanceof Error ? err.message : 'تعذر تحميل الطلبات من الخادم.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadFallbackOrders = () => {
-    setOrders([
-      {
-        id: 'ord-1',
-        orderNumber: 'ORD-20261009-8491',
-        snapshotServiceNameAr: 'ببجي موبايل',
-        snapshotServiceName: 'PUBG Mobile',
-        snapshotProductNameAr: '660 شدة ببجي',
-        snapshotProductName: '660 UC',
-        snapshotRetailPrice: 5500,
-        snapshotCostPrice: 4950,
-        snapshotProfit: 550,
-        snapshotCurrency: 'YER',
-        snapshotBeneficiaryFields: { player_id: '512938475' },
-        status: 'Completed',
-        voucherCode: 'PUBG-8899-7766-5544',
-        user: { fullName: 'أحمد محمد الحاشدي', email: 'customer@gmail.com', phone: '+967770000003' },
-        createdAt: new Date().toISOString(),
-        statusHistory: [
-          { oldStatus: 'AwaitingPayment', newStatus: 'Queued', reason: 'حجز الرصيد من المحفظة', createdAt: new Date(Date.now() - 3600000).toISOString() },
-          { oldStatus: 'Queued', newStatus: 'Completed', reason: 'تم تسليم الشحنة والتسوية المحاسبية', createdAt: new Date().toISOString() },
-        ],
-      },
-      {
-        id: 'ord-2',
-        orderNumber: 'ORD-20261009-3321',
-        snapshotServiceNameAr: 'يويو - غرف الدردشة الصوتية',
-        snapshotServiceName: 'YoYo Voice',
-        snapshotProductNameAr: '5,000 عملة يويو',
-        snapshotProductName: '5,000 Coins',
-        snapshotRetailPrice: 2500,
-        snapshotCostPrice: 2250,
-        snapshotProfit: 250,
-        snapshotCurrency: 'YER',
-        snapshotBeneficiaryFields: { user_id: '88776655' },
-        status: 'ManualReview',
-        user: { fullName: 'علي كريم', email: 'ali@gamer.net', phone: '+967771122334' },
-        createdAt: new Date(Date.now() - 1800000).toISOString(),
-        statusHistory: [
-          { oldStatus: 'Queued', newStatus: 'ManualReview', reason: 'بانتظار المشغل للتنفيذ اليدوي وإرفاق الكود', createdAt: new Date().toISOString() },
-        ],
-      },
-    ]);
   };
 
   useEffect(() => {
@@ -127,6 +102,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': getActionIdempotencyKey('fulfill-manual', selectedOrder.id, { voucherCode: voucherInput, proofScreenshotUrl: proofUrlInput || null, operatorNotes: operatorNotesInput || 'تم التنفيذ اليدوي بنجاح بواسطة المشغل' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -137,6 +113,7 @@ export default function AdminOrdersPage() {
       });
 
       if (res.ok) {
+        clearActionIdempotencyKey('fulfill-manual', selectedOrder.id);
         alert('تم اعتماد وتنفيذ الطلب يدوياً وتسجيل التسوية المحاسبية بنجاح!');
         setShowFulfillModal(false);
         setVoucherInput('');
@@ -149,9 +126,7 @@ export default function AdminOrdersPage() {
         alert(`فشل التنفيذ: ${err.message || 'خطأ غير معروف'}`);
       }
     } catch {
-      alert('تم حفظ التنفيذ اليدوي واعتماد تسوية الطلب.');
-      setShowFulfillModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد نتيجة التنفيذ اليدوي بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة بنفس البيانات للتحقق من النتيجة.');
     } finally {
       setActionLoading(false);
     }
@@ -171,6 +146,7 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': getActionIdempotencyKey('refund', selectedOrder.id, { reason: refundReasonInput }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -179,6 +155,7 @@ export default function AdminOrdersPage() {
       });
 
       if (res.ok) {
+        clearActionIdempotencyKey('refund', selectedOrder.id);
         alert('تم استرداد الطلب وعكس القيد المحاسبي وإعادة الرصيد للمحفظة بنجاح!');
         setShowRefundModal(false);
         setRefundReasonInput('');
@@ -189,9 +166,7 @@ export default function AdminOrdersPage() {
         alert(`فشل الاسترداد: ${err.message || 'خطأ'}`);
       }
     } catch {
-      alert('تم تسجيل استرداد الطلب بنجاح.');
-      setShowRefundModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد نتيجة الاسترداد بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة بنفس السبب للتحقق من النتيجة.');
     } finally {
       setActionLoading(false);
     }
@@ -204,16 +179,21 @@ export default function AdminOrdersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': getActionIdempotencyKey('retry', orderId, { reason: 'إعادة محاولة تنفيذ الطلب من لوحة الإدارة' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ reason: 'إعادة محاولة تنفيذ الطلب من لوحة الإدارة' }),
       });
       if (res.ok) {
+        clearActionIdempotencyKey('retry', orderId);
         alert('تمت إعادة إرسال الطلب لمحرك التنفيذ بنجاح!');
         fetchOrders();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`تعذرت إعادة المحاولة: ${err.message || 'رفض الخادم الطلب'}`);
       }
     } catch {
-      alert('تمت إعادة محاولة إرسال الطلب.');
+      alert('تعذر تأكيد نتيجة إعادة المحاولة بسبب مشكلة اتصال. لا تُعد العملية ناجحة حتى تظهر استجابة مؤكدة؛ أعد المحاولة للتحقق من النتيجة.');
     }
   };
 
@@ -340,6 +320,13 @@ export default function AdminOrdersPage() {
                   <tr>
                     <td colSpan={6} className="p-12 text-center text-slate-500">
                       جاري تحميل بيانات الطلبات...
+                    </td>
+                  </tr>
+                ) : ordersError ? (
+                  <tr>
+                    <td colSpan={6} className="p-12 text-center text-rose-300">
+                      {ordersError}
+                      <button onClick={fetchOrders} className="block mx-auto mt-3 text-indigo-400 underline">إعادة المحاولة</button>
                     </td>
                   </tr>
                 ) : orders.length === 0 ? (

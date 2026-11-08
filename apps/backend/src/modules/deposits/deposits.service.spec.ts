@@ -33,6 +33,12 @@ describe('DepositsService (Phase 2)', () => {
           return Promise.resolve({ count: 1 });
         }),
         findFirst: jest.fn().mockImplementation((args) => {
+          if (args.where.id) {
+            const byId = testDeposits.get(args.where.id);
+            if (!byId) return Promise.resolve(null);
+            if (args.where.status && byId.status !== args.where.status) return Promise.resolve(null);
+            return Promise.resolve(byId);
+          }
           for (const d of testDeposits.values()) {
             if (
               d.referenceNumber === args.where.referenceNumber &&

@@ -30,7 +30,7 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
   };
 
   const mockPayoutsService = {
-    findByIdempotencyKey: jest.fn(),
+    findByExternalReference: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -77,7 +77,7 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
       });
 
       // 2. Mock matched payout
-      mockPayoutsService.findByIdempotencyKey.mockImplementation((key: string) => {
+      mockPayoutsService.findByExternalReference.mockImplementation((key: string) => {
         if (key === 'PO-KEY-MATCHED-01') {
           return Promise.resolve({
             id: 'po-1',
@@ -141,13 +141,17 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
       expect(unknownItem?.status).toBe(ReconciliationStatus.UNKNOWN_EXTERNAL);
     });
 
-    it('allows finance manager to manually resolve an exception item and update batch status', async () => {
-      // Get the default seeded batch
+    it('allows finance manager to manually resolve an exception item and update batch status in test fixtures', async () => {
+      // Explicitly return a persisted-style fixture from the DB mock. Production
+      // listBatches treats an empty DB list as authoritative and never injects seed data.
+      const seedBatch = (reconciliationService as any).memoryBatches.get('rec-seed-001');
+      expect(seedBatch).toBeDefined();
+      mockPrisma.reconciliationBatch.findMany.mockResolvedValue([seedBatch]);
       const batches = await reconciliationService.listBatches();
       expect(batches.length).toBeGreaterThan(0);
 
-      const seedBatch = batches[0];
-      const discrepancyItem = seedBatch.items.find((i) => i.status === ReconciliationStatus.DISCREPANCY);
+      const persistedBatch = batches[0];
+      const discrepancyItem = persistedBatch.items.find((i) => i.status === ReconciliationStatus.DISCREPANCY);
       expect(discrepancyItem).toBeDefined();
 
       const resolveRes = await reconciliationService.resolveDiscrepancy(
@@ -159,7 +163,7 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
 
       expect(resolveRes.success).toBe(true);
 
-      const updatedBatch = await reconciliationService.getBatchById(seedBatch.id);
+      const updatedBatch = await reconciliationService.getBatchById(persistedBatch.id);
       const updatedItem = updatedBatch.items.find((i) => i.id === discrepancyItem!.id);
       expect(updatedItem?.status).toBe(ReconciliationStatus.RESOLVED_MANUAL);
       expect(updatedBatch.status).toBe('RESOLVED');

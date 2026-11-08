@@ -155,6 +155,35 @@ enum ProviderType {
   MANUAL
   EXTERNAL_API
 }
+enum ServiceAccountStatus {
+  VERIFIED_OAUTH
+  VERIFIED_PROVIDER
+  REFERENCE_ONLY
+  UNSUPPORTED
+  REVOKED
+}
+enum AccountReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_INFO
+}
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+enum AiRecommendation {
+  AUTO_APPROVE
+  HUMAN_REVIEW
+  REJECT
+}
+enum ReconciliationAdjustmentStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  POSTED
+}
 
 enum PayoutStatus {
   REQUESTED
@@ -332,6 +361,14 @@ model User {
   supportTickets          SupportTicket[]
   notifications            Notification[]
   payoutBeneficiaries      PayoutBeneficiary[]
+  serviceAccounts          ServiceAccount[]
+  serviceAccountConsents   ServiceAccountConsent[] @relation("ServiceAccountConsentOwner")
+  serviceAccountReviews    ServiceAccountReview[] @relation("ServiceAccountReviewCustomer")
+  reviewedServiceAccountReviews ServiceAccountReview[] @relation("ServiceAccountReviewOperator")
+  proposedReconciliationAdjustments ReconciliationAdjustmentRequest[] @relation("ReconciliationAdjustmentProposer")
+  approvedReconciliationAdjustments ReconciliationAdjustmentRequest[] @relation("ReconciliationAdjustmentApprover")
+  ownerEarningsAllocations OwnerEarningsAllocation[] @relation("OwnerEarningsAllocationOwner")
+  createdOwnerEarningsAllocations OwnerEarningsAllocation[] @relation("OwnerEarningsAllocationCreator")
 
   @@index([parentAgentId])
   @@index([tenantId, role, status])
@@ -1094,6 +1131,9 @@ model PayoutRequest {
   externalReference  String?
   failureReason      String?
   ledgerTxId         String?
+  confirmedByUserId  String?
+  rejectedByUserId   String?
+  executedAt         DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -1143,6 +1183,7 @@ model ReconciliationItem {
   createdAt        DateTime             @default(now())
 
   batch ReconciliationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  adjustmentRequests ReconciliationAdjustmentRequest[]
 
   @@index([batchId, status])
   @@index([referenceNumber])
@@ -1288,7 +1329,7 @@ model PayoutBeneficiary {
   beneficiaryName    String
   channelCode        PaymentChannelCode
   accountNumber      String
-  verificationStatus String             @default("VERIFIED") // VERIFIED, PENDING_REVIEW, REJECTED
+  verificationStatus String             @default("PENDING_REVIEW") // VERIFIED, PENDING_REVIEW, REJECTED
   financeApprovedBy  String?
   notes              String?
   createdAt          DateTime           @default(now())
@@ -1315,6 +1356,8 @@ model OwnerPayoutTransaction {
   externalReference String? // Bank receipt / transfer reference
   failureReason     String?
   ledgerTxId        String?
+  confirmedByUserId String?
+  confirmedAt       DateTime?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -1344,6 +1387,111 @@ model OwnerEarningsWallet {
 // ----------------------------------------------------
 // Phase 08 Models: Support Tickets & Notifications
 // ----------------------------------------------------
+
+
+model ServiceAccount {
+  id                          String               @id @default(uuid())
+  userId                      String
+  serviceSlug                 String
+  serviceName                 String
+  serviceNameAr               String
+  accountIdentifierCiphertext String
+  accountName                 String?
+  serverZoneId                String?
+  status                      ServiceAccountStatus @default(REFERENCE_ONLY)
+  verificationSource          String?
+  lastVerifiedAt              DateTime?
+  createdAt                   DateTime             @default(now())
+  updatedAt                   DateTime             @updatedAt
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consents    ServiceAccountConsent[]
+  reviewCases ServiceAccountReview[]
+  @@index([userId, status, createdAt])
+  @@index([serviceSlug, status])
+  @@map("service_accounts")
+}
+model ServiceAccountConsent {
+  id               String   @id @default(uuid())
+  userId           String
+  serviceAccountId String
+  serviceSlug      String
+  scopes           Json
+  consentText      String
+  consentVersion   String   @default("1.0")
+  ipAddress        String?
+  userAgent        String?
+  grantedAt        DateTime @default(now())
+  revokedAt        DateTime?
+  revokeReason     String?
+  user           User           @relation("ServiceAccountConsentOwner", fields: [userId], references: [id], onDelete: Cascade)
+  serviceAccount ServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt, grantedAt])
+  @@index([serviceAccountId, revokedAt])
+  @@map("service_account_consents")
+}
+model ServiceAccountReview {
+  id               String             @id @default(uuid())
+  userId           String
+  serviceAccountId String
+  serviceSlug      String
+  status           AccountReviewStatus @default(PENDING)
+  riskLevel        RiskLevel
+  riskScore        Int
+  aiRecommendation AiRecommendation
+  aiReasons        Json
+  aiReasonsAr      Json
+  operatorId       String?
+  operatorNotes    String?
+  resolvedAt       DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  user           User           @relation("ServiceAccountReviewCustomer", fields: [userId], references: [id], onDelete: Cascade)
+  serviceAccount ServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
+  operator       User?          @relation("ServiceAccountReviewOperator", fields: [operatorId], references: [id], onDelete: SetNull)
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("service_account_reviews")
+}
+model ReconciliationAdjustmentRequest {
+  id                String                         @id @default(uuid())
+  itemId            String
+  debitAccountCode  String
+  creditAccountCode String
+  amount            Decimal                        @db.Decimal(18, 4)
+  currency          CurrencyCode
+  status            ReconciliationAdjustmentStatus @default(PENDING_APPROVAL)
+  reason            String
+  proposedByUserId  String
+  approvedByUserId  String?
+  ledgerTxId        String?
+  approvedAt        DateTime?
+  postedAt          DateTime?
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+  item       ReconciliationItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  proposedBy User               @relation("ReconciliationAdjustmentProposer", fields: [proposedByUserId], references: [id], onDelete: Restrict)
+  approvedBy User?              @relation("ReconciliationAdjustmentApprover", fields: [approvedByUserId], references: [id], onDelete: Restrict)
+  @@index([itemId, status])
+  @@index([status, createdAt])
+  @@map("reconciliation_adjustment_requests")
+}
+
+
+model OwnerEarningsAllocation {
+  id             String       @id @default(uuid())
+  userId         String
+  currency       CurrencyCode
+  amount         Decimal      @db.Decimal(18, 4)
+  idempotencyKey String       @unique
+  ledgerTxId     String?      @unique
+  createdByUserId String
+  notes          String?
+  createdAt      DateTime     @default(now())
+  owner     User @relation("OwnerEarningsAllocationOwner", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy User @relation("OwnerEarningsAllocationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  @@index([userId, currency, createdAt])
+  @@map("owner_earnings_allocations")
+}
 
 model SupportTicket {
   id               String    @id @default(uuid())

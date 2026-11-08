@@ -14,6 +14,8 @@ import { PayoutsService } from './payouts.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import {
   UserRole,
@@ -30,6 +32,8 @@ export class PayoutsController {
   constructor(private readonly payoutsService: PayoutsService) {}
 
   @Post('request')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'payout-request')
   @ApiOperation({ summary: 'Customer/Partner: Request a fund payout or withdrawal' })
   async requestPayout(
     @CurrentUser('id') userId: string,
@@ -60,6 +64,8 @@ export class PayoutsController {
   }
 
   @Post('admin/:id/approve')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'payout-admin-approve')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)
@@ -73,6 +79,8 @@ export class PayoutsController {
   }
 
   @Post('admin/:id/dispatch')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'payout-admin-dispatch')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)
@@ -85,6 +93,8 @@ export class PayoutsController {
   }
 
   @Post('admin/:id/confirm-manual')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'payout-admin-manual-confirm')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)
@@ -99,6 +109,8 @@ export class PayoutsController {
   }
 
   @Post('admin/:id/reject')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'payout-admin-reject')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)

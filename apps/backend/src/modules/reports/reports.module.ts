@@ -5,6 +5,7 @@ import { ProfitEngineService } from './profit-engine.service';
 import { DailyCloseService } from './daily-close.service';
 import { OwnerEarningsService } from './owner-earnings.service';
 import { LedgerModule } from '../ledger/ledger.module';
+import { EncryptionService } from '../../security/encryption.service';
 
 @Module({
   imports: [LedgerModule],
@@ -14,6 +15,7 @@ import { LedgerModule } from '../ledger/ledger.module';
     ProfitEngineService,
     DailyCloseService,
     OwnerEarningsService,
+    EncryptionService,
   ],
   exports: [
     ReportsService,

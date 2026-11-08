@@ -11,6 +11,8 @@ import { EncryptionService } from '../../security/encryption.service';
 describe('AuthSecurityGate (SG-01 & SG-02)', () => {
   let authService: AuthService;
   let jwtService: JwtService;
+  const redisValues = new Map<string, string>();
+  const redisCounters = new Map<string, number>();
 
   const mockPrismaService = {
     user: {
@@ -51,6 +53,17 @@ describe('AuthSecurityGate (SG-01 & SG-02)', () => {
         {
           provide: RedisIdempotencyStore,
           useValue: {
+            get: jest.fn(async (key: string) => redisValues.get(key) || null),
+            acquire: jest.fn(async (key: string, value: string) => {
+              if (redisValues.has(key)) return false;
+              redisValues.set(key, value);
+              return true;
+            }),
+            incrementRateLimit: jest.fn(async (key: string, windowMs: number) => {
+              const count = (redisCounters.get(key) || 0) + 1;
+              redisCounters.set(key, count);
+              return { count, ttlMs: windowMs };
+            }),
             createRefreshSession: jest.fn().mockResolvedValue(undefined),
             getRefreshSession: jest.fn().mockResolvedValue(JSON.stringify({ userId: 'user-admin-001' })),
             revokeRefreshSession: jest.fn().mockResolvedValue(undefined),
