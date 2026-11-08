@@ -79,9 +79,8 @@ export class AuthController {
   }
 
   @Post('mfa/enable')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'auth-mfa-enable')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify initial code and enable TOTP MFA for account' })
@@ -90,9 +89,8 @@ export class AuthController {
   }
 
   @Post('transaction-pin')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'auth-transaction-pin-set')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set or replace the financial transaction PIN after password confirmation' })
@@ -104,9 +102,8 @@ export class AuthController {
   }
 
   @Post('admin/create-staff')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'auth-admin-create-staff')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Super Admin: Create a new administrative staff member' })
@@ -116,9 +113,8 @@ export class AuthController {
   }
 
   @Post('logout')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RedisRateLimitGuard)
   @RateLimit(10, 60_000, 'auth-logout')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Revoke active session tokens' })
@@ -127,9 +123,8 @@ export class AuthController {
   }
 
   @Post('revoke-all-sessions')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RedisRateLimitGuard)
   @RateLimit(3, 60_000, 'auth-revoke-sessions')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Emergency/Security: Revoke all active sessions and refresh tokens for account' })
