@@ -194,6 +194,28 @@ export class OwnerEarningsService {
     };
   }
 
+
+  private async persistentPlatformEarningsStatement(currency: CurrencyCode) {
+    const [wallets, metrics] = await Promise.all([
+      this.prisma.ownerEarningsWallet.findMany({ where: { currency, tenantId: null } }),
+      this.profitEngine.calculateMetricsForCurrency(currency),
+    ]);
+    const realized = wallets.reduce((sum, w) => sum + Number(w.realizedEarnings), 0);
+    const locked = wallets.reduce((sum, w) => sum + Number(w.lockedEarnings), 0);
+    const withdrawn = wallets.reduce((sum, w) => sum + Number(w.withdrawnEarnings), 0);
+    const net = Math.max(0, realized - locked - withdrawn);
+    const freeCash = Math.max(0, Number(metrics.actualCashBalance) - Number(metrics.customerWalletLiabilities) -
+      Number(metrics.supplierPayables) - Number(metrics.operatingReserve));
+    return {
+      currency, realizedEarnings: realized, lockedEarnings: locked, withdrawnEarnings: withdrawn,
+      netEarningsBalance: net, estimatedUnrealizedProfit: metrics.estimatedProfit,
+      actualCashBalance: metrics.actualCashBalance, customerWalletLiabilities: metrics.customerWalletLiabilities,
+      supplierPayables: metrics.supplierPayables, operatingReserve: metrics.operatingReserve,
+      withdrawableLiquidity: freeCash, availableForPayout: Math.min(net, freeCash),
+      hasSufficientLiquidity: net > 0 && freeCash > 0,
+    };
+  }
+
   async allocateRealizedEarnings(
     financeUserId: string,
     dto: { ownerUserId: string; currency: CurrencyCode; amount: number; idempotencyKey: string; notes?: string },
@@ -218,26 +240,23 @@ export class OwnerEarningsService {
       return { success: true, allocation: existing };
     }
     const metrics = await this.profitEngine.calculateMetricsForCurrency(dto.currency);
-    const [allocated, totalWallets] = await Promise.all([
-      this.prisma.ownerEarningsAllocation.aggregate({
-        where: { currency: dto.currency }, _sum: { amount: true },
-      }),
-      this.prisma.ownerEarningsWallet.aggregate({
-        where: { currency: dto.currency, tenantId: null },
-        _sum: { realizedEarnings: true },
-      }),
-    ]);
-    const alreadyAllocated = Number(allocated._sum.amount || 0);
-    const recordedWalletEarnings = Number(totalWallets._sum.realizedEarnings || 0);
-    const availableProfit = Math.max(0, Number(metrics.realizedProfit) - Math.max(alreadyAllocated, recordedWalletEarnings));
-    const availableCash = Math.max(0, Number(metrics.withdrawableLiquidity) - Math.max(alreadyAllocated, recordedWalletEarnings));
-    const allocatable = Math.min(availableProfit, availableCash);
-    if (dto.amount > allocatable) {
-      throw new BadRequestException('Allocation exceeds posted realized profit or verified free cash for this currency.');
-    }
     return this.prisma.$transaction(async (tx) => {
       const duplicate = await tx.ownerEarningsAllocation.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
       if (duplicate) throw new ConflictException('This earnings allocation was already recorded.');
+      const [allocated, totalWallets] = await Promise.all([
+        tx.ownerEarningsAllocation.aggregate({ where: { currency: dto.currency }, _sum: { amount: true } }),
+        tx.ownerEarningsWallet.aggregate({ where: { currency: dto.currency, tenantId: null }, _sum: { realizedEarnings: true } }),
+      ]);
+      const alreadyAllocated = Number(allocated._sum.amount || 0);
+      const recordedWalletEarnings = Number(totalWallets._sum.realizedEarnings || 0);
+      const securedAlready = Math.max(alreadyAllocated, recordedWalletEarnings);
+      const allocatable = Math.min(
+        Math.max(0, Number(metrics.realizedProfit) - securedAlready),
+        Math.max(0, Number(metrics.withdrawableLiquidity) - securedAlready),
+      );
+      if (dto.amount > allocatable) {
+        throw new BadRequestException('Allocation exceeds posted realized profit or verified free cash for this currency.');
+      }
       const ledger = await this.ledgerService.recordDoubleEntryTransaction({
         txNumber: 'LTX-OWNER-ALLOC-' + Date.now(),
         type: LedgerTransactionType.ADJUSTMENT,
@@ -285,6 +304,18 @@ export class OwnerEarningsService {
       });
       return { success: true, allocation, ledgerTransaction: ledger.transaction };
     }, { isolationLevel: 'Serializable' });
+  }
+
+
+  private async listAllPersistentBeneficiaries() {
+    const rows = await this.prisma.payoutBeneficiary.findMany({ orderBy: { createdAt: 'desc' } });
+    return rows.map((b) => ({
+      id: b.id, userId: b.userId, beneficiaryName: b.beneficiaryName,
+      channelCode: b.channelCode as PaymentChannelCode,
+      accountNumber: this.decryptBeneficiaryAccount(b.accountNumber),
+      verificationStatus: b.verificationStatus as BeneficiaryVerificationStatus,
+      financeApprovedBy: b.financeApprovedBy, notes: b.notes, createdAt: b.createdAt,
+    }));
   }
 
   private async requestPersistentOwnerPayout(userId: string, dto: OwnerPayoutRequestDto) {
@@ -496,7 +527,7 @@ export class OwnerEarningsService {
     private ledgerService: LedgerService,
     private encryptionService: EncryptionService,
   ) {
-    this.seedDefaultData();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultData();
   }
 
   private seedDefaultData() {
@@ -585,7 +616,14 @@ export class OwnerEarningsService {
   }
 
   async listBeneficiaries(userId: string): Promise<InMemoryBeneficiary[]> {
-    if (process.env.NODE_ENV !== 'test') return this.listPersistentBeneficiaries(userId);
+    if (process.env.NODE_ENV !== 'test') {
+      const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { role: true, tenantId: true } });
+      if (user?.role === UserRole.OWNER && !user.tenantId) return this.listPersistentBeneficiaries(userId);
+      if (user?.tenantId === null && [UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER].includes(user.role)) {
+        return this.listAllPersistentBeneficiaries();
+      }
+      throw new ForbiddenException('Platform owner or authorized platform finance role required.');
+    }
     this.assertPlatformOwnerContext();
     try {
       const dbList = await this.prisma.payoutBeneficiary.findMany({
@@ -614,7 +652,14 @@ export class OwnerEarningsService {
    * 2. Get Owner Statement & Liquidity Breakdown for a currency
    */
   async getEarningsStatement(userId: string, currency: CurrencyCode) {
-    if (process.env.NODE_ENV !== 'test') return this.persistentEarningsStatement(userId, currency);
+    if (process.env.NODE_ENV !== 'test') {
+      const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { role: true, tenantId: true } });
+      if (user?.role === UserRole.OWNER && !user.tenantId) return this.persistentEarningsStatement(userId, currency);
+      if (user?.tenantId === null && [UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER].includes(user.role)) {
+        return this.persistentPlatformEarningsStatement(currency);
+      }
+      throw new ForbiddenException('Platform owner or authorized platform finance role required.');
+    }
     this.assertPlatformOwnerContext();
     const key = `${userId}:${currency}`;
     const wallet = this.memoryWallets.get(key) || {

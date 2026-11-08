@@ -147,6 +147,29 @@ export class ReportsController {
     return this.ownerEarningsService.createBeneficiary(userId, dto);
   }
 
+  @Post('owner-earnings/beneficiaries/:id/verify')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'owner-beneficiary-verify')
+  @Roles(UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'Finance: verify an owner beneficiary using a separate finance actor' })
+  async verifyBeneficiary(@Request() req: any, @Param('id') id: string, @Body('notes') notes?: string) {
+    const staffId = this.requireActorId(req);
+    return this.ownerEarningsService.verifyPersistentBeneficiary(staffId, id, notes);
+  }
+
+  @Post('owner-earnings/allocations')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'owner-earnings-allocation')
+  @Roles(UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'Finance: allocate posted realized earnings to owner payable via double-entry ledger' })
+  async allocateOwnerEarnings(
+    @Request() req: any,
+    @Body() dto: { ownerUserId: string; currency: CurrencyCode; amount: number; idempotencyKey: string; notes?: string },
+  ) {
+    const staffId = this.requireActorId(req);
+    return this.ownerEarningsService.allocateRealizedEarnings(staffId, dto);
+  }
+
   @Get('owner-earnings/beneficiaries')
   @Roles(UserRole.OWNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'List verified payout beneficiaries' })
