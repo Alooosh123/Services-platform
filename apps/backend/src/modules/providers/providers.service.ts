@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ITopupProviderAdapter } from './adapters/provider-adapter.interface';
 import { MockProviderAdapter } from './adapters/mock-provider.adapter';
