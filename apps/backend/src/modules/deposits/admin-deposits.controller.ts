@@ -15,9 +15,9 @@ import { ReviewDepositDto, RejectDepositDto } from './dto/review-deposit.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { CurrentUser } from '../auth/decorators/cuimport { RateLimit } from '../../security/rate-limit.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { RateLimit } from '../../security/rate-limit.decorator';
 import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
-rrent-user.decorator';
 import { DepositStatus, UserRole, PaymentChannelCode, PaymentChannelMode } from '@digital-topup/shared';
 
 @ApiTags('Deposits (Admin Financial Operations)')
