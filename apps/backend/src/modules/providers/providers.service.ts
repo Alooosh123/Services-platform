@@ -3,7 +3,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { ITopupProviderAdapter } from './adapters/provider-adapter.interface';
 import { MockProviderAdapter } from './adapters/mock-provider.adapter';
 import { ManualProviderAdapter } from './adapters/manual-provider.adapter';
-import { ExternalApiAdapter } from './adapters/external-api.adapter';
+import { ExternalApiAdapter, ExternalProviderIntegrationConfig } from './adapters/external-api.adapter';
 import { EncryptionService } from '../../security/encryption.service';
 import {
   PlayerValidationRequest,
@@ -47,6 +47,11 @@ export class ProvidersService {
 
   async validatePlayer(providerCode: string, req: PlayerValidationRequest): Promise<PlayerValidationResponse> {
     const adapter = this.getAdapter(providerCode);
+    if (providerCode.trim().toUpperCase() === 'EXTERNAL_API') {
+      const provider = await this.prisma.provider.findFirst({ where: { code: providerCode.trim().toUpperCase(), isActive: true } });
+      if (!provider) throw new NotFoundException('Active external provider configuration was not found.');
+      return this.externalAdapter.validatePlayer(req, await this.loadExternalIntegration(provider));
+    }
     return adapter.validatePlayer(req);
   }
 
@@ -67,13 +72,17 @@ export class ProvidersService {
     }
 
     const adapter = this.getAdapter(provider.code);
+    if (!provider.isActive) throw new ServiceUnavailableException('Provider is disabled.');
+    const integration = provider.code === 'EXTERNAL_API' ? await this.loadExternalIntegration(provider) : undefined;
     const startTime = Date.now();
 
     let response: TopupProviderOrderResponse;
     let errorMessage: string | undefined;
 
     try {
-      response = await adapter.submitOrder(request);
+      response = provider.code === 'EXTERNAL_API'
+        ? await this.externalAdapter.submitOrder(request, integration)
+        : await adapter.submitOrder(request);
     } catch (err: any) {
       errorMessage = err?.message || 'Unknown network error';
       response = {
@@ -198,37 +207,105 @@ export class ProvidersService {
     return provider.apiKey ? { apiKey: provider.apiKey } : {};
   }
 
+  private async loadExternalIntegration(provider: any): Promise<ExternalProviderIntegrationConfig> {
+    if (provider.type !== 'EXTERNAL_API' || !provider.baseUrl || !provider.credentialsCiphertext) {
+      throw new ServiceUnavailableException('External provider base URL and encrypted integration configuration are required.');
+    }
+    const credentials = this.encryptionService.decryptJson<Record<string, any>>(provider.credentialsCiphertext);
+    if (!credentials.integration || typeof credentials.integration !== 'object') {
+      throw new ServiceUnavailableException('No documented API endpoint mappings have been configured for this provider.');
+    }
+    return {
+      ...credentials.integration,
+      baseUrl: provider.baseUrl,
+      timeoutMs: provider.timeoutMs || 10000,
+      providerCode: provider.code,
+    } as ExternalProviderIntegrationConfig;
+  }
+
+  async updateProviderIntegration(
+    providerId: string,
+    actorUserId: string,
+    dto: {
+      baseUrl: string;
+      authentication: { type: 'NONE' | 'BEARER' | 'API_KEY_HEADER'; secret?: string; headerName?: string };
+      endpoints: ExternalProviderIntegrationConfig['endpoints'];
+      timeoutMs?: number;
+    },
+  ) {
+    if (!actorUserId) throw new BadRequestException('Authenticated operator identity is required.');
+    this.externalAdapter.validateEndpoint(dto.baseUrl);
+    const provider = await this.prisma.provider.findUnique({ where: { id: providerId } });
+    if (!provider) throw new NotFoundException('Provider configuration was not found.');
+    const previous = provider.credentialsCiphertext
+      ? this.encryptionService.decryptJson<Record<string, any>>(provider.credentialsCiphertext)
+      : {};
+    const secret = dto.authentication?.secret || previous.integration?.authentication?.secret || previous.apiKey;
+    if (dto.authentication?.type && dto.authentication.type !== 'NONE' && !secret) {
+      throw new BadRequestException('Authentication secret is required for the selected authentication type.');
+    }
+    const integration = {
+      authentication: {
+        type: dto.authentication?.type || 'NONE',
+        secret,
+        headerName: dto.authentication?.headerName || previous.integration?.authentication?.headerName,
+      },
+      endpoints: dto.endpoints,
+    };
+    const payload = {
+      ...previous,
+      apiKey: undefined,
+      integration,
+    };
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const record = await tx.provider.update({
+        where: { id: providerId },
+        data: {
+          type: 'EXTERNAL_API',
+          baseUrl: dto.baseUrl,
+          timeoutMs: dto.timeoutMs || provider.timeoutMs || 10000,
+          credentialsCiphertext: this.encryptionService.encryptJson(payload),
+          apiKey: null,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: actorUserId, action: 'PROVIDER_INTEGRATION_CONFIGURED',
+          entityName: 'Provider', entityId: providerId,
+          newValues: { baseUrl: dto.baseUrl, endpoints: Object.keys(dto.endpoints || {}), authenticationType: integration.authentication.type },
+        },
+      });
+      return record;
+    }, { isolationLevel: 'Serializable' });
+    return { success: true, providerId: updated.id, providerCode: updated.code, configuredEndpoints: Object.keys(dto.endpoints || {}), credentialsStoredEncrypted: true };
+  }
+
   async testProviderConnectivity(providerId: string) {
-    if (process.env.NODE_ENV !== 'test') {
-      throw new ServiceUnavailableException(
-        'Real provider connectivity checks are disabled until a verified provider HTTP adapter with authenticated health and balance endpoints is configured.',
-      );
+    const provider = await this.prisma.provider.findUnique({ where: { id: providerId } });
+    if (!provider) throw new NotFoundException(`Provider ${providerId} not found`);
+    if (provider.type !== 'EXTERNAL_API') {
+      throw new ServiceUnavailableException('Connection tests currently require an explicitly configured EXTERNAL_API provider.');
     }
-    const provider = await this.prisma.provider.findUnique({
-      where: { id: providerId },
-    });
-
-    if (!provider) {
-      throw new NotFoundException(`Provider ${providerId} not found`);
+    const config = await this.loadExternalIntegration(provider);
+    const result = await this.externalAdapter.testConnection(config);
+    let balance: any = undefined;
+    if (result.balance) {
+      balance = result.balance;
+      await this.prisma.provider.update({
+        where: { id: providerId },
+        data: { balance: result.balance.balance, currency: result.balance.currency as CurrencyCode },
+      });
     }
-
-    const adapter = this.getAdapter(provider.code);
-    const balanceInfo = await adapter.fetchBalance();
-
-    await this.prisma.provider.update({
-      where: { id: providerId },
+    await this.prisma.auditLog.create({
       data: {
-        balance: balanceInfo.balance,
-        currency: (balanceInfo.currency as CurrencyCode) || CurrencyCode.USD,
+        action: 'PROVIDER_CONNECTION_TESTED', entityName: 'Provider', entityId: providerId,
+        newValues: { status: result.status, latencyMs: result.latencyMs, httpStatus: result.httpStatus || null, balanceSynced: Boolean(balance) },
       },
     });
-
     return {
-      success: true,
-      provider: provider.name,
-      code: provider.code,
-      status: 'ONLINE',
-      balance: balanceInfo,
+      success: true, provider: provider.name, code: provider.code,
+      status: result.status, latencyMs: result.latencyMs, httpStatus: result.httpStatus,
+      balance: balance ? { currency: balance.currency, balance: balance.balance, lastUpdated: balance.lastUpdated } : undefined,
     };
   }
 }

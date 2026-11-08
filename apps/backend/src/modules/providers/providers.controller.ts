@@ -72,6 +72,31 @@ export class ProvidersController {
     return this.providersService.updateProvider(providerId, dto, actorUserId);
   }
 
+  @Patch('admin/:id/integration')
+  @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'provider-integration-config')
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Configure documented external provider API routes and encrypted authentication credentials' })
+  async updateIntegration(
+    @CurrentUser('id') actorUserId: string,
+    @Param('id') providerId: string,
+    @Body() dto: {
+      baseUrl: string;
+      authentication: { type: 'NONE' | 'BEARER' | 'API_KEY_HEADER'; secret?: string; headerName?: string };
+      endpoints: {
+        health?: { path: string; method?: 'GET' | 'POST' };
+        balance?: { path: string; method?: 'GET' | 'POST'; requestTemplate?: Record<string, unknown>; responseMapping?: { balance?: string; currency?: string } };
+        validatePlayer?: { path: string; method?: 'GET' | 'POST'; requestTemplate?: Record<string, unknown>; responseMapping?: { valid?: string; playerName?: string; zoneName?: string; errorMessage?: string } };
+        submitOrder?: { path: string; method?: 'GET' | 'POST'; requestTemplate?: Record<string, unknown>; responseMapping?: { status?: string; orderId?: string; serialNumber?: string; pinCode?: string; errorMessage?: string; errorCode?: string } };
+        checkOrderStatus?: { path: string; method?: 'GET' | 'POST'; requestTemplate?: Record<string, unknown>; responseMapping?: { status?: string; orderId?: string; serialNumber?: string; pinCode?: string; errorMessage?: string; errorCode?: string } };
+      };
+      timeoutMs?: number;
+    },
+  ) {
+    return this.providersService.updateProviderIntegration(providerId, actorUserId, dto);
+  }
+
   @Post('admin/:id/test-connection')
   @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'provider-connection-test')

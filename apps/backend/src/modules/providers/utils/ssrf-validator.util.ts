@@ -3,18 +3,6 @@ import * as net from 'net';
 
 export class SsrfValidator {
   /**
-   * Default allowed external domains for topup providers.
-   * Can be extended via PROVIDER_ALLOWED_DOMAINS environment variable.
-   */
-  private static readonly DEFAULT_ALLOWED_DOMAINS = [
-    'api.topup-provider.com',
-    'sandbox.topup-provider.com',
-    'gateway.yementopup.com',
-    'api.midasbuy.com',
-    'api.moonton.com',
-  ];
-
-  /**
    * Validates target URL against SSRF threats.
    * @param rawUrl The URL to validate.
    * @param enforceAllowlist Whether to strictly check against approved domains.
@@ -61,7 +49,10 @@ export class SsrfValidator {
       const customDomains = process.env.PROVIDER_ALLOWED_DOMAINS
         ? process.env.PROVIDER_ALLOWED_DOMAINS.split(',').map((d) => d.trim().toLowerCase())
         : [];
-      const allowed = [...this.DEFAULT_ALLOWED_DOMAINS, ...customDomains];
+      if (customDomains.length === 0) {
+        throw new BadRequestException('PROVIDER_ALLOWED_DOMAINS must contain documented provider API hostnames before connecting.');
+      }
+      const allowed = customDomains;
 
       const isAllowed = allowed.some(
         (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
