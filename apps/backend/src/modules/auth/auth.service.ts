@@ -135,8 +135,9 @@ export class AuthService {
     private redisStore: RedisIdempotencyStore,
     private encryptionService: EncryptionService,
   ) {
-    // Only load fallback memory seeds in non-production environments
-    if (process.env.NODE_ENV !== 'production') {
+    // Test fixtures only: never provision fallback identities in development,
+    // staging, or production runtimes.
+    if (process.env.NODE_ENV === 'test') {
       for (const u of SEED_USERS) {
         this.memoryUsers.set(u.id, u);
       }
@@ -223,7 +224,7 @@ export class AuthService {
       }
     } catch (err: any) {
       if (err instanceof ConflictException) throw err;
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Registration lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Registration is unavailable because the account database could not be reached.');
       }
@@ -263,7 +264,7 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || tenantId) {
         this.logger.error(`Persistent account creation failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Account registration failed because the account database is unavailable.');
       }
@@ -324,14 +325,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -383,14 +384,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Admin login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Administrative login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development admin login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -490,8 +491,8 @@ export class AuthService {
       throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
     }
 
-    const isProduction = process.env.NODE_ENV === 'production';
-    const disableBypass = process.env.DISABLE_MFA_BYPASS === 'true';
+    const allowTestMfaBypass =
+      process.env.NODE_ENV === 'test' && process.env.DISABLE_MFA_BYPASS !== 'true';
     let isTotpValid = false;
 
     // Check TOTP if user has a configured secret
@@ -499,13 +500,13 @@ export class AuthService {
     if (totpSecret) {
       isTotpValid = TotpUtil.verifyCode(dto.code, totpSecret);
     } else {
-      // In production or when bypass is disabled, users MUST have configured TOTP
-      if (isProduction || disableBypass) {
+      // Real environments must always have a configured TOTP secret.
+      if (!allowTestMfaBypass) {
         throw new ForbiddenException('لم يتم إعداد المصادقة الثنائية (MFA) لهذا الحساب بعد. يرجى التواصل مع الإدارة العليا.');
       }
 
-      // Legacy fallback in isolated local dev ONLY (strictly blocked in production/test with DISABLE_MFA_BYPASS)
-      if (dto.code === '123456') {
+      // A fixed test code is available only to isolated automated test fixtures.
+      if (allowTestMfaBypass && dto.code === '123456') {
         isTotpValid = true;
       }
     }
@@ -588,12 +589,15 @@ export class AuthService {
           isTwoFactorEnabled: true,
         },
       });
-    } catch {
-      const memUser = this.memoryUsers.get(userId);
-      if (memUser) {
-        memUser.twoFactorSecret = dto.secret;
-        memUser.isTwoFactorEnabled = true;
+    } catch (error: any) {
+      if (process.env.NODE_ENV !== 'test') {
+        this.logger.error(`MFA activation could not be persisted for user ${userId}: ${error?.message || error}`);
+        throw new ServiceUnavailableException('MFA activation could not be saved to the account database.');
       }
+      const memUser = this.memoryUsers.get(userId);
+      if (!memUser) throw new NotFoundException('Test account fixture was not found.');
+      memUser.twoFactorSecret = dto.secret;
+      memUser.isTwoFactorEnabled = true;
     }
 
     return {
@@ -677,7 +681,7 @@ export class AuthService {
         createdAt: created.createdAt,
       };
     } catch (err: any) {
-      if (caller.tenantId || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || caller.tenantId) {
         this.logger.error(`Staff account persistence failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Staff account creation is unavailable because the account database could not be reached.');
       }
@@ -827,9 +831,9 @@ export class AuthService {
         include: { wallets: true },
       });
       if (dbUser) return dbUser;
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return null;
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) return null;
     } catch (error: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
         this.logger.error(`Persistent user lookup failed: ${error?.message || error}`);
         throw new ServiceUnavailableException('The authenticated account database is unavailable.');
       }
