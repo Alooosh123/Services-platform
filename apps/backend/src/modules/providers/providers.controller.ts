@@ -37,9 +37,8 @@ export class ProvidersController {
   }
 
   @Post('admin/fund-supplier')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'supplier-funding')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Admin/Finance: Fund provider prepaid balance via bank transfer (Cash Movement)' })
@@ -60,9 +59,8 @@ export class ProvidersController {
   }
 
   @Patch('admin/:id')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
   @RateLimit(10, 60_000, 'provider-config-update')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Admin: Update provider configuration and credentials' })
@@ -75,9 +73,8 @@ export class ProvidersController {
   }
 
   @Post('admin/:id/test-connection')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'provider-connection-test')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Admin: Test provider API connectivity and sync balance' })
