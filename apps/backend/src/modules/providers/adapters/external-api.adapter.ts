@@ -1,4 +1,5 @@
 import { Injectable, Logger, ServiceUnavailableException, BadRequestException } from '@nestjs/common';
+import { lookup } from 'dns/promises';
 import { ITopupProviderAdapter } from './provider-adapter.interface';
 import {
   PlayerValidationRequest, PlayerValidationResponse, TopupProviderOrderRequest,
@@ -99,8 +100,19 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
     context: Record<string, unknown>,
   ): Promise<{ data: any; status: number; elapsedMs: number }> {
     const base = this.validateConfig(config);
-    const url = new URL(endpoint.path, base.toString().endsWith('/') ? base : base.toString() + '/');
-    if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname.replace(/\/$/, '') + '/')) {
+    let addresses: Array<{ address: string; family: number }>;
+    try {
+      addresses = await lookup(base.hostname, { all: true, verbatim: true });
+    } catch {
+      throw new ServiceUnavailableException('Provider hostname DNS lookup failed; connection was not attempted.');
+    }
+    if (!addresses.length || addresses.some((entry) => SsrfValidator.isPrivateOrRestrictedIp(entry.address))) {
+      throw new BadRequestException('Provider hostname resolves to a private or restricted IP address (SSRF blocked).');
+    }
+    const basePath = base.pathname.endsWith('/') ? base.pathname : base.pathname + '/';
+    const endpointPath = endpoint.path.replace(/^\/+/, '');
+    const url = new URL(endpointPath, new URL(basePath, base.origin));
+    if (url.origin !== base.origin || !url.pathname.startsWith(basePath)) {
       throw new BadRequestException('Provider endpoint escaped its configured base path.');
     }
     const headers: Record<string, string> = { Accept: 'application/json' };

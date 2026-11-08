@@ -456,7 +456,6 @@ export class PayoutsService {
     dto?: ApprovePayoutDto,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
     if (process.env.NODE_ENV !== 'test') return this.approvePersistentPayout(staffUserId, payoutId, dto) as any;
-    if (process.env.NODE_ENV !== 'test') return this.approvePersistentPayout(staffUserId, payoutId, dto);
     this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 

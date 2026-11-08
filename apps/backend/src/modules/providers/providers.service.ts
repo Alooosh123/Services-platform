@@ -289,6 +289,39 @@ export class ProvidersService {
     return { success: true, providerId: updated.id, providerCode: updated.code, configuredEndpoints: Object.keys(dto.endpoints || {}), credentialsStoredEncrypted: true };
   }
 
+
+  async checkExternalProviderOrderStatus(
+    providerId: string,
+    actorUserId: string,
+    providerOrderId: string,
+    internalOrderNumber: string,
+  ) {
+    if (!actorUserId || !providerOrderId?.trim() || !internalOrderNumber?.trim()) {
+      throw new BadRequestException('Authenticated actor, provider transaction ID and internal order number are required.');
+    }
+    const provider = await this.prisma.provider.findUnique({ where: { id: providerId } });
+    if (!provider || !provider.isActive || provider.type !== 'EXTERNAL_API') {
+      throw new ServiceUnavailableException('An active EXTERNAL_API provider configuration is required.');
+    }
+    const config = await this.loadExternalIntegration(provider);
+    const result = await this.externalAdapter.checkOrderStatus(
+      providerOrderId.trim(), internalOrderNumber.trim(), config,
+    );
+    await this.prisma.auditLog.create({
+      data: {
+        userId: actorUserId, action: 'PROVIDER_ORDER_STATUS_CHECKED',
+        entityName: 'Provider', entityId: providerId,
+        newValues: {
+          internalOrderNumber: internalOrderNumber.trim(),
+          providerOrderId: providerOrderId.trim(),
+          providerStatus: result.status, successful: result.success,
+          reconciliationRequired: result.status === 'PENDING',
+        },
+      },
+    });
+    return result;
+  }
+
   async testProviderConnectivity(providerId: string, actorUserId: string) {
     if (!actorUserId) throw new BadRequestException('Authenticated operator identity is required.');
     const provider = await this.prisma.provider.findUnique({ where: { id: providerId } });

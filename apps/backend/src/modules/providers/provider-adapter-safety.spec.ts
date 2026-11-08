@@ -53,7 +53,7 @@ describe('Provider adapter safety gates', () => {
       } as any);
 
       expect(result.isValid).toBe(false);
-      expect(result.errorMessage).toMatch(/لم يتم ربط واجهة تحقق فعلية/);
+      expect(result.errorMessage).toMatch(/Player validation API is not configured/);
     });
 
     it('routes unconfigured external submissions to manual review instead of returning success', async () => {

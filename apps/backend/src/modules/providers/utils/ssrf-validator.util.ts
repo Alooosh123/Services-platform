@@ -104,6 +104,10 @@ export class SsrfValidator {
       return false;
     }
 
+    // IPv4-mapped IPv6 addresses must receive the same RFC1918 checks as IPv4.
+    const mapped = ip.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return this.isPrivateOrRestrictedIp(mapped[1]);
+
     // IPv6 checks
     if (net.isIPv6(ip)) {
       const cleanIp = ip.toLowerCase();

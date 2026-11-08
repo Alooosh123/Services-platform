@@ -97,6 +97,23 @@ export class ProvidersController {
     return this.providersService.updateProviderIntegration(providerId, actorUserId, dto);
   }
 
+
+  @Post('admin/:id/orders/check-status')
+  @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
+  @RateLimit(20, 60_000, 'provider-order-status-check')
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR, UserRole.FINANCE_MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Query a provider transaction using its documented order-status endpoint; does not settle the internal order' })
+  async checkOrderStatus(
+    @CurrentUser('id') actorUserId: string,
+    @Param('id') providerId: string,
+    @Body() body: { providerOrderId: string; internalOrderNumber: string },
+  ) {
+    return this.providersService.checkExternalProviderOrderStatus(
+      providerId, actorUserId, body.providerOrderId, body.internalOrderNumber,
+    );
+  }
+
   @Post('admin/:id/test-connection')
   @UseGuards(JwtAuthGuard, RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'provider-connection-test')
