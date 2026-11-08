@@ -502,7 +502,7 @@ export default function AdminDepositsPage() {
                       </td>
                       <td className="py-4 px-4">
                         <span className="font-bold text-white block">
-                          {dep.user?.fullName || dep.senderName || 'عميل تجريبي'}
+                          {dep.user?.fullName || dep.senderName || 'العميل'}
                         </span>
                         <span className="text-[10px] text-slate-400 block font-mono">
                           {dep.user?.phone || dep.senderPhone}
