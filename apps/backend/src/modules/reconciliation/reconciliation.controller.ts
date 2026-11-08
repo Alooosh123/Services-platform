@@ -60,7 +60,21 @@ export class ReconciliationController {
     @Param('itemId') itemId: string,
     @Body('notes') notes: string,
     @Body('action') action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
+    @Body('debitAccountCode') debitAccountCode?: string,
+    @Body('creditAccountCode') creditAccountCode?: string,
   ) {
-    return this.reconciliationService.resolveDiscrepancy(staffId, itemId, notes, action || 'ADJUST_LEDGER');
+    return this.reconciliationService.resolveDiscrepancy(
+      staffId, itemId, notes, action || 'ADJUST_LEDGER', debitAccountCode, creditAccountCode,
+    );
+  }
+
+  @Post('adjustments/:id/approve')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'reconciliation-adjustment-approve')
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Finance: approve and post a separately proposed balanced ledger adjustment' })
+  async approveAdjustment(@CurrentUser('id') staffId: string, @Param('id') id: string) {
+    return this.reconciliationService.approvePersistentAdjustment(staffId, id);
   }
 }
