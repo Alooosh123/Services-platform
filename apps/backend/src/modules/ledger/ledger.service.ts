@@ -640,6 +640,8 @@ export class LedgerService {
     return this.prisma.$transaction(execute, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
+  }
+
   /**
    * Holds an amount in the customer wallet's lockedBalance atomically to prevent double spending.
    * Throws if wallet is frozen or if available balance (balance - lockedBalance) < amount.

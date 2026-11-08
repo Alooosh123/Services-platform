@@ -608,7 +608,7 @@ export class ReconciliationService {
     if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       return this.proposePersistentAdjustment(staffUserId, itemId, notes, action, debitAccountCode, creditAccountCode);
     }
-    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
+    if (getCurrentTenantId()) {
       throw new ServiceUnavailableException(
         'Discrepancy resolution is disabled outside automated tests until database-backed resolution and ledger-adjustment approvals are implemented.',
       );
