@@ -367,6 +367,8 @@ model User {
   reviewedServiceAccountReviews ServiceAccountReview[] @relation("ServiceAccountReviewOperator")
   proposedReconciliationAdjustments ReconciliationAdjustmentRequest[] @relation("ReconciliationAdjustmentProposer")
   approvedReconciliationAdjustments ReconciliationAdjustmentRequest[] @relation("ReconciliationAdjustmentApprover")
+  ownerEarningsAllocations OwnerEarningsAllocation[] @relation("OwnerEarningsAllocationOwner")
+  createdOwnerEarningsAllocations OwnerEarningsAllocation[] @relation("OwnerEarningsAllocationCreator")
 
   @@index([parentAgentId])
   @@index([tenantId, role, status])
@@ -1472,6 +1474,23 @@ model ReconciliationAdjustmentRequest {
   @@index([itemId, status])
   @@index([status, createdAt])
   @@map("reconciliation_adjustment_requests")
+}
+
+
+model OwnerEarningsAllocation {
+  id             String       @id @default(uuid())
+  userId         String
+  currency       CurrencyCode
+  amount         Decimal      @db.Decimal(18, 4)
+  idempotencyKey String       @unique
+  ledgerTxId     String?      @unique
+  createdByUserId String
+  notes          String?
+  createdAt      DateTime     @default(now())
+  owner     User @relation("OwnerEarningsAllocationOwner", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy User @relation("OwnerEarningsAllocationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  @@index([userId, currency, createdAt])
+  @@map("owner_earnings_allocations")
 }
 
 model SupportTicket {

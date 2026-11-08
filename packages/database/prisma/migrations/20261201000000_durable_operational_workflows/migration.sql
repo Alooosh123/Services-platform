@@ -31,3 +31,23 @@ CREATE INDEX "reconciliation_adjustment_requests_status_createdAt_idx" ON "recon
 ALTER TABLE "reconciliation_adjustment_requests" ADD CONSTRAINT "reconciliation_adjustment_requests_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "reconciliation_items"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "reconciliation_adjustment_requests" ADD CONSTRAINT "reconciliation_adjustment_requests_proposedByUserId_fkey" FOREIGN KEY ("proposedByUserId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "reconciliation_adjustment_requests" ADD CONSTRAINT "reconciliation_adjustment_requests_approvedByUserId_fkey" FOREIGN KEY ("approvedByUserId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- Owner earnings allocations must be backed by a posted balanced ledger transaction.
+CREATE TABLE "owner_earnings_allocations" (
+ "id" TEXT NOT NULL,
+ "userId" TEXT NOT NULL,
+ "currency" "CurrencyCode" NOT NULL,
+ "amount" DECIMAL(18,4) NOT NULL,
+ "idempotencyKey" TEXT NOT NULL,
+ "ledgerTxId" TEXT,
+ "createdByUserId" TEXT NOT NULL,
+ "notes" TEXT,
+ "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CONSTRAINT "owner_earnings_allocations_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX "owner_earnings_allocations_idempotencyKey_key" ON "owner_earnings_allocations"("idempotencyKey");
+CREATE UNIQUE INDEX "owner_earnings_allocations_ledgerTxId_key" ON "owner_earnings_allocations"("ledgerTxId");
+CREATE INDEX "owner_earnings_allocations_userId_currency_createdAt_idx" ON "owner_earnings_allocations"("userId","currency","createdAt");
+ALTER TABLE "owner_earnings_allocations" ADD CONSTRAINT "owner_earnings_allocations_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "owner_earnings_allocations" ADD CONSTRAINT "owner_earnings_allocations_createdByUserId_fkey" FOREIGN KEY ("createdByUserId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+UPDATE "payout_beneficiaries" SET "verificationStatus" = 'PENDING_REVIEW' WHERE "financeApprovedBy" IS NULL;
