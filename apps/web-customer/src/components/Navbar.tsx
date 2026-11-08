@@ -12,6 +12,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { apiRequest, getCustomerToken } from '../lib/api';
+import { ThemeToggle } from './ThemeToggle';
 
 export function Navbar() {
   const [unreadCount, setUnreadCount] = useState(0);
@@ -82,6 +83,7 @@ export function Navbar() {
         </nav>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          <ThemeToggle />
           <Link
             href="/notifications"
             className="relative p-2 text-slate-400 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl transition-colors shadow-sm"

@@ -21,6 +21,7 @@ import {
   Rocket,
   FileCheck2,
 } from 'lucide-react';
+import { ThemeToggle } from './ThemeToggle';
 
 const navItems = [
   { name: 'لوحة المؤشرات', href: '/', icon: LayoutDashboard },
@@ -64,13 +65,20 @@ export function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              title={item.name}
+              className={[
+                'flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors',
                 isActive
                   ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60',
+              ].join(' ')}
             >
-              <Icon className={`w-4 h-4 ${isActive ? 'text-indigo-400' : 'text-slate-500'}`} />
+              <Icon
+                className={[
+                  'w-4 h-4',
+                  isActive ? 'text-indigo-400' : 'text-slate-500',
+                ].join(' ')}
+              />
               {item.name}
             </Link>
           );
@@ -78,6 +86,9 @@ export function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-slate-800 bg-slate-900/50">
+        <div className="mb-3 flex items-center justify-start px-2">
+          <ThemeToggle />
+        </div>
         <div className="flex items-center gap-3 px-2">
           <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center font-semibold text-xs text-indigo-400 border border-slate-700">
             SA
