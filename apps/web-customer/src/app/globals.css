@@ -3,12 +3,163 @@
 @tailwind utilities;
 
 :root {
-  --background: #090d16;
-  --foreground: #f3f4f6;
+  color-scheme: light;
+  --asaas-slate-50: 37 32 26;
+  --asaas-slate-100: 40 35 29;
+  --asaas-slate-200: 68 58 48;
+  --asaas-slate-300: 102 90 75;
+  --asaas-slate-400: 129 117 100;
+  --asaas-slate-500: 154 139 118;
+  --asaas-slate-600: 180 165 143;
+  --asaas-slate-700: 209 196 175;
+  --asaas-slate-800: 231 221 207;
+  --asaas-slate-900: 250 247 241;
+  --asaas-slate-950: 237 231 218;
+  --asaas-indigo-50: 249 244 235;
+  --asaas-indigo-100: 242 232 214;
+  --asaas-indigo-200: 230 213 184;
+  --asaas-indigo-300: 214 190 145;
+  --asaas-indigo-400: 198 164 110;
+  --asaas-indigo-500: 186 149 85;
+  --asaas-indigo-600: 170 130 67;
+  --asaas-indigo-700: 145 109 62;
+  --asaas-indigo-800: 116 87 51;
+  --asaas-indigo-900: 88 67 43;
+  --asaas-indigo-950: 60 45 31;
+  --asaas-line: 218 207 189;
+  --asaas-accent: 186 149 85;
+  --asaas-paper: 252 249 245;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --asaas-slate-50: 255 249 237;
+  --asaas-slate-100: 245 235 220;
+  --asaas-slate-200: 224 208 181;
+  --asaas-slate-300: 195 173 141;
+  --asaas-slate-400: 171 150 122;
+  --asaas-slate-500: 142 123 99;
+  --asaas-slate-600: 112 96 78;
+  --asaas-slate-700: 81 69 58;
+  --asaas-slate-800: 54 44 38;
+  --asaas-slate-900: 33 27 24;
+  --asaas-slate-950: 20 17 17;
+  --asaas-indigo-50: 250 243 229;
+  --asaas-indigo-100: 242 228 198;
+  --asaas-indigo-200: 232 207 160;
+  --asaas-indigo-300: 224 190 128;
+  --asaas-indigo-400: 216 179 111;
+  --asaas-indigo-500: 216 179 111;
+  --asaas-indigo-600: 195 153 88;
+  --asaas-indigo-700: 163 126 70;
+  --asaas-indigo-800: 125 94 53;
+  --asaas-indigo-900: 83 61 39;
+  --asaas-indigo-950: 47 34 25;
+  --asaas-line: 69 56 48;
+  --asaas-accent: 216 179 111;
+  --asaas-paper: 31 25 23;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: rgb(var(--asaas-slate-950));
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  color: rgb(var(--asaas-slate-100));
+  background-color: rgb(var(--asaas-slate-950));
+  background-image:
+    radial-gradient(ellipse 46rem 30rem at 8% -8%, rgb(var(--asaas-accent) / 0.13), transparent 68%),
+    radial-gradient(ellipse 40rem 28rem at 96% 18%, rgb(var(--asaas-accent) / 0.075), transparent 70%);
+  background-attachment: fixed;
+  font-family: Tahoma, 'Segoe UI', Arial, sans-serif;
+  line-height: 1.65;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+.text-white {
+  color: rgb(var(--asaas-slate-100)) !important;
+}
+
+::selection {
+  color: rgb(var(--asaas-slate-100));
+  background: rgb(var(--asaas-accent) / 0.25);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: 160ms;
+  transition-timing-function: ease-out;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--asaas-accent) / 0.9);
+  outline-offset: 3px;
+}
+
+input,
+textarea,
+select {
+  color: rgb(var(--asaas-slate-100));
+}
+
+.asaas-theme-toggle {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--asaas-line) / 0.9);
+  border-radius: 14px;
+  background: rgb(var(--asaas-slate-900) / 0.82);
+  color: rgb(var(--asaas-slate-300));
+  box-shadow: 0 5px 18px rgb(34 31 31 / 0.07), inset 0 1px 0 rgb(255 255 255 / 0.3);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.asaas-theme-toggle:hover {
+  color: rgb(var(--asaas-indigo-500));
+  border-color: rgb(var(--asaas-accent) / 0.55);
+  transform: translateY(-1px);
+}
+
+.asaas-theme-toggle--floating {
+  position: fixed;
+  inset-inline-start: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 70;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

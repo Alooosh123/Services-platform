@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Script from 'next/script';
 import './globals.css';
 import { Sidebar } from '../components/Sidebar';
 
@@ -14,6 +15,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ar" dir="rtl">
+      <head>
+        <Script src="/theme-init.js" strategy="beforeInteractive" />
+      </head>
       <body className="bg-slate-950 text-slate-100 min-h-screen">
         <Sidebar />
         <div className="pr-64 flex flex-col min-h-screen">
