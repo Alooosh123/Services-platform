@@ -76,6 +76,17 @@ export class DepositsService {
     }
   }
 
+  /**
+   * DepositRequest has no tenantId column. Tenant ownership is enforced through
+   * its required User relation, which is the authoritative tenant membership.
+   */
+  private getDepositTenantScopeWhere(): Record<string, any> {
+    const tenantId = getCurrentTenantId();
+    return tenantId
+      ? { user: { is: { tenantId } } }
+      : {};
+  }
+
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
@@ -392,7 +403,10 @@ export class DepositsService {
   async getCustomerDeposits(userId: string) {
     try {
       const deposits = await this.prisma.depositRequest.findMany({
-        where: { userId },
+        where: {
+          userId,
+          ...this.getDepositTenantScopeWhere(),
+        },
         orderBy: { createdAt: 'desc' },
         include: {
           statusHistory: { orderBy: { createdAt: 'desc' } },
@@ -420,10 +434,15 @@ export class DepositsService {
    */
   async getDepositById(depositId: string, userId?: string, isAdmin = false) {
     try {
-      const deposit = await this.prisma.depositRequest.findUnique({
-        where: { id: depositId },
+      const where: Record<string, any> = {
+        id: depositId,
+        ...this.getDepositTenantScopeWhere(),
+      };
+      if (!isAdmin && userId) where.userId = userId;
+      const deposit = await this.prisma.depositRequest.findFirst({
+        where,
         include: {
-          user: { select: { id: true, fullName: true, email: true, phone: true } },
+          user: { select: { id: true, fullName: true, email: true, phone: true, tenantId: true } },
           wallet: true,
           statusHistory: { orderBy: { createdAt: 'desc' } },
         },
@@ -461,7 +480,7 @@ export class DepositsService {
    */
   async getAllDepositsForAdmin(filters?: { status?: DepositStatus; search?: string }) {
     try {
-      const where: any = {};
+      const where: any = { ...this.getDepositTenantScopeWhere() };
       if (filters?.status) {
         where.status = filters.status;
       }
@@ -575,9 +594,6 @@ export class DepositsService {
    * Strictly posts double-entry transaction and credits customer wallet atomically.
    */
   async approveAndCredit(staffUserId: string, depositId: string, dto?: ReviewDepositDto) {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      throw new ServiceUnavailableException('Deposit approval must use a persisted tenant-owned request.');
-    }
     if (process.env.NODE_ENV === 'test' && this.memoryDeposits.has(depositId)) {
       const deposit = this.memoryDeposits.get(depositId)!;
       if (deposit.status === DepositStatus.CREDITED || deposit.status === DepositStatus.APPROVED) {
@@ -606,9 +622,12 @@ export class DepositsService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const deposit = await tx.depositRequest.findUnique({
-        where: { id: depositId },
-        include: { wallet: true },
+      const deposit = await tx.depositRequest.findFirst({
+        where: {
+          id: depositId,
+          ...this.getDepositTenantScopeWhere(),
+        },
+        include: { wallet: true, user: { select: { id: true, tenantId: true } } },
       });
       if (!deposit) {
         throw new NotFoundException(`طلب الإيداع ${depositId} غير موجود`);
@@ -621,7 +640,11 @@ export class DepositsService {
       }
 
       const claimed = await tx.depositRequest.updateMany({
-        where: { id: depositId, status: deposit.status },
+        where: {
+          id: depositId,
+          status: deposit.status,
+          ...this.getDepositTenantScopeWhere(),
+        },
         data: {
           status: DepositStatus.APPROVED,
           reviewedByUserId: staffUserId,
@@ -702,8 +725,12 @@ export class DepositsService {
     }
 
     try {
-      const updated = await this.prisma.depositRequest.update({
-        where: { id: depositId },
+      const claimed = await this.prisma.depositRequest.updateMany({
+        where: {
+          id: depositId,
+          status: deposit.status,
+          ...this.getDepositTenantScopeWhere(),
+        },
         data: {
           status: DepositStatus.REJECTED,
           reviewedByUserId: staffUserId,
@@ -721,6 +748,10 @@ export class DepositsService {
         include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
       });
 
+      if (claimed.count !== 1) {
+        throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر.');
+      }
+      const updated = await this.getDepositById(depositId, undefined, true);
       return {
         success: true,
         message: 'تم رفض طلب الإيداع وإشعار العميل بالسبب',
@@ -768,6 +799,7 @@ export class DepositsService {
         where: {
           referenceNumber: trimmed,
           ...(paymentMethodCode ? { paymentMethodCode } : {}),
+          ...this.getDepositTenantScopeWhere(),
         },
         include: {
           user: { select: { id: true, fullName: true, phone: true } },
@@ -844,7 +876,7 @@ export class DepositsService {
     timestampHeader?: string,
     rawBody?: Buffer,
   ): Promise<DepositConfirmResult> {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
       const config = await this.prisma.paymentChannelConfig.findFirst({
         where: { tenantId: getCurrentTenantId() || null, code: channelCode },
       });
@@ -998,8 +1030,8 @@ export class DepositsService {
           const w = matchedUser.wallets.find((wl) => wl.currency === payload.currency);
           if (w) targetWalletId = w.id;
         }
-      } catch {
-        // memory fallback
+      } catch (error: any) {
+        this.assertMemoryFallbackAllowed('resolve webhook sender account', error);
         if (payload.senderPhone === '+967770000003') {
           matchedUserId = 'user-customer-003';
           targetWalletId = 'w-cust-yer';
