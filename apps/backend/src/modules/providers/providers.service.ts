@@ -46,12 +46,12 @@ export class ProvidersService {
   }
 
   async validatePlayer(providerCode: string, req: PlayerValidationRequest): Promise<PlayerValidationResponse> {
-    const adapter = this.getAdapter(providerCode);
-    if (providerCode.trim().toUpperCase() === 'EXTERNAL_API') {
-      const provider = await this.prisma.provider.findFirst({ where: { code: providerCode.trim().toUpperCase(), isActive: true } });
-      if (!provider) throw new NotFoundException('Active external provider configuration was not found.');
+    const code = providerCode.trim().toUpperCase();
+    const provider = await this.prisma.provider.findFirst({ where: { code, isActive: true } });
+    if (provider?.type === 'EXTERNAL_API') {
       return this.externalAdapter.validatePlayer(req, await this.loadExternalIntegration(provider));
     }
+    const adapter = this.getAdapter(code);
     return adapter.validatePlayer(req);
   }
 
@@ -71,16 +71,16 @@ export class ProvidersService {
       throw new NotFoundException(`Provider ${providerId} not found`);
     }
 
-    const adapter = this.getAdapter(provider.code);
     if (!provider.isActive) throw new ServiceUnavailableException('Provider is disabled.');
-    const integration = provider.code === 'EXTERNAL_API' ? await this.loadExternalIntegration(provider) : undefined;
+    const adapter = provider.type === 'EXTERNAL_API' ? this.externalAdapter : this.getAdapter(provider.code);
+    const integration = provider.type === 'EXTERNAL_API' ? await this.loadExternalIntegration(provider) : undefined;
     const startTime = Date.now();
 
     let response: TopupProviderOrderResponse;
     let errorMessage: string | undefined;
 
     try {
-      response = provider.code === 'EXTERNAL_API'
+      response = provider.type === 'EXTERNAL_API'
         ? await this.externalAdapter.submitOrder(request, integration)
         : await adapter.submitOrder(request);
     } catch (err: any) {
@@ -157,13 +157,18 @@ export class ProvidersService {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.baseUrl !== undefined) data.baseUrl = dto.baseUrl;
     if (dto.apiKey !== undefined && dto.apiKey && !dto.apiKey.includes('****')) {
-      data.credentialsCiphertext = this.encryptionService.encryptJson({ apiKey: dto.apiKey });
       data.apiKey = null;
     }
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.type !== undefined) data.type = dto.type as any;
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (dto.apiKey !== undefined && dto.apiKey && !dto.apiKey.includes('****')) {
+        const previousCredentials = provider.credentialsCiphertext
+          ? this.encryptionService.decryptJson<Record<string, unknown>>(provider.credentialsCiphertext)
+          : {};
+        data.credentialsCiphertext = this.encryptionService.encryptJson({ ...previousCredentials, apiKey: dto.apiKey });
+      }
       const providerUpdate = await tx.provider.update({
         where: { id: providerId },
         data,
@@ -244,7 +249,10 @@ export class ProvidersService {
     if (dto.authentication?.type && dto.authentication.type !== 'NONE' && !secret) {
       throw new BadRequestException('Authentication secret is required for the selected authentication type.');
     }
-    const integration = {
+    const integration: ExternalProviderIntegrationConfig = {
+      providerCode: provider.code,
+      baseUrl: dto.baseUrl,
+      timeoutMs: dto.timeoutMs || provider.timeoutMs || 10000,
       authentication: {
         type: dto.authentication?.type || 'NONE',
         secret,
@@ -252,6 +260,7 @@ export class ProvidersService {
       },
       endpoints: dto.endpoints,
     };
+    this.externalAdapter.validateIntegrationConfig(integration);
     const payload = {
       ...previous,
       apiKey: undefined,
@@ -280,7 +289,8 @@ export class ProvidersService {
     return { success: true, providerId: updated.id, providerCode: updated.code, configuredEndpoints: Object.keys(dto.endpoints || {}), credentialsStoredEncrypted: true };
   }
 
-  async testProviderConnectivity(providerId: string) {
+  async testProviderConnectivity(providerId: string, actorUserId: string) {
+    if (!actorUserId) throw new BadRequestException('Authenticated operator identity is required.');
     const provider = await this.prisma.provider.findUnique({ where: { id: providerId } });
     if (!provider) throw new NotFoundException(`Provider ${providerId} not found`);
     if (provider.type !== 'EXTERNAL_API') {
@@ -298,6 +308,7 @@ export class ProvidersService {
     }
     await this.prisma.auditLog.create({
       data: {
+        userId: actorUserId,
         action: 'PROVIDER_CONNECTION_TESTED', entityName: 'Provider', entityId: providerId,
         newValues: { status: result.status, latencyMs: result.latencyMs, httpStatus: result.httpStatus || null, balanceSynced: Boolean(balance) },
       },

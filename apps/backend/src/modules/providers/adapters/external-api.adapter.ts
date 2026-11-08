@@ -40,6 +40,10 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
     return SsrfValidator.validateUrl(url, true);
   }
 
+  validateIntegrationConfig(config: ExternalProviderIntegrationConfig): void {
+    this.validateConfig(config);
+  }
+
   private validateConfig(config: ExternalProviderIntegrationConfig): URL {
     if (!config || !config.baseUrl || !config.endpoints) {
       throw new ServiceUnavailableException('Provider integration configuration is incomplete.');

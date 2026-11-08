@@ -103,8 +103,8 @@ export class ProvidersController {
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Admin: Test provider API connectivity and sync balance' })
-  async testConnection(@Param('id') providerId: string) {
-    return this.providersService.testProviderConnectivity(providerId);
+  async testConnection(@CurrentUser('id') actorUserId: string, @Param('id') providerId: string) {
+    return this.providersService.testProviderConnectivity(providerId, actorUserId);
   }
 
   @Post('validate-player')
