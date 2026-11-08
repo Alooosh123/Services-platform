@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  NotFoundException,
   HttpException,
   HttpStatus,
   ServiceUnavailableException,
