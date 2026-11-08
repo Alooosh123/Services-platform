@@ -79,6 +79,8 @@ export class AuthController {
   }
 
   @Post('mfa/enable')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'auth-mfa-enable')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -88,6 +90,8 @@ export class AuthController {
   }
 
   @Post('transaction-pin')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'auth-transaction-pin-set')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -100,6 +104,8 @@ export class AuthController {
   }
 
   @Post('admin/create-staff')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'auth-admin-create-staff')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER)
   @ApiBearerAuth()
@@ -110,6 +116,8 @@ export class AuthController {
   }
 
   @Post('logout')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(10, 60_000, 'auth-logout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -119,6 +127,8 @@ export class AuthController {
   }
 
   @Post('revoke-all-sessions')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(3, 60_000, 'auth-revoke-sessions')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
