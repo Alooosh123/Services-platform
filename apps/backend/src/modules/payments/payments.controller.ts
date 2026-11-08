@@ -15,9 +15,9 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateCardTopupDto, CreateUsdtTopupDto } from './dto/create-global-topup.dto';
-import { PaymentsService } from './paimport { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { PaymentsService } from './payments.service';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
 import { RateLimit } from '../../security/rate-limit.decorator';
-yments.service';
 import { PaymentChannelCode } from '@digital-topup/shared';
 import { NotFoundException } from '@nestjs/common';
 
