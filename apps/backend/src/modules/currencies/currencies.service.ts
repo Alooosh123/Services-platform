@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { CurrencyCode, LedgerTransactionType, CurrencyExchangePayload } from '@digital-topup/shared';
@@ -12,6 +12,8 @@ const DEMO_CURRENCIES = [
 
 @Injectable()
 export class CurrenciesService {
+  private readonly logger = new Logger(CurrenciesService.name);
+
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
@@ -26,11 +28,16 @@ export class CurrenciesService {
         where: { isActive: true },
         orderBy: { isBase: 'desc' },
       });
-      if (currs && currs.length > 0) return currs;
-    } catch {
-      // fallback
+      if (Array.isArray(currs)) return currs;
+      throw new ServiceUnavailableException('Currency catalog returned an invalid database response.');
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'test') {
+        this.logger.warn(`Using test-only currency fixtures: ${error?.message || error}`);
+        return DEMO_CURRENCIES;
+      }
+      this.logger.error(`Currency catalog lookup failed: ${error?.message || error}`);
+      throw new ServiceUnavailableException('The currency catalog is temporarily unavailable.');
     }
-    return DEMO_CURRENCIES;
   }
 
   /**
