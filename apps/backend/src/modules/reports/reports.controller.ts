@@ -15,7 +15,9 @@ import { ReportsService } from './reports.service';
 import { ProfitEngineService } from './profit-engine.service';
 import { DailyCloseService } from './daily-close.service';
 import { OwnerEarningsService } from './owner-earnings.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '.import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
+./auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import {
@@ -68,6 +70,8 @@ export class ReportsController {
   // DAILY CLOSE & IMMUTABLE SNAPSHOTS (AT-13, AT-23)
   // ----------------------------------------------------
   @Post('daily-close')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(3, 60_000, 'reports-daily-close')
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'AT-13 & AT-23: Close business day, calculate metrics and persist immutable snapshot' })
   async closeBusinessDay(@Request() req: any, @Body() dto: CreateDailyCloseDto) {
@@ -90,6 +94,8 @@ export class ReportsController {
   }
 
   @Post('daily-close/:date/adjustment')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'reports-daily-close-adjustment')
   @Roles(UserRole.OWNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'AT-23: Add adjustment record to closed daily report without modifying baseline snapshot' })
   async addDailyCloseAdjustment(
@@ -132,6 +138,8 @@ export class ReportsController {
   }
 
   @Post('owner-earnings/beneficiaries')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'owner-beneficiary-create')
   @Roles(UserRole.OWNER)
   @ApiOperation({ summary: 'Register a payout beneficiary account with verified ownership' })
   async createBeneficiary(@Request() req: any, @Body() dto: CreatePayoutBeneficiaryDto) {
@@ -148,6 +156,8 @@ export class ReportsController {
   }
 
   @Post('owner-earnings/payouts/request')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(3, 60_000, 'owner-payout-request')
   @Roles(UserRole.OWNER)
   @ApiOperation({ summary: 'AT-17 & AT-18: Request owner earnings payout with TOTP MFA and liquidity validation' })
   async requestOwnerPayout(@Request() req: any, @Body() dto: OwnerPayoutRequestDto) {
@@ -164,6 +174,8 @@ export class ReportsController {
   }
 
   @Post('owner-earnings/payouts/:id/approve')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'owner-payout-approve')
   @Roles(UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'AT-17: Finance Officer approves owner payout request (Four-Eyes Principle)' })
   async approveOwnerPayout(
@@ -176,6 +188,8 @@ export class ReportsController {
   }
 
   @Post('owner-earnings/payouts/:id/confirm')
+  @UseGuards(RedisRateLimitGuard)
+  @RateLimit(5, 60_000, 'owner-payout-confirm')
   @Roles(UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'AT-17: Confirm external wire execution, attach receipt reference, and post balanced ledger entry' })
   async confirmOwnerPayout(
