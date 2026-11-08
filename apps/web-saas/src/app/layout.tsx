@@ -17,10 +17,8 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ar" dir="rtl">
-      <head>
-        <Script src="/theme-init.js" strategy="beforeInteractive" />
-      </head>
       <body>
+        <Script src="/theme-init.js" strategy="beforeInteractive" />
         <ThemeToggle className="asaas-theme-toggle--floating" />
         {children}
       </body>
