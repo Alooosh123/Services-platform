@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, UseGuards, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Patch, Param, Body, UseGuards, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProvidersService } from './providers.service';
 import { SupplierBalanceService } from './supplier-balance.service';
@@ -95,7 +95,10 @@ export class ProvidersController {
       fields: Record<string, string>;
     },
   ) {
-    return this.providersService.validatePlayer(body.providerCode || 'MOCK', {
+    if (!body.providerCode?.trim()) {
+      throw new BadRequestException('A configured providerCode is required; MOCK is restricted to automated tests.');
+    }
+    return this.providersService.validatePlayer(body.providerCode, {
       serviceId: body.serviceId,
       fields: body.fields,
     });
