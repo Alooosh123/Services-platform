@@ -538,23 +538,39 @@ export class DepositsService {
     }
 
     try {
-      const updated = await this.prisma.depositRequest.update({
-        where: { id: depositId },
-        data: {
-          status: DepositStatus.UNDER_REVIEW,
-          reviewedByUserId: staffUserId,
-          reviewNotes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
-          statusHistory: {
-            create: {
-              fromStatus: DepositStatus.PENDING,
-              toStatus: DepositStatus.UNDER_REVIEW,
-              changedByUserId: staffUserId,
-              notes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
-            },
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.depositRequest.updateMany({
+          where: {
+            id: depositId,
+            status: DepositStatus.PENDING,
+            ...this.getDepositTenantScopeWhere(),
           },
-        },
-        include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
-      });
+          data: {
+            status: DepositStatus.UNDER_REVIEW,
+            reviewedByUserId: staffUserId,
+            reviewNotes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر.');
+        }
+        await tx.depositStatusHistory.create({
+          data: {
+            depositRequestId: depositId,
+            fromStatus: DepositStatus.PENDING,
+            toStatus: DepositStatus.UNDER_REVIEW,
+            changedByUserId: staffUserId,
+            notes: dto?.reviewNotes || 'بدأ التدقيق المالي ومطابقة الحوالة البنكية',
+          },
+        });
+        return tx.depositRequest.findFirst({
+          where: {
+            id: depositId,
+            ...this.getDepositTenantScopeWhere(),
+          },
+          include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
         success: true,
@@ -725,33 +741,41 @@ export class DepositsService {
     }
 
     try {
-      const claimed = await this.prisma.depositRequest.updateMany({
-        where: {
-          id: depositId,
-          status: deposit.status,
-          ...this.getDepositTenantScopeWhere(),
-        },
-        data: {
-          status: DepositStatus.REJECTED,
-          reviewedByUserId: staffUserId,
-          rejectionReason: dto.rejectionReason,
-          reviewNotes: dto.notes || dto.rejectionReason,
-          statusHistory: {
-            create: {
-              fromStatus: deposit.status,
-              toStatus: DepositStatus.REJECTED,
-              changedByUserId: staffUserId,
-              notes: `تم الرفض: ${dto.rejectionReason}`,
-            },
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.depositRequest.updateMany({
+          where: {
+            id: depositId,
+            status: deposit.status,
+            ...this.getDepositTenantScopeWhere(),
           },
-        },
-        include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
-      });
+          data: {
+            status: DepositStatus.REJECTED,
+            reviewedByUserId: staffUserId,
+            rejectionReason: dto.rejectionReason,
+            reviewNotes: dto.notes || dto.rejectionReason,
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر.');
+        }
+        await tx.depositStatusHistory.create({
+          data: {
+            depositRequestId: depositId,
+            fromStatus: deposit.status,
+            toStatus: DepositStatus.REJECTED,
+            changedByUserId: staffUserId,
+            notes: `تم الرفض: ${dto.rejectionReason}`,
+          },
+        });
+        return tx.depositRequest.findFirst({
+          where: {
+            id: depositId,
+            ...this.getDepositTenantScopeWhere(),
+          },
+          include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-      if (claimed.count !== 1) {
-        throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر.');
-      }
-      const updated = await this.getDepositById(depositId, undefined, true);
       return {
         success: true,
         message: 'تم رفض طلب الإيداع وإشعار العميل بالسبب',
