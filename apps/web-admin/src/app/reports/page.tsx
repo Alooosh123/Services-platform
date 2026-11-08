@@ -1190,11 +1190,7 @@ export default function AdminReportsPage() {
                     </option>
                   ))}
                   {ownerBeneficiaries.length === 0 && (
-                    {ownerBeneficiaries.map((beneficiary) => (
-              <option key={beneficiary.id} value={beneficiary.id}>
-                {beneficiary.beneficiaryName || beneficiary.name || beneficiary.id}
-              </option>
-            ))}
+                    <option value="" disabled>لا يوجد مستفيد معتمد متاح حالياً</option>
                   )}
                 </select>
               </div>
