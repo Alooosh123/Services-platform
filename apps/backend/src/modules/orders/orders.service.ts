@@ -35,7 +35,6 @@ const serializePlayerFields = (value: unknown): string => {
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly userOrderTimestamps = new Map<string, number[]>();
 
   constructor(
     private prisma: PrismaService,
@@ -82,17 +81,9 @@ export class OrdersService {
       return existingOrder;
     }
 
-    // Anti-Fraud Velocity Limit: Max 10 orders per minute.
-    // Idempotent replays are handled above and do not consume the velocity budget.
-    const now = Date.now();
-    const timestamps = (this.userOrderTimestamps.get(userId) || []).filter((t) => now - t < 60000);
-    if (timestamps.length >= 10) {
-      throw new BadRequestException(
-        'تم تجاوز حد السرعة المسموح للطلبات (أقصى حد: 10 طلبات في الدقيقة). يرجى الانتظار قليلاً.',
-      );
-    }
-    timestamps.push(now);
-    this.userOrderTimestamps.set(userId, timestamps);
+    // The RedisRateLimitGuard on OrdersController enforces the 10/minute
+    // distributed limit after authentication; avoid a second process-local
+    // counter that would drift between replicas and grow without a bounded key lifecycle.
 
     // 2. Fetch Product, Prices, and Service
     if (!targetProductId) {
