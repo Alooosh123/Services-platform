@@ -103,9 +103,8 @@ export class OrdersController {
   }
 
   @Post('admin/:id/fulfill-manual')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(RolesGuard, RedisRateLimitGuard)
   @RateLimit(10, 60_000, 'orders-admin-manual-fulfill')
-  @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR)
   @ApiOperation({ summary: 'Admin: Manually fulfill order with voucher pin or proof' })
   async fulfillManual(
@@ -117,9 +116,8 @@ export class OrdersController {
   }
 
   @Post('admin/:id/refund')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'orders-admin-refund')
-  @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE, UserRole.ADMIN)
   @ApiOperation({ summary: 'Admin: Refund order and reverse ledger entries' })
   async refundOrder(
@@ -131,9 +129,8 @@ export class OrdersController {
   }
 
   @Post('admin/:id/retry')
-  @UseGuards(RedisRateLimitGuard)
+  @UseGuards(RolesGuard, RedisRateLimitGuard)
   @RateLimit(5, 60_000, 'orders-admin-retry')
-  @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FULFILLMENT_OPERATOR)
   @ApiOperation({ summary: 'Admin: Trigger manual fulfillment/retry' })
   async retryOrder(
