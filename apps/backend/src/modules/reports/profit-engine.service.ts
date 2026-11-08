@@ -215,9 +215,9 @@ export class ProfitEngineService {
     const estimatedProfit = Math.round((pendingRetail - pendingCost) * 100) / 100;
 
     const customerWalletLiabilities = Number(walletsAgg._sum.balance || 0);
-    const supplierPayables = this.memorySupplierPayables.get(currency) || 0;
-    const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100; // 5% Contingency / Refund reserve
-    const actualCashBalance = this.memoryCashBalances.get(currency) || 1000000;
+    const supplierPayables = Number(suppliersAgg._sum.balance || 0);
+    const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100;
+    const actualCashBalance = Math.max(0, ledgerCash);
 
     // Strict Liquidity Formula
     const freeCash = actualCashBalance - customerWalletLiabilities - supplierPayables - operatingReserve;

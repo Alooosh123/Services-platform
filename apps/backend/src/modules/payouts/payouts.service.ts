@@ -242,7 +242,7 @@ export class PayoutsService {
     return this.prisma.$transaction(async (tx) => {
       const payout = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
       if (!payout) throw new NotFoundException('Payout request was not found.');
-      if (![PayoutStatus.REQUESTED, PayoutStatus.APPROVED].includes(payout.status)) {
+      if (!['REQUESTED', 'APPROVED'].includes(String(payout.status))) {
         throw new BadRequestException('Only unexecuted requested or approved payouts can be rejected.');
       }
       if (payout.userId === staffUserId || (payout.approvedByUserId && payout.approvedByUserId === staffUserId)) {
@@ -456,9 +456,6 @@ export class PayoutsService {
     dto?: ApprovePayoutDto,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
     if (process.env.NODE_ENV !== 'test') return this.approvePersistentPayout(staffUserId, payoutId, dto);
-    if (process.env.NODE_ENV !== 'test') return this.holdForManualPayoutDispatch(staffUserId, payoutId);
-    if (process.env.NODE_ENV !== 'test') return this.confirmPersistentManualPayout(staffUserId, payoutId, externalRef, notes);
-    if (process.env.NODE_ENV !== 'test') return this.rejectPersistentPayout(staffUserId, payoutId, reason);
     this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
@@ -505,6 +502,7 @@ export class PayoutsService {
     staffUserId: string,
     payoutId: string,
   ): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.holdForManualPayoutDispatch(staffUserId, payoutId) as any;
     this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
@@ -651,6 +649,7 @@ export class PayoutsService {
     externalRef: string,
     notes?: string,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.confirmPersistentManualPayout(staffUserId, payoutId, externalRef, notes) as any;
     this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 
@@ -705,6 +704,7 @@ export class PayoutsService {
     payoutId: string,
     reason: string,
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    if (process.env.NODE_ENV !== 'test') return this.rejectPersistentPayout(staffUserId, payoutId, reason) as any;
     this.assertPersistentPayoutWorkflow();
     const payout = await this.getPayoutById(payoutId);
 

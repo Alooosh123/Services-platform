@@ -386,7 +386,7 @@ export class ReconciliationService {
       where: { id: itemId }, include: { batch: true },
     });
     if (!item) throw new NotFoundException('Reconciliation discrepancy was not found.');
-    if (![ReconciliationStatus.DISCREPANCY, ReconciliationStatus.UNKNOWN_EXTERNAL, ReconciliationStatus.UNKNOWN_INTERNAL].includes(item.status)) {
+    if (!['DISCREPANCY', 'UNKNOWN_EXTERNAL', 'UNKNOWN_INTERNAL'].includes(String(item.status))) {
       throw new BadRequestException('This reconciliation item is not an open financial discrepancy.');
     }
     const difference = new Prisma.Decimal(item.expectedAmount).sub(item.actualAmount).abs();
@@ -474,11 +474,11 @@ export class ReconciliationService {
         entries: [
           {
             accountCode: request.debitAccountCode, debitAmount: Number(amount), creditAmount: 0,
-            currency: request.currency, notes: 'Reconciliation discrepancy debit',
+            currency: request.currency as CurrencyCode, notes: 'Reconciliation discrepancy debit',
           },
           {
             accountCode: request.creditAccountCode, debitAmount: 0, creditAmount: Number(amount),
-            currency: request.currency, notes: 'Reconciliation discrepancy credit',
+            currency: request.currency as CurrencyCode, notes: 'Reconciliation discrepancy credit',
           },
         ],
       }, tx);

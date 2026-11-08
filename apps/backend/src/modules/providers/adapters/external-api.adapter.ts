@@ -179,7 +179,7 @@ export class ExternalApiAdapter implements ITopupProviderAdapter {
       };
     }
     const { data } = await this.requestJson(config, config.endpoints.submitOrder, {
-      orderId: request.orderId, orderNumber: request.orderNumber, serviceId: request.serviceId,
+      orderId: request.orderId, orderNumber: request.orderNumber,
       providerSku: request.providerSku, playerFields: request.playerFields,
       amount: request.amount, currency: request.currency,
     });

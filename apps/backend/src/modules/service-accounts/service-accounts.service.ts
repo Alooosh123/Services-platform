@@ -561,7 +561,6 @@ export class ServiceAccountsService {
    */
   async unlinkAccount(userId: string, accountId: string) {
     if (process.env.NODE_ENV !== 'test') return this.unlinkPersistentAccount(userId, accountId);
-    if (process.env.NODE_ENV !== 'test') return this.evaluatePersistentAccountRisk(userId, accountId);
     this.assertPersistentStorageAvailable();
     const account = this.memoryAccounts.get(accountId);
     if (!account) {
@@ -594,6 +593,7 @@ export class ServiceAccountsService {
    * Evaluates risk of an existing account with BOLA check
    */
   async evaluateAccountRisk(userId: string, accountId: string): Promise<AiEvaluationReport> {
+    if (process.env.NODE_ENV !== 'test') return this.evaluatePersistentAccountRisk(userId, accountId);
     this.assertPersistentStorageAvailable();
     const account = this.memoryAccounts.get(accountId);
     if (!account) {
