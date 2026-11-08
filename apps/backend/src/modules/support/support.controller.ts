@@ -11,9 +11,9 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SupportService } from './support.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guaimport { RateLimit } from '../../security/rate-limit.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RateLimit } from '../../security/rate-limit.decorator';
 import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
-rd';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import {
