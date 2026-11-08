@@ -31,13 +31,6 @@ export default function GameTopupPage() {
   // Form State
   const [playerInputs, setPlayerInputs] = useState<Record<string, string>>({});
   const [selectedPackage, setSelectedPackage] = useState<any>(null);
-  const [playerValidation, setPlayerValidation] = useState<{
-    tested: boolean;
-    valid?: boolean;
-    playerName?: string;
-    message?: string;
-  }>({ tested: false });
-  const [isValidating, setIsValidating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [orderResult, setOrderResult] = useState<any>(null);
@@ -118,40 +111,7 @@ export default function GameTopupPage() {
 
   const handleInputChange = (key: string, val: string) => {
     setPlayerInputs((prev) => ({ ...prev, [key]: val }));
-    setPlayerValidation({ tested: false });
     setCheckoutError(null);
-  };
-
-  const handleValidatePlayer = async () => {
-    if (!playerInputs.player_id && !playerInputs.userId) {
-      alert('يرجى إدخال معرف اللاعب أولاً');
-      return;
-    }
-    setIsValidating(true);
-    try {
-      const data = await apiRequest<any>('/providers/validate-player', {
-        method: 'POST',
-        body: JSON.stringify({
-          providerCode: 'MOCK',
-          serviceId: game?.id,
-          fields: playerInputs,
-        }),
-      });
-      setPlayerValidation({
-        tested: true,
-        valid: data.isValid === true,
-        playerName: data.isValid === true ? data.playerName : undefined,
-        message: data.errorMessage || (data.isValid === true ? undefined : 'لم يتم التحقق من معرف اللاعب'),
-      });
-    } catch (err) {
-      setPlayerValidation({
-        tested: true,
-        valid: false,
-        message: err instanceof Error ? err.message : 'تعذر الاتصال بخدمة التحقق',
-      });
-    } finally {
-      setIsValidating(false);
-    }
   };
 
   const handleCheckout = async () => {
@@ -363,32 +323,9 @@ export default function GameTopupPage() {
                 </div>
               ))}
 
-              {/* Verify Player ID Button & Badge */}
-              <div className="pt-2 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleValidatePlayer}
-                  disabled={isValidating}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white rounded-xl transition-colors"
-                >
-                  {isValidating ? 'جاري الفحص المباشر...' : 'التحقق من اسم الحساب'}
-                </button>
-
-                {playerValidation.tested && (
-                  <div>
-                    {playerValidation.valid ? (
-                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-lg border border-emerald-500/20">
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        اسم اللاعب الموثق: <strong>{playerValidation.playerName}</strong>
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-400 bg-rose-500/10 px-3 py-1 rounded-lg border border-rose-500/20">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {playerValidation.message || 'معرف اللاعب غير موجود'}
-                      </div>
-                    )}
-                  </div>
-                )}
+              <div className="pt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+                التحقق الآلي من اسم اللاعب غير متاح لهذا المنتج حالياً؛ لم يتم ربط واجهة مزود موثقة.
+                راجع معرف المستفيد قبل الدفع. يتحقق النظام من صيغة الحقول المطلوبة فقط، ولا يدّعي التحقق من الحساب لدى اللعبة.
               </div>
             </div>
           </div>
