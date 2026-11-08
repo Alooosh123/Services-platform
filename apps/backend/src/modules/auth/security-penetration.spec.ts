@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { PrivacyService } from '../privacy/privacy.service';
@@ -27,6 +28,7 @@ import {
   UserRole,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
 
 describe('P09: Security, Anti-Fraud, Compliance & Pen-Testing (Master AT-08, AT-09, AT-19)', () => {
   let privacyService: PrivacyService;
@@ -368,49 +370,49 @@ describe('P09: Security, Anti-Fraud, Compliance & Pen-Testing (Master AT-08, AT-
       ).rejects.toThrow(/تبريد أمني/);
     });
 
-    it('should enforce velocity rate limit when user places rapid orders within 1 minute', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({
-        role: UserRole.CUSTOMER,
-        tierId: null,
-        tier: null,
-        parentAgentId: null,
-        agentPricingMode: 'PERCENTAGE',
-        parentAgentCommissionPercent: 0,
-        parentAgent: null,
-      });
-      mockPrisma.product.findUnique.mockResolvedValue({
-        id: 'pkg-60uc',
-        serviceId: 'srv-pubg',
-        name: '60 UC',
-        isAvailable: true,
-        prices: [{ currency: CurrencyCode.YER, retailPrice: 1500, costPrice: 1200, isAvailable: true }],
-        service: { fields: [] },
-      });
-      mockPrisma.wallet.findUnique.mockResolvedValue(walletA);
-      mockPrisma.order.findUnique.mockResolvedValue(null);
-      mockPrisma.order.create.mockResolvedValue(orderA);
+    it('should enforce the 10-per-minute checkout velocity limit through the Redis HTTP guard', async () => {
+      const limitOptions = { limit: 10, windowMs: 60_000, scope: 'orders-checkout' };
+      const counters = new Map<string, number>();
+      const rateStore = {
+        incrementRateLimit: jest.fn(async (key: string) => {
+          const next = (counters.get(key) || 0) + 1;
+          counters.set(key, next);
+          return { count: next, ttlMs: 60_000 };
+        }),
+      };
+      const reflector = {
+        getAllAndOverride: jest.fn(() => limitOptions),
+      };
+      const guard = new RedisRateLimitGuard(reflector as any, rateStore as any);
+      const response = { setHeader: jest.fn() };
+      const request = {
+        ip: '203.0.113.80',
+        socket: { remoteAddress: '203.0.113.80' },
+        tenantId: 'tenant-velocity-test',
+        user: { id: 'velocity-user-1' },
+        header: () => undefined,
+      };
+      const context = {
+        getHandler: () => ({}),
+        getClass: () => ({}),
+        switchToHttp: () => ({
+          getRequest: () => request,
+          getResponse: () => response,
+        }),
+      } as any;
 
-      const userId = 'velocity-user-1';
-
-      // 10 orders succeed
+      // Ten requests are admitted by the same Redis-backed guard attached to
+      // POST /orders/checkout; the eleventh is rejected before PIN verification.
       for (let i = 0; i < 10; i++) {
-        await ordersService.createOrder(userId, {
-          productId: 'pkg-60uc',
-          currency: CurrencyCode.YER,
-          idempotencyKey: `IDEMP-VEL-${i}`,
-          playerFields: { player_id: '123' },
-        });
+        await expect(guard.canActivate(context)).resolves.toBe(true);
       }
 
-      // 11th order within 60s must be blocked
-      await expect(
-        ordersService.createOrder(userId, {
-          productId: 'pkg-60uc',
-          currency: CurrencyCode.YER,
-          idempotencyKey: 'IDEMP-VEL-11',
-          playerFields: { player_id: '123' },
-        }),
-      ).rejects.toThrow(/حد السرعة المسموح/);
+      await expect(guard.canActivate(context)).rejects.toMatchObject({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+      });
+      expect(rateStore.incrementRateLimit).toHaveBeenCalledTimes(22);
+      expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '10');
+      expect(response.setHeader).toHaveBeenCalledWith('Retry-After', '60');
     });
   });
 
