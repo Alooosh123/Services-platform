@@ -4,6 +4,7 @@ import { DeterministicRulesEngine } from './engine/deterministic-rules.engine';
 import { AiRiskEvaluatorService } from './engine/ai-risk-evaluator.service';
 import { ServiceCapabilitiesConfig } from './capabilities/service-capabilities.config';
 import { PrismaService } from '../../database/prisma.service';
+import { EncryptionService } from '../../security/encryption.service';
 import {
   ServiceAccountStatus,
   AccountReviewStatus,
@@ -40,6 +41,7 @@ describe('ServiceAccountsModule (Phase 4 - Modules 02, 03, 04, 05)', () => {
         DeterministicRulesEngine,
         AiRiskEvaluatorService,
         { provide: PrismaService, useValue: mockPrisma },
+        EncryptionService,
       ],
     }).compile();
 
