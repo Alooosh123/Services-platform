@@ -940,7 +940,7 @@ export class DepositsService {
 
     // 2. Verify timestamped HMAC whenever a shared webhook secret is configured.
     const webhookSecret = process.env.WEBHOOK_HMAC_SECRET;
-    if (process.env.NODE_ENV === 'production' && !webhookSecret) {
+    if (String(process.env.NODE_ENV) === 'production' && !webhookSecret) {
       throw new UnauthorizedException('Webhook signature verification is not configured.');
     }
     if (webhookSecret) {
