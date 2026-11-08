@@ -15,9 +15,9 @@ import { ReportsService } from './reports.service';
 import { ProfitEngineService } from './profit-engine.service';
 import { DailyCloseService } from './daily-close.service';
 import { OwnerEarningsService } from './owner-earnings.service';
-import { JwtAuthGuard } from '.import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RedisRateLimitGuard } from '../../security/redis-rate-limit.guard';
 import { RateLimit } from '../../security/rate-limit.decorator';
-./auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import {
