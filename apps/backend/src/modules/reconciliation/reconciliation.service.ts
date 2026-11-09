@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { LedgerService } from '../ledger/ledger.service';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
@@ -19,6 +20,7 @@ import {
   DiscrepancyType,
   RunReconciliationDto,
   ReconciliationBatchSummary,
+  LedgerTransactionType,
 } from '@digital-topup/shared';
 
 @Injectable()
@@ -27,6 +29,7 @@ export class ReconciliationService {
     private prisma: PrismaService,
     private depositsService: DepositsService,
     private payoutsService: PayoutsService,
+    private ledgerService: LedgerService,
   ) {}
 
   private get tenantId(): string | null {

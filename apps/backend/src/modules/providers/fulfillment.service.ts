@@ -208,20 +208,7 @@ export class FulfillmentService {
       } catch (settlementError: any) {
         const reason = `أفاد المزود بنجاح التنفيذ لكن تعذر إكمال التسوية المالية: ${settlementError?.message || settlementError}. تم الاحتفاظ بحجز رصيد العميل ومنع إعادة الإرسال الآلي.`;
         this.logger.error(`Order ${order.orderNumber} requires settlement review: ${reason}`);
-        await this.prisma.order.updateMany({
-          where: { id: order.id, status: OrderStatus.Processing },
-          data: {
-            status: OrderStatus.ManualReview,
-            errorMessage: reason,
-            statusHistory: {
-              create: {
-                oldStatus: OrderStatus.Processing,
-                newStatus: OrderStatus.ManualReview,
-                reason,
-              },
-            },
-          },
-        });
+        await this.moveProcessingOrderToManualReview(order.id, reason);
         return {
           success: false,
           status: OrderStatus.ManualReview,

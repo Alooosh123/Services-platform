@@ -55,7 +55,7 @@ export class ServiceAccountsService {
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const [completedOrdersCount, recentLinkAttempts, revocations] = await Promise.all([
-      this.prisma.order.count({ where: { userId, tenantId, status: 'Completed' } }),
+      this.prisma.order.count({ where: { userId, status: 'Completed' } }),
       this.prisma.linkedServiceAccount.count({ where: { userId, tenantId, createdAt: { gte: since } } }),
       this.prisma.linkedServiceAccount.count({ where: { userId, tenantId, status: ServiceAccountStatus.REVOKED } }),
     ]);
