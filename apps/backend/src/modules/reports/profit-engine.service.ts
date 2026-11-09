@@ -75,6 +75,20 @@ export class ProfitEngineService {
       whereBase.createdAt = { gte: startOfDay, lte: endOfDay };
     }
 
+    const settledOrderRefs = await this.prisma.ledgerTransaction.findMany({
+      where: {
+        referenceType: 'ORDER',
+        status: 'POSTED',
+        referenceId: {
+          in: (await this.prisma.order.findMany({
+            where: { ...whereBase, status: OrderStatus.Completed },
+            select: { orderNumber: true },
+          })).map((order) => order.orderNumber),
+        },
+      },
+      select: { referenceId: true },
+    });
+    const financiallySettledOrderNumbers = [...new Set(settledOrderRefs.map((row) => row.referenceId).filter(Boolean))];
     const [
       totalOrders,
       completedOrders,
@@ -87,7 +101,13 @@ export class ProfitEngineService {
       customerPayoutsAgg,
     ] = await Promise.all([
       this.prisma.order.count({ where: whereBase }),
-      this.prisma.order.count({ where: { ...whereBase, status: OrderStatus.Completed } }),
+      this.prisma.order.count({
+        where: {
+          ...whereBase,
+          status: OrderStatus.Completed,
+          orderNumber: { in: financiallySettledOrderNumbers },
+        },
+      }),
       this.prisma.order.count({
         where: {
           ...whereBase,
@@ -109,7 +129,11 @@ export class ProfitEngineService {
         },
       }),
       this.prisma.order.aggregate({
-        where: { ...whereBase, status: OrderStatus.Completed },
+        where: {
+          ...whereBase,
+          status: OrderStatus.Completed,
+          orderNumber: { in: financiallySettledOrderNumbers },
+        },
         _sum: {
           snapshotRetailPrice: true,
           snapshotCostPrice: true,

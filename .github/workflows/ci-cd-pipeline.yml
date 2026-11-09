@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, develop, 'release/*', 'production-completion']
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, 'production-completion']
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

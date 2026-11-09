@@ -181,14 +181,6 @@ export class SupplierBalanceService {
         const balanceBefore = balanceBeforeDecimal.toNumber();
         const balanceAfter = balanceAfterDecimal.toNumber();
 
-        // Legacy platform account balance is retained only for platform-scope operations.
-        if (!tenantId) {
-          await tx.provider.update({
-            where: { id: provider.id },
-            data: { balance: new Prisma.Decimal(balanceAfter) },
-          });
-        }
-
         const ledgerResult = await this.ledgerService.recordSupplierFunding({
           providerCode: actualProviderCode,
           currency: dto.currency,
