@@ -83,7 +83,12 @@ export class PayoutsService {
     if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('مبلغ السحب يجب أن يكون موجباً وصالحاً.');
 
     const existing = await this.prisma.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
-    if (existing) return { success: true, payout: this.mapPayout(existing) };
+    if (existing) {
+      if (existing.userId !== userId) {
+        throw new ConflictException('مفتاح عدم التكرار مستخدم في طلب يعود إلى عميل آخر.');
+      }
+      return { success: true, payout: this.mapPayout(existing) };
+    }
 
     const adapter = this.adapterRegistry.getAdapter(dto.channelCode);
     if (!adapter) throw new BadRequestException(`قناة السحب ${dto.channelCode} غير مدعومة.`);
@@ -111,7 +116,10 @@ export class PayoutsService {
     try {
       const row = await this.prisma.$transaction(async (tx) => {
         const duplicate = await tx.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
-        if (duplicate) return duplicate;
+        if (duplicate) {
+          if (duplicate.userId !== userId) throw new ConflictException('مفتاح عدم التكرار يعود إلى عميل آخر.');
+          return duplicate;
+        }
         await this.ledgerService.holdWalletBalance(wallet.id, dto.amount, tx);
         return tx.payoutRequest.create({
           data: {
@@ -133,7 +141,10 @@ export class PayoutsService {
     } catch (error: any) {
       if (error?.code === 'P2002') {
         const duplicate = await this.prisma.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
-        if (duplicate) return { success: true, payout: this.mapPayout(duplicate) };
+        if (duplicate) {
+          if (duplicate.userId !== userId) throw new ConflictException('مفتاح عدم التكرار يعود إلى عميل آخر.');
+          return { success: true, payout: this.mapPayout(duplicate) };
+        }
       }
       this.logger.error(`Atomic payout request failed: ${error?.message || error}`);
       throw new ServiceUnavailableException('تعذر حفظ طلب السحب وحجز الرصيد معاً؛ لم يتم استخدام مخزن مؤقت.');

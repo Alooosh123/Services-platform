@@ -298,7 +298,10 @@ export class OwnerEarningsService {
     const duplicate = await this.prisma.ownerPayoutTransaction.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
     });
-    if (duplicate) return { success: true, payout: this.mapPayout(duplicate), message: 'هذا الطلب مسجل مسبقاً.' };
+    if (duplicate) {
+      if (duplicate.userId !== userId) throw new ConflictException('مفتاح عدم التكرار يعود إلى حساب آخر.');
+      return { success: true, payout: this.mapPayout(duplicate), message: 'هذا الطلب مسجل مسبقاً.' };
+    }
 
     const ownerId = await this.resolvePlatformOwnerId(userId);
     if (ownerId !== userId) throw new ForbiddenException('طلب سحب الأرباح متاح لحساب المالك فقط.');
@@ -325,7 +328,10 @@ export class OwnerEarningsService {
       const duplicateInside = await tx.ownerPayoutTransaction.findUnique({
         where: { idempotencyKey: dto.idempotencyKey },
       });
-      if (duplicateInside) return duplicateInside;
+      if (duplicateInside) {
+        if (duplicateInside.userId !== ownerId) throw new ConflictException('مفتاح عدم التكرار يعود إلى حساب مالك آخر.');
+        return duplicateInside;
+      }
       const wallet = await tx.ownerEarningsWallet.findFirst({
         where: { userId: ownerId, currency: dto.currency, tenantId: this.tenantId },
       });
