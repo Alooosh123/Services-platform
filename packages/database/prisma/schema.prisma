@@ -1146,6 +1146,7 @@ model ReconciliationItem {
   createdAt        DateTime             @default(now())
 
   batch ReconciliationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  adjustment ReconciliationAdjustment?
 
   @@index([batchId, status])
   @@index([referenceNumber])
@@ -1607,6 +1608,7 @@ model SaaSTenant {
   linkedServiceAccounts  LinkedServiceAccount[]
   linkedServiceConsents  LinkedServiceConsent[]
   linkedServiceReviews   LinkedServiceAccountReview[]
+  reconciliationAdjustments ReconciliationAdjustment[]
 
   @@index([status])
   @@map("saas_tenants")
@@ -1743,4 +1745,34 @@ model LinkedServiceAccountReview {
   @@index([userId, status])
   @@index([serviceAccountId])
   @@map("linked_service_account_reviews")
+}
+
+
+// A finance-proposed, independently-approved ledger adjustment for a
+// reconciliation discrepancy. Debit/credit accounts are explicitly selected
+// by finance; no automatic chart-of-account direction is inferred.
+model ReconciliationAdjustment {
+  id                 String   @id @default(uuid())
+  tenantId           String?
+  itemId             String   @unique
+  debitAccountCode   String
+  creditAccountCode  String
+  amount             Decimal  @db.Decimal(18, 4)
+  currency           CurrencyCode
+  status             String   @default("PENDING_APPROVAL")
+  proposedByUserId   String
+  approvedByUserId   String?
+  proposalNotes      String
+  approvalNotes      String?
+  ledgerTxId         String?
+  proposedAt         DateTime @default(now())
+  approvedAt         DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant SaaSTenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  item   ReconciliationItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
+  @@map("reconciliation_adjustments")
 }

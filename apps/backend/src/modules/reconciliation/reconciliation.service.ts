@@ -318,4 +318,193 @@ export class ReconciliationService {
         : 'تم عزل الحركة الخارجية ورفض مطابقتها بعد مراجعة مستقلة؛ لم يتغير أي رصيد.',
     };
   }
+  async proposeLedgerAdjustment(
+    financeUserId: string,
+    itemId: string,
+    debitAccountCode: string,
+    creditAccountCode: string,
+    notes: string,
+  ) {
+    if (!notes?.trim()) throw new BadRequestException('سبب التسوية المالية إلزامي.');
+    const debitCode = debitAccountCode?.trim();
+    const creditCode = creditAccountCode?.trim();
+    if (!debitCode || !creditCode || debitCode === creditCode) {
+      throw new BadRequestException('يجب اختيار حساب مدين وحساب دائن مختلفين من دليل الحسابات.');
+    }
+
+    const item = await this.prisma.reconciliationItem.findUnique({
+      where: { id: itemId },
+      include: { batch: true },
+    });
+    if (!item || item.batch.tenantId !== this.tenantId) {
+      throw new NotFoundException('عنصر المطابقة غير موجود ضمن نطاقك.');
+    }
+    if (
+      item.status !== ReconciliationStatus.DISCREPANCY ||
+      ![DiscrepancyType.AMOUNT_MISMATCH, DiscrepancyType.FEE_MISMATCH].includes(item.discrepancyType as DiscrepancyType) ||
+      item.expectedAmount.lessThanOrEqualTo(0) ||
+      item.actualAmount.lessThanOrEqualTo(0)
+    ) {
+      throw new BadRequestException('اقتراح قيد تسوية متاح فقط لفروقات مبلغ/رسوم بين حركتين موجودتين وبالعملة نفسها؛ لا يشمل الحركات المجهولة أو اختلاف العملات أو المراجع المكررة.');
+    }
+
+    const amount = item.actualAmount.sub(item.expectedAmount).abs();
+    if (amount.lessThanOrEqualTo(0)) throw new BadRequestException('قيمة الفرق تساوي صفراً.');
+    const scopedDebitCode = this.ledgerService.scopeAccountCode(debitCode);
+    const scopedCreditCode = this.ledgerService.scopeAccountCode(creditCode);
+    const accounts = await this.prisma.ledgerAccount.findMany({
+      where: { code: { in: [scopedDebitCode, scopedCreditCode] }, currency: item.currency },
+      select: { code: true, currency: true },
+    });
+    if (accounts.length !== 2) {
+      throw new BadRequestException('يجب أن يكون الحسابان موجودين مسبقاً في دليل الحسابات وبالعملة نفسها؛ لن ينشئ النظام حسابات تلقائياً للتسويات.');
+    }
+
+    return this.prisma.reconciliationAdjustment.create({
+      data: {
+        tenantId: this.tenantId,
+        itemId,
+        debitAccountCode: debitCode,
+        creditAccountCode: creditCode,
+        amount,
+        currency: item.currency,
+        status: 'PENDING_APPROVAL',
+        proposedByUserId: financeUserId,
+        proposalNotes: notes.trim(),
+      },
+    });
+  }
+
+  async approveLedgerAdjustment(
+    approverUserId: string,
+    adjustmentId: string,
+    approvalNotes: string,
+  ) {
+    if (!approvalNotes?.trim()) throw new BadRequestException('ملاحظات اعتماد التسوية مطلوبة.');
+    return this.prisma.$transaction(async (tx) => {
+      const adjustment = await tx.reconciliationAdjustment.findUnique({
+        where: { id: adjustmentId },
+        include: { item: { include: { batch: true } } },
+      });
+      if (!adjustment || adjustment.tenantId !== this.tenantId) {
+        throw new NotFoundException('طلب التسوية غير موجود ضمن نطاقك.');
+      }
+      if (adjustment.status !== 'PENDING_APPROVAL') {
+        throw new ConflictException('تمت معالجة طلب التسوية مسبقاً.');
+      }
+      if (adjustment.proposedByUserId === approverUserId) {
+        throw new ForbiddenException('مبدأ الرقابة الثنائية يمنع مقدم الاقتراح من اعتماده.');
+      }
+      const item = adjustment.item;
+      if (
+        item.status !== ReconciliationStatus.DISCREPANCY ||
+        ![DiscrepancyType.AMOUNT_MISMATCH, DiscrepancyType.FEE_MISMATCH].includes(item.discrepancyType as DiscrepancyType) ||
+        item.expectedAmount.lessThanOrEqualTo(0) ||
+        item.actualAmount.lessThanOrEqualTo(0)
+      ) {
+        throw new ConflictException('لم تعد حالة عنصر المطابقة تسمح بترحيل هذه التسوية.');
+      }
+      const expectedAmount = item.actualAmount.sub(item.expectedAmount).abs();
+      if (!expectedAmount.equals(adjustment.amount) || item.currency !== adjustment.currency) {
+        throw new ConflictException('تغيرت قيمة الفرق أو العملة منذ اقتراح التسوية.');
+      }
+
+      const debitCode = this.ledgerService.scopeAccountCode(adjustment.debitAccountCode);
+      const creditCode = this.ledgerService.scopeAccountCode(adjustment.creditAccountCode);
+      const accounts = await tx.ledgerAccount.findMany({
+        where: { code: { in: [debitCode, creditCode] }, currency: adjustment.currency },
+        select: { code: true, currency: true },
+      });
+      if (accounts.length !== 2 || debitCode === creditCode) {
+        throw new BadRequestException('حسابات التسوية لم تعد صالحة أو لا تطابق العملة.');
+      }
+
+      const ledger = await this.ledgerService.recordDoubleEntryTransaction({
+        txNumber: 'LTX-RECON-ADJ-' + adjustment.id,
+        type: LedgerTransactionType.ADJUSTMENT,
+        referenceType: 'RECONCILIATION_ADJUSTMENT',
+        referenceId: adjustment.id,
+        idempotencyKey: 'RECON-ADJUST-' + adjustment.id,
+        createdByUserId: approverUserId,
+        notes: 'تسوية فرق المطابقة: ' + approvalNotes.trim(),
+        entries: [
+          {
+            accountCode: adjustment.debitAccountCode,
+            debitAmount: Number(adjustment.amount),
+            creditAmount: 0,
+            currency: adjustment.currency,
+            notes: 'حساب مدين لتسوية فرق المطابقة ' + item.referenceNumber,
+          },
+          {
+            accountCode: adjustment.creditAccountCode,
+            debitAmount: 0,
+            creditAmount: Number(adjustment.amount),
+            currency: adjustment.currency,
+            notes: 'حساب دائن لتسوية فرق المطابقة ' + item.referenceNumber,
+          },
+        ],
+      }, tx);
+      const ledgerTxId = ledger?.transaction?.id || ledger?.transaction?.txNumber;
+      if (!ledgerTxId) throw new ServiceUnavailableException('لم يتم إنشاء قيد دفتر الأستاذ؛ ألغيت التسوية.');
+
+      await tx.reconciliationAdjustment.update({
+        where: { id: adjustmentId },
+        data: {
+          status: 'POSTED',
+          approvedByUserId: approverUserId,
+          approvalNotes: approvalNotes.trim(),
+          ledgerTxId: String(ledgerTxId),
+          approvedAt: new Date(),
+        },
+      });
+      await tx.reconciliationItem.update({
+        where: { id: item.id },
+        data: {
+          status: ReconciliationStatus.RESOLVED_MANUAL,
+          resolvedAt: new Date(),
+          resolvedByUserId: approverUserId,
+          notes: [item.notes, 'تم ترحيل قيد تسوية معتمد ' + ledgerTxId].filter(Boolean).join(' | '),
+        },
+      });
+      const openCount = await tx.reconciliationItem.count({
+        where: {
+          batchId: item.batchId,
+          status: {
+            in: [
+              ReconciliationStatus.DISCREPANCY,
+              ReconciliationStatus.UNKNOWN_EXTERNAL,
+              ReconciliationStatus.UNKNOWN_INTERNAL,
+              ReconciliationStatus.PENDING_REVIEW,
+            ],
+          },
+        },
+      });
+      if (openCount === 0) {
+        await tx.reconciliationBatch.update({
+          where: { id: item.batchId },
+          data: { status: 'RESOLVED' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: approverUserId,
+          action: 'RECONCILIATION_LEDGER_ADJUSTMENT_POSTED',
+          entityName: 'ReconciliationAdjustment',
+          entityId: adjustmentId,
+          newValues: {
+            itemId: item.id,
+            debitAccountCode: adjustment.debitAccountCode,
+            creditAccountCode: adjustment.creditAccountCode,
+            amount: adjustment.amount.toString(),
+            currency: adjustment.currency,
+            ledgerTxId: String(ledgerTxId),
+            proposedByUserId: adjustment.proposedByUserId,
+            approvedByUserId: approverUserId,
+          },
+        },
+      });
+      return tx.reconciliationAdjustment.findUnique({ where: { id: adjustmentId } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
 }

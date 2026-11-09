@@ -47,6 +47,34 @@ export class ReconciliationController {
   }
 
   @Roles(UserRole.FINANCE_MANAGER)
+  @Post('items/:itemId/adjustment/propose')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Finance: propose a balanced ledger adjustment for a validated amount/fee discrepancy' })
+  async proposeLedgerAdjustment(
+    @CurrentUser('id') staffId: string,
+    @Param('itemId') itemId: string,
+    @Body('debitAccountCode') debitAccountCode: string,
+    @Body('creditAccountCode') creditAccountCode: string,
+    @Body('notes') notes: string,
+  ) {
+    return this.reconciliationService.proposeLedgerAdjustment(
+      staffId, itemId, debitAccountCode, creditAccountCode, notes,
+    );
+  }
+
+  @Roles(UserRole.FINANCE_MANAGER)
+  @Post('adjustments/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Finance: independently approve and post the proposed double-entry adjustment' })
+  async approveLedgerAdjustment(
+    @CurrentUser('id') staffId: string,
+    @Param('id') id: string,
+    @Body('approvalNotes') approvalNotes: string,
+  ) {
+    return this.reconciliationService.approveLedgerAdjustment(staffId, id, approvalNotes);
+  }
+
+  @Roles(UserRole.FINANCE_MANAGER)
   @Post('resolve-discrepancy/:itemId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Manually resolve reconciliation discrepancy or dispute' })
