@@ -744,6 +744,7 @@ export class LedgerService {
     costPrice: number;
     serviceName: string;
     providerCode?: string;
+    supplierAccountType?: SupplierAccountType;
   }, existingTx?: Prisma.TransactionClient) {
     if (
       !Number.isFinite(params.retailPrice) ||
@@ -757,7 +758,10 @@ export class LedgerService {
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const revenueAccountCode = this.getRevenueAccountCode(params.currency);
     const cogsAccountCode = this.getCogsAccountCode(params.currency);
-    const providerAccountCode = this.getProviderClearingAccountCode(params.currency);
+    const providerAccountCode =
+      params.supplierAccountType === SupplierAccountType.PREPAID
+        ? this.getSupplierPrepaidAccountCode(params.currency)
+        : this.getProviderClearingAccountCode(params.currency);
 
     const costPrice = Math.max(0, params.costPrice || 0);
 
@@ -792,7 +796,7 @@ export class LedgerService {
         },
       ];
 
-      // If cost price > 0, include COGS and Provider Clearing entries
+      // If cost price > 0, include COGS and the correct supplier asset/liability account.
       if (costPrice > 0) {
         entries.push(
           {

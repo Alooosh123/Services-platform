@@ -16,6 +16,7 @@ import {
   CurrencyCode,
   ManualFulfillmentDto,
   OrderRefundDto,
+  SupplierAccountType,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
@@ -95,7 +96,8 @@ export class FulfillmentService {
       throw new ForbiddenException(reason);
     }
 
-    // P05 Fulfillment Gating: Verify commercial balance & credit limit at provider
+    // P05 Fulfillment Gating: Verify commercial balance & credit limit at provider.
+    let supplierAccountType: SupplierAccountType | undefined;
     if (!this.supplierBalanceService && costPriceNumber > 0) {
       const reason = 'خدمة رصيد المورد غير متاحة؛ تم تعليق الطلب للمراجعة.';
       await this.moveProcessingOrderToManualReview(order.id, reason);
@@ -104,6 +106,7 @@ export class FulfillmentService {
     if (this.supplierBalanceService) {
       try {
         const gating = await this.supplierBalanceService.checkFulfillmentGating(providerCode, currency, costPriceNumber);
+        supplierAccountType = gating.accountType;
         if (!gating.allowed) {
           await this.moveProcessingOrderToManualReview(order.id, gating.message || 'رصيد المورد غير كافٍ.');
           return { success: false, status: OrderStatus.ManualReview, orderNumber: order.orderNumber, message: gating.message };
@@ -168,6 +171,7 @@ export class FulfillmentService {
             costPrice: costPriceNumber,
             serviceName: order.snapshotServiceName,
             providerCode,
+            supplierAccountType,
           }, tx);
           const ledgerTxId = ledgerResult?.transaction?.id || ledgerResult?.transaction?.txNumber;
           if (!ledgerTxId) {
@@ -296,6 +300,14 @@ export class FulfillmentService {
 
     const retailPriceNumber = Number(order.snapshotRetailPrice);
     const costPriceNumber = Number(order.snapshotCostPrice);
+    let manualSupplierAccountType: SupplierAccountType | undefined;
+    if (costPriceNumber > 0) {
+      if (!this.supplierBalanceService) {
+        throw new BadRequestException('رصيد المورد الدائم غير متاح؛ لا يمكن ترحيل تنفيذ يدوي بتكلفة غير معتمدة.');
+      }
+      const supplierInfo = await this.supplierBalanceService.getSupplierBalance('MANUAL', currency);
+      manualSupplierAccountType = supplierInfo.accountType;
+    }
 
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({ where: { id: order.id } });
@@ -312,6 +324,7 @@ export class FulfillmentService {
         costPrice: costPriceNumber,
         serviceName: order.snapshotServiceName,
         providerCode: 'MANUAL',
+        supplierAccountType: manualSupplierAccountType,
       }, tx);
       const ledgerTxId = ledgerResult?.transaction?.id || ledgerResult?.transaction?.txNumber;
       if (!ledgerTxId) throw new BadRequestException('لم يتم إنشاء قيد دفتر الأستاذ؛ بقي الطلب في المراجعة.');

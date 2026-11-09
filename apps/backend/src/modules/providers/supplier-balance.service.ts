@@ -80,7 +80,7 @@ export class SupplierBalanceService {
   async getSupplierBalance(
     providerCode: string,
     currency: CurrencyCode,
-  ): Promise<{ balance: number; creditLimit: number; available: number }> {
+  ): Promise<{ balance: number; creditLimit: number; available: number; accountType: SupplierAccountType }> {
     const tenantId = getCurrentTenantId();
     try {
       const provider = await this.prisma.provider.findUnique({
@@ -94,7 +94,7 @@ export class SupplierBalanceService {
       if (account) {
         const balance = Number(account.balance);
         const creditLimit = Number(account.creditLimit);
-        return { balance, creditLimit, available: balance + creditLimit };
+        return { balance, creditLimit, available: balance + creditLimit, accountType: account.accountType as SupplierAccountType };
       }
 
       throw new ServiceUnavailableException('لا يوجد حساب مورد تجاري دائم لهذه العملة؛ تم إيقاف التنفيذ.');
@@ -109,7 +109,7 @@ export class SupplierBalanceService {
     providerCode: string,
     currency: CurrencyCode,
     costPrice: number,
-  ): Promise<{ allowed: boolean; availableBalance: number; requiredAmount: number; message?: string }> {
+  ): Promise<{ allowed: boolean; availableBalance: number; requiredAmount: number; accountType?: SupplierAccountType; message?: string }> {
     if (!Number.isFinite(costPrice) || costPrice < 0) {
       return {
         allowed: false,
@@ -122,7 +122,7 @@ export class SupplierBalanceService {
       return { allowed: true, availableBalance: 0, requiredAmount: 0 };
     }
 
-    const { available, balance } = await this.getSupplierBalance(providerCode, currency);
+    const { available, balance, accountType } = await this.getSupplierBalance(providerCode, currency);
     if (available < costPrice) {
       this.logger.warn(
         `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode} in tenant ${getCurrentTenantId() || 'platform'}.`,
@@ -134,7 +134,7 @@ export class SupplierBalanceService {
         message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ. المتاح: ${available} ${currency}، المطلوب: ${costPrice} ${currency}.`,
       };
     }
-    return { allowed: true, availableBalance: balance, requiredAmount: costPrice };
+    return { allowed: true, availableBalance: balance, requiredAmount: costPrice, accountType };
   }
 
   async fundSupplierBalance(
