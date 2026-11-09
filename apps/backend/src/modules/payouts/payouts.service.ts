@@ -252,7 +252,9 @@ export class PayoutsService {
 
   async rejectPayout(staffUserId: string, payoutId: string, reason: string): Promise<{ success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
-    if ([PayoutStatus.CONFIRMED, PayoutStatus.CANCELLED].includes(payout.status)) throw new BadRequestException(`لا يمكن رفض الطلب بحالته: ${payout.status}`);
+    if (![PayoutStatus.REQUESTED, PayoutStatus.APPROVED].includes(payout.status)) {
+      throw new BadRequestException('لا يمكن إلغاء طلب دخل مرحلة التحويل الخارجي أو أصبحت نتيجته غير معروفة؛ يجب إجراء مطابقة مستقلة أولاً.');
+    }
     if (payout.approvedByUserId === staffUserId) throw new ForbiddenException('مقدم الموافقة لا يجوز أن ينفذ الإجراء النهائي وحده.');
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.payoutRequest.findUnique({ where: { id: payout.id } });

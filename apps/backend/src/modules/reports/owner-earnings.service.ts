@@ -471,8 +471,8 @@ export class OwnerEarningsService {
     this.assertPlatformOwnerContext();
     const payout = await this.prisma.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
     if (!payout) throw new NotFoundException('طلب السحب غير موجود.');
-    if (payout.status !== OwnerPayoutStatus.REQUESTED && payout.status !== OwnerPayoutStatus.APPROVED) {
-      throw new ConflictException('لا يمكن تحرير الأرباح من طلب دخل مرحلة تحويل خارجي أو تأكيد.');
+    if (payout.status !== OwnerPayoutStatus.REQUESTED) {
+      throw new ConflictException('لا يمكن تحرير الأرباح بعد اعتماد التحويل؛ يجب أن تمر الإلغاء بعد الاعتماد بمسار مراجعة مالية مستقل.');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       const wallet = await tx.ownerEarningsWallet.updateMany({

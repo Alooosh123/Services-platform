@@ -50,7 +50,7 @@ export class SupplierBalanceService {
     private ledgerService: LedgerService,
   ) {}
 
-  private assertDatabaseForFinancialOperation(): void {
+  private assertDatabaseForFinancialOperation(): never {
     throw new ServiceUnavailableException('Supplier commercial balances require a durable database record.');
   }
 
@@ -255,6 +255,23 @@ export class SupplierBalanceService {
 
         if (!account) {
           throw new NotFoundException('يجب إنشاء وتمويل حساب المورد الدائم قبل تنفيذ الطلب.');
+        }
+
+        const previousCharge = await tx.supplierTransaction.findFirst({
+          where: {
+            accountId: account.id,
+            type: 'ORDER_FULFILLMENT',
+            referenceId: orderId,
+          },
+        });
+        if (previousCharge) {
+          if (
+            previousCharge.currency !== currency ||
+            !new Prisma.Decimal(previousCharge.amount).equals(new Prisma.Decimal(costPrice))
+          ) {
+            throw new ConflictException('يوجد خصم سابق لنفس الطلب بقيمة أو عملة مختلفة؛ يتطلب الأمر مطابقة يدوية.');
+          }
+          return { success: true, newBalance: Number(previousCharge.balanceAfter) };
         }
 
         const balanceBefore = new Prisma.Decimal(account.balance);

@@ -30,6 +30,10 @@ const TENANT_DIRECT_MODELS = new Set([
   'PilotRunAudit',
   'SaaSSubscription',
   'SaaSInvoice',
+  'LinkedServiceAccount',
+  'LinkedServiceConsent',
+  'LinkedServiceAccountReview',
+  'ReconciliationAdjustment',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
@@ -58,6 +62,7 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   AgentProductPrice: { subAgent: { is: { tenantId: '__TENANT_ID__' } } },
   SupplierTransaction: { account: { is: { tenantId: '__TENANT_ID__' } } },
   ReconciliationItem: { batch: { is: { tenantId: '__TENANT_ID__' } } },
+  ReconciliationAdjustment: { item: { is: { batch: { is: { tenantId: '__TENANT_ID__' } } } } },
   DailyCloseAdjustment: { report: { is: { tenantId: '__TENANT_ID__' } } },
   OwnerPayoutTransaction: {
     beneficiary: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } },
@@ -128,6 +133,11 @@ const TENANT_WRITE_REFERENCES: Record<
     { field: 'userId', relation: 'user', delegate: 'user' },
     { field: 'serviceAccountId', relation: 'serviceAccount', delegate: 'linkedServiceAccount' },
     { field: 'operatorId', delegate: 'user' },
+  ],
+  ReconciliationAdjustment: [
+    { field: 'itemId', relation: 'item', delegate: 'reconciliationItem' },
+    { field: 'proposedByUserId', delegate: 'user' },
+    { field: 'approvedByUserId', delegate: 'user' },
   ],
   OwnerPayoutTransaction: [
     { field: 'userId', delegate: 'user' },
