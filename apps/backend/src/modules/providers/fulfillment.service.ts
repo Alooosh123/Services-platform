@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Logger,
   Optional,
@@ -60,79 +61,69 @@ export class FulfillmentService {
       throw new BadRequestException(`Customer wallet not found for currency ${currency}`);
     }
 
-    // 1. Move to Processing state
-    await this.prisma.order.update({
-      where: { id: order.id },
-      data: {
-        status: OrderStatus.Processing,
-        statusHistory: {
-          create: {
-            oldStatus: order.status,
-            newStatus: OrderStatus.Processing,
-            reason: 'Order dispatched to fulfillment engine',
+    // Claim only queued orders; this compare-and-set prevents duplicate worker dispatches.
+    if (order.status !== OrderStatus.Queued) {
+      throw new ConflictException(`لا يمكن إرسال الطلب ${order.orderNumber} من الحالة ${order.status}; يجب أن يكون في قائمة الانتظار فقط.`);
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.order.updateMany({
+        where: { id: order.id, status: OrderStatus.Queued },
+        data: { status: OrderStatus.Processing },
+      });
+      if (claimed.count !== 1) throw new ConflictException('تم حجز الطلب بواسطة عامل آخر؛ لن يتم إرسال طلب شحن مكرر.');
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          statusHistory: {
+            create: {
+              oldStatus: OrderStatus.Queued,
+              newStatus: OrderStatus.Processing,
+              reason: 'Order claimed by a single fulfillment worker',
+            },
           },
         },
-      },
-    });
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     // 2. Determine provider code (Default MOCK or assigned provider)
     const providerCode = (order.provider?.code || 'MOCK').toUpperCase();
 
     // SG-03: Provider Integrity & Sandbox Isolation
     if (process.env.NODE_ENV === 'production' && providerCode === 'MOCK') {
-      this.logger.error(`Security Violation: Attempted to dispatch order ${order.orderNumber} via MOCK provider in production.`);
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.ManualReview,
-          errorMessage: 'تم إيقاف تنفيذ الطلب: محول المحاكاة محظور في بيئة الإنتاج (SG-03)',
-          statusHistory: {
-            create: {
-              oldStatus: order.status,
-              newStatus: OrderStatus.ManualReview,
-              reason: 'حظر أمني: محول المحاكاة محظور في بيئة الإنتاج التشغيلية',
-            },
-          },
-        },
-      });
-      throw new ForbiddenException(
-        'محول المحاكاة والتسوية المالية الوهمية محظورة نهائياً في بيئة الإنتاج (SG-03 Sandbox Isolation Enforcement).',
-      );
+      const reason = 'تم إيقاف التنفيذ: محول المحاكاة محظور في بيئة الإنتاج.';
+      await this.moveProcessingOrderToManualReview(order.id, reason);
+      throw new ForbiddenException(reason);
     }
 
     // P05 Fulfillment Gating: Verify commercial balance & credit limit at provider
+    if (!this.supplierBalanceService && costPriceNumber > 0) {
+      const reason = 'خدمة رصيد المورد غير متاحة؛ تم تعليق الطلب للمراجعة.';
+      await this.moveProcessingOrderToManualReview(order.id, reason);
+      return { success: false, status: OrderStatus.ManualReview, orderNumber: order.orderNumber, message: reason };
+    }
     if (this.supplierBalanceService) {
-      const gating = await this.supplierBalanceService.checkFulfillmentGating(
-        providerCode,
-        currency,
-        costPriceNumber,
-      );
-      if (!gating.allowed) {
-        this.logger.warn(`[GatingTriggered] Order ${order.orderNumber} held in ManualReview: ${gating.message}`);
-        await this.prisma.order.update({
-          where: { id: order.id },
-          data: {
-            status: OrderStatus.ManualReview,
-            errorMessage: gating.message,
-            statusHistory: {
-              create: {
-                oldStatus: OrderStatus.Processing,
-                newStatus: OrderStatus.ManualReview,
-                reason: gating.message || 'حجز الطلب للتدقيق المالي: رصيد المزود التجاري غير كافٍ',
-              },
-            },
-          },
-        });
-        return {
-          success: false,
-          status: OrderStatus.ManualReview,
-          orderNumber: order.orderNumber,
-          message: gating.message,
-        };
+      try {
+        const gating = await this.supplierBalanceService.checkFulfillmentGating(providerCode, currency, costPriceNumber);
+        if (!gating.allowed) {
+          await this.moveProcessingOrderToManualReview(order.id, gating.message || 'رصيد المورد غير كافٍ.');
+          return { success: false, status: OrderStatus.ManualReview, orderNumber: order.orderNumber, message: gating.message };
+        }
+      } catch (error: any) {
+        const reason = 'تعذر التحقق من رصيد المورد الدائم: ' + (error?.message || error);
+        this.logger.error('Order ' + order.orderNumber + ' held because supplier balance could not be verified: ' + reason);
+        await this.moveProcessingOrderToManualReview(order.id, reason);
+        return { success: false, status: OrderStatus.ManualReview, orderNumber: order.orderNumber, message: reason };
       }
     }
 
-    const adapter = this.providersService.getAdapter(providerCode);
+    let adapter;
+    try {
+      adapter = this.providersService.getAdapter(providerCode);
+    } catch (error: any) {
+      const reason = 'لم يتم إعداد محول موثوق للمزود: ' + (error?.message || error);
+      await this.moveProcessingOrderToManualReview(order.id, reason);
+      return { success: false, status: OrderStatus.ManualReview, orderNumber: order.orderNumber, message: reason };
+    }
 
     this.logger.log(`Dispatching order ${order.orderNumber} via adapter: ${providerCode}`);
 
@@ -151,8 +142,9 @@ export class FulfillmentService {
       this.logger.error(`Adapter execution threw error for order ${order.orderNumber}: ${err?.message}`);
       response = {
         success: false,
-        status: 'FAILED',
-        errorMessage: err?.message || 'Adapter execution error',
+        status: 'PENDING',
+        errorCode: 'ADAPTER_RESULT_UNKNOWN',
+        errorMessage: err?.message || 'تعذر تحديد نتيجة الاتصال بالمزود؛ قد تكون العملية نُفذت خارجياً.',
       };
     }
 
@@ -244,6 +236,10 @@ export class FulfillmentService {
 
     if (response.status === 'FAILED' && response.success === false) {
       await this.prisma.$transaction(async (tx) => {
+        const current = await tx.order.findUnique({ where: { id: order.id } });
+        if (!current || current.status !== OrderStatus.Processing) {
+          throw new ConflictException('تغيرت حالة الطلب قبل تسجيل فشل المزود؛ يلزم تحقيق ومطابقة.');
+        }
         await this.ledgerService.releaseWalletHold(wallet.id, retailPriceNumber, tx);
         await tx.order.update({
           where: { id: order.id },
@@ -275,20 +271,7 @@ export class FulfillmentService {
       (response.status === 'SUCCESS'
         ? 'استجابة المزود تفتقر إلى مرجع عملية موثوق؛ يتطلب الطلب مراجعة يدوية.'
         : 'استجابة المزود غير نهائية؛ تم تعليق الطلب للمراجعة دون إعادة إرسال.');
-    await this.prisma.order.update({
-      where: { id: order.id },
-      data: {
-        status: OrderStatus.ManualReview,
-        errorMessage: pendingReason,
-        statusHistory: {
-          create: {
-            oldStatus: OrderStatus.Processing,
-            newStatus: OrderStatus.ManualReview,
-            reason: pendingReason,
-          },
-        },
-      },
-    });
+    await this.moveProcessingOrderToManualReview(order.id, pendingReason);
 
     return {
       success: false,
@@ -527,4 +510,26 @@ export class FulfillmentService {
       );
     }
   }
+  private async moveProcessingOrderToManualReview(orderId: string, reason: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.order.updateMany({
+        where: { id: orderId, status: OrderStatus.Processing },
+        data: { status: OrderStatus.ManualReview, errorMessage: reason },
+      });
+      if (changed.count !== 1) throw new ConflictException('تغيرت حالة الطلب بالتزامن؛ لم يتم تجاوز الحالة الحالية.');
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          statusHistory: {
+            create: {
+              oldStatus: OrderStatus.Processing,
+              newStatus: OrderStatus.ManualReview,
+              reason,
+            },
+          },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
 }
