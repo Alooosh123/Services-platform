@@ -258,9 +258,18 @@ export class PayoutsService {
     if (payout.approvedByUserId === staffUserId) throw new ForbiddenException('مقدم الموافقة لا يجوز أن ينفذ الإجراء النهائي وحده.');
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.payoutRequest.findUnique({ where: { id: payout.id } });
-      if (!current || [PayoutStatus.CONFIRMED, PayoutStatus.CANCELLED].includes(current.status as PayoutStatus)) throw new ConflictException('تغيرت حالة طلب السحب.');
+      if (!current || ![PayoutStatus.REQUESTED, PayoutStatus.APPROVED].includes(current.status as PayoutStatus)) {
+        throw new ConflictException('تغيرت حالة طلب السحب إلى مرحلة تنفيذ أو حالة غير محسومة؛ لم يتم تحرير الحجز.');
+      }
+      if (current.approvedByUserId && current.approvedByUserId === staffUserId) {
+        throw new ForbiddenException('مقدم الموافقة لا يجوز أن يرفض الطلب أو يحرر حجزه منفرداً.');
+      }
       if (current.walletId) await this.ledgerService.releaseWalletHold(current.walletId, Number(current.amount), tx);
-      await tx.payoutRequest.update({ where: { id: payout.id }, data: { status: PayoutStatus.CANCELLED, failureReason: reason || 'رفض إداري', approvedByUserId: staffUserId } });
+      const changed = await tx.payoutRequest.updateMany({
+        where: { id: payout.id, status: current.status },
+        data: { status: PayoutStatus.CANCELLED, failureReason: reason || 'رفض إداري', approvedByUserId: staffUserId },
+      });
+      if (changed.count !== 1) throw new ConflictException('تغيرت حالة طلب السحب بالتزامن؛ أُلغي تحرير الحجز.');
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return { success: true, payout: await this.getPayoutById(payoutId) };
   }

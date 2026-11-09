@@ -363,13 +363,21 @@ export class FulfillmentService {
         },
       });
 
-      await tx.order.update({
-        where: { id: order.id },
+      const completed = await tx.order.updateMany({
+        where: { id: order.id, status: OrderStatus.ManualReview },
         data: {
           status: OrderStatus.Completed,
           completedAt: new Date(),
           voucherCode: dto.voucherCode?.trim() || null,
           errorMessage: null,
+        },
+      });
+      if (completed.count !== 1) {
+        throw new ConflictException('تمت معالجة الطلب بواسطة موظف آخر؛ أُلغيت هذه المعاملة.');
+      }
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
           statusHistory: {
             create: {
               oldStatus: OrderStatus.ManualReview,
