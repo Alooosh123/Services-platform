@@ -46,6 +46,7 @@ export class ReconciliationController {
     return this.reconciliationService.runDailyReconciliation(staffId, dto);
   }
 
+  @Roles(UserRole.FINANCE_MANAGER)
   @Post('resolve-discrepancy/:itemId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Admin/Finance: Manually resolve reconciliation discrepancy or dispute' })

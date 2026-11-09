@@ -268,6 +268,14 @@ export class PayoutsService {
     return this.mapPayout(row);
   }
 
+  async findByExternalReference(reference: string): Promise<InMemoryPayout | null> {
+    const row = await this.prisma.payoutRequest.findFirst({
+      where: { externalReference: reference.trim() },
+      orderBy: { createdAt: 'desc' },
+    });
+    return row ? this.mapPayout(row) : null;
+  }
+
   async findByIdempotencyKey(key: string): Promise<InMemoryPayout | null> {
     const row = await this.prisma.payoutRequest.findUnique({ where: { idempotencyKey: key } });
     return row ? this.mapPayout(row) : null;
