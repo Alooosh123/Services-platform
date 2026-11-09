@@ -1,0 +1,202 @@
+name: yemen-topup-production
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: topup_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7-alpine
+    container_name: topup_redis_prod
+    restart: unless-stopped
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    volumes:
+      - redis_prod_data:/data
+    networks:
+      - queue
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: topup_migrate_prod
+    restart: "no"
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    command: ["npx", "prisma", "migrate", "deploy", "--schema=packages/database/prisma/schema.prisma"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - database
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: topup_backend_prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY}
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET:?Set WEBHOOK_HMAC_SECRET}
+      PLATFORM_HOSTS: ${PLATFORM_HOSTS:?Set PLATFORM_HOSTS}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN}
+    expose:
+      - "4000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - app
+      - database
+      - queue
+    security_opt:
+      - no-new-privileges:true
+
+  web-customer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.customer
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    container_name: topup_web_customer_prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    networks:
+      - app
+    security_opt:
+      - no-new-privileges:true
+
+  web-admin:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.admin
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    container_name: topup_web_admin_prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    networks:
+      - app
+    security_opt:
+      - no-new-privileges:true
+
+  web-saas:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.saas
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    container_name: topup_web_saas_prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    networks:
+      - app
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: topup_caddy_prod
+    restart: unless-stopped
+    environment:
+      CUSTOMER_DOMAIN: ${CUSTOMER_DOMAIN:?Set CUSTOMER_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?Set ADMIN_DOMAIN}
+      SAAS_DOMAIN: ${SAAS_DOMAIN:?Set SAAS_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web-customer
+      - web-admin
+      - web-saas
+      - backend
+    networks:
+      - app
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  app:
+    driver: bridge
+  database:
+    driver: bridge
+    internal: true
+  queue:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:
+  caddy_data:
+  caddy_config:
