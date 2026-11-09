@@ -86,7 +86,11 @@ export class OwnerEarningsService {
     const encrypted = this.encryptionService.encrypt(stored);
     const result = await this.prisma.payoutBeneficiary.updateMany({
       where: { id: row.id, accountNumber: stored },
-      data: { accountNumber: encrypted },
+      data: {
+        accountNumber: encrypted,
+        verificationStatus: BeneficiaryVerificationStatus.PENDING_REVIEW,
+        financeApprovedBy: null,
+      },
     });
     if (result.count === 1) row.accountNumber = encrypted;
     else {
