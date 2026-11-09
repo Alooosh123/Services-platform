@@ -394,7 +394,7 @@ export class SandboxPaymentAdapter extends BasePaymentChannelAdapter {
       supportedCurrencies: [CurrencyCode.YER, CurrencyCode.USD, CurrencyCode.SAR],
       minAmount: 1,
       maxAmount: 5000000,
-      isActive: false,
+      isActive: true,
       dailyLimit: 50000000,
       feePercentage: 0,
       feeFixed: 0,

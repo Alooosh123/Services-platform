@@ -156,6 +156,7 @@ export class PayoutsService {
   async dispatchPayout(staffUserId: string, payoutId: string): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
     if (payout.status !== PayoutStatus.APPROVED) throw new BadRequestException('يجب اعتماد طلب السحب أولاً.');
+    if (payout.approvedByUserId === staffUserId) throw new ForbiddenException('من اعتمد طلب السحب لا ينفذ التحويل بنفسه.');
     const adapter = this.adapterRegistry.getAdapter(payout.channelCode);
     if (!adapter) throw new ServiceUnavailableException('محوّل قناة السحب غير مسجل.');
     const channel = adapter.getInfo();
@@ -262,9 +263,10 @@ export class PayoutsService {
     return { success: true, payout: await this.getPayoutById(payoutId) };
   }
 
-  async getPayoutById(payoutId: string): Promise<InMemoryPayout> {
+  async getPayoutById(payoutId: string, requestingUserId?: string): Promise<InMemoryPayout> {
     const row = await this.prisma.payoutRequest.findUnique({ where: { id: payoutId } });
     if (!row) throw new NotFoundException(`طلب السحب ${payoutId} غير موجود.`);
+    if (requestingUserId && row.userId !== requestingUserId) throw new ForbiddenException('ليس لديك صلاحية الاطلاع على طلب سحب مستخدم آخر.');
     return this.mapPayout(row);
   }
 

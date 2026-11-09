@@ -117,6 +117,18 @@ const TENANT_WRITE_REFERENCES: Record<
     { field: 'userId', relation: 'user', delegate: 'user' },
     { field: 'financeApprovedBy', delegate: 'user' },
   ],
+  LinkedServiceAccount: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+  ],
+  LinkedServiceConsent: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'serviceAccountId', relation: 'serviceAccount', delegate: 'linkedServiceAccount' },
+  ],
+  LinkedServiceAccountReview: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'serviceAccountId', relation: 'serviceAccount', delegate: 'linkedServiceAccount' },
+    { field: 'operatorId', delegate: 'user' },
+  ],
   OwnerPayoutTransaction: [
     { field: 'userId', delegate: 'user' },
     { field: 'beneficiaryId', relation: 'beneficiary', delegate: 'payoutBeneficiary' },

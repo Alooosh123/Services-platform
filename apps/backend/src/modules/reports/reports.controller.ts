@@ -62,7 +62,7 @@ export class ReportsController {
   @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'AT-13 & AT-23: Close business day, calculate metrics and persist immutable snapshot' })
   async closeBusinessDay(@Request() req: any, @Body() dto: CreateDailyCloseDto) {
-    const userId = req.user?.id || req.user?.userId || 'admin-user-01';
+    const userId = req.user?.id || req.user?.userId;
     return this.dailyCloseService.closeBusinessDay(userId, dto);
   }
 
@@ -95,7 +95,7 @@ export class ReportsController {
       ledgerTxId?: string;
     },
   ) {
-    const userId = req.user?.id || req.user?.userId || 'admin-user-01';
+    const userId = req.user?.id || req.user?.userId;
     return this.dailyCloseService.addAdjustment(date, dto, userId);
   }
 
@@ -126,7 +126,7 @@ export class ReportsController {
   @Roles(UserRole.OWNER)
   @ApiOperation({ summary: 'Register a payout beneficiary account with verified ownership' })
   async createBeneficiary(@Request() req: any, @Body() dto: CreatePayoutBeneficiaryDto) {
-    const userId = req.user?.id || req.user?.userId || 'user-owner-001';
+    const userId = req.user?.id || req.user?.userId;
     return this.ownerEarningsService.createBeneficiary(userId, dto);
   }
 
@@ -134,7 +134,7 @@ export class ReportsController {
   @Roles(UserRole.OWNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'List verified payout beneficiaries' })
   async listBeneficiaries(@Request() req: any) {
-    const userId = req.user?.id || req.user?.userId || 'user-owner-001';
+    const userId = req.user?.id || req.user?.userId;
     return this.ownerEarningsService.listBeneficiaries(userId);
   }
 
@@ -155,7 +155,7 @@ export class ReportsController {
   @Roles(UserRole.OWNER)
   @ApiOperation({ summary: 'AT-17 & AT-18: Request owner earnings payout with TOTP MFA and liquidity validation' })
   async requestOwnerPayout(@Request() req: any, @Body() dto: OwnerPayoutRequestDto) {
-    const userId = req.user?.id || req.user?.userId || 'user-owner-001';
+    const userId = req.user?.id || req.user?.userId;
     return this.ownerEarningsService.requestOwnerPayout(userId, dto);
   }
 
@@ -187,7 +187,7 @@ export class ReportsController {
     @Param('id') id: string,
     @Body('externalReference') externalReference: string,
   ) {
-    const financeUserId = req.user?.id || req.user?.userId || 'user-finance-002';
+    const financeUserId = req.user?.id || req.user?.userId;
     return this.ownerEarningsService.confirmExternalTransfer(id, externalReference, financeUserId);
   }
 }
