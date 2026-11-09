@@ -45,51 +45,13 @@ export interface InMemorySupplierTransaction {
 @Injectable()
 export class SupplierBalanceService {
   private readonly logger = new Logger(SupplierBalanceService.name);
-  private memoryAccounts: Map<string, InMemorySupplierAccount> = new Map();
-  private memoryTransactions: InMemorySupplierTransaction[] = [];
-
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
   ) {}
 
-  private seedDefaultAccounts() {
-    this.seedAccount('MOCK', 'prov-mock', CurrencyCode.USD, 10000, 5000);
-    this.seedAccount('MANUAL', 'prov-manual', CurrencyCode.USD, 999999, 0);
-    this.seedAccount('EXTERNAL_API', 'prov-ext', CurrencyCode.USD, 1450.5, 2000);
-    this.seedAccount('MOCK', 'prov-mock-yer', CurrencyCode.YER, 5000000, 1000000);
-  }
-
-  private seedAccount(
-    providerCode: string,
-    providerId: string,
-    currency: CurrencyCode,
-    balance: number,
-    creditLimit: number,
-  ) {
-    const key = `${providerCode.toUpperCase()}_${currency}`;
-    this.memoryAccounts.set(key, {
-      id: `sa-${key.toLowerCase()}`,
-      providerId,
-      providerCode: providerCode.toUpperCase(),
-      currency,
-      balance,
-      creditLimit,
-      accountType: SupplierAccountType.PREPAID,
-      updatedAt: new Date(),
-    });
-  }
-
-  private getAccountKey(providerCode: string, currency: CurrencyCode): string {
-    return `${providerCode.toUpperCase()}_${currency}`;
-  }
-
   private assertDatabaseForFinancialOperation(): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      throw new ServiceUnavailableException(
-        'Supplier commercial balances require an available tenant-scoped database.',
-      );
-    }
+    throw new ServiceUnavailableException('Supplier commercial balances require a durable database record.');
   }
 
   async getAllSupplierAccounts(): Promise<InMemorySupplierAccount[]> {
@@ -110,12 +72,8 @@ export class SupplierBalanceService {
         updatedAt: account.updatedAt,
       }));
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        this.logger.error(`Supplier account listing failed: ${error?.message || error}`);
-        this.assertDatabaseForFinancialOperation();
-      }
-      this.logger.warn(`Local development supplier accounts fallback: ${error?.message || error}`);
-      return Array.from(this.memoryAccounts.values());
+      this.logger.error('Supplier account listing failed: ' + (error?.message || error));
+      this.assertDatabaseForFinancialOperation();
     }
   }
 
@@ -139,33 +97,11 @@ export class SupplierBalanceService {
         return { balance, creditLimit, available: balance + creditLimit };
       }
 
-      // Legacy provider.balance is platform-wide and must never be used by a tenant.
-      if (!tenantId && provider.currency === currency) {
-        const balance = Number(provider.balance);
-        return { balance, creditLimit: 0, available: balance };
-      }
-
-      if (tenantId) return { balance: 0, creditLimit: 0, available: 0 };
-
-      // No memory/demo supplier balances may authorize a financial fulfillment.
-      throw new ServiceUnavailableException('لا يتوفر رصيد مورد دائم في قاعدة البيانات؛ تم إيقاف التنفيذ.');
+      throw new ServiceUnavailableException('لا يوجد حساب مورد تجاري دائم لهذه العملة؛ تم إيقاف التنفيذ.');
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
-        this.logger.error(`Supplier balance read failed: ${error?.message || error}`);
-        throw error instanceof NotFoundException
-          ? error
-          : new ServiceUnavailableException('Supplier commercial balance is unavailable.');
-      }
-
-      this.logger.warn(`Local development supplier balance fallback: ${error?.message || error}`);
-      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      return memory
-        ? {
-            balance: memory.balance,
-            creditLimit: memory.creditLimit,
-            available: memory.balance + memory.creditLimit,
-          }
-        : { balance: 0, creditLimit: 0, available: 0 };
+      this.logger.error('Supplier balance read failed: ' + (error?.message || error));
+      if (error instanceof NotFoundException || error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('Supplier commercial balance is unavailable.');
     }
   }
 
@@ -290,49 +226,14 @@ export class SupplierBalanceService {
         transaction: result.transaction,
       };
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
-        this.logger.error(`Supplier funding failed: ${error?.message || error}`);
-        throw error;
-      }
-      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
-        throw error;
-      }
+      this.logger.error('Supplier funding failed: ' + (error?.message || error));
+      throw error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException ||
+        error instanceof ServiceUnavailableException
+        ? error
+        : new ServiceUnavailableException('تعذر تغذية رصيد المورد ذرياً؛ لم يتم إنشاء نتيجة تجريبية.');
 
-      // Local unscoped mock-only development fallback.
-      const key = this.getAccountKey(providerCode, dto.currency);
-      const memory = this.memoryAccounts.get(key) || {
-        id: `sa-${key.toLowerCase()}`,
-        providerId: dto.providerId,
-        providerCode,
-        currency: dto.currency,
-        balance: 0,
-        creditLimit: 0,
-        accountType: SupplierAccountType.PREPAID,
-        updatedAt: new Date(),
-      };
-      const balanceBefore = memory.balance;
-      memory.balance += dto.amount;
-      memory.updatedAt = new Date();
-      this.memoryAccounts.set(key, memory);
-      const transaction: InMemorySupplierTransaction = {
-        id: `stx-${Date.now()}`,
-        providerCode,
-        type: 'PREPAID_TOPUP',
-        currency: dto.currency,
-        amount: dto.amount,
-        balanceBefore,
-        balanceAfter: memory.balance,
-        referenceId: dto.referenceNumber,
-        notes: dto.notes || `Local demo funding ${dto.referenceNumber}`,
-        createdAt: new Date(),
-      };
-      this.memoryTransactions.unshift(transaction);
-      return {
-        success: true,
-        newBalance: memory.balance,
-        ledgerTxId: 'LOCAL-DEMO-ONLY',
-        transaction,
-      };
     }
   }
 
@@ -361,17 +262,7 @@ export class SupplierBalanceService {
         });
 
         if (!account) {
-          if (tenantId) {
-            throw new NotFoundException('Tenant supplier account has not been funded.');
-          }
-          const balanceBefore = new Prisma.Decimal(provider.balance);
-          const balanceAfter = balanceBefore.minus(new Prisma.Decimal(costPrice));
-          if (balanceAfter.isNegative()) throw new BadRequestException('Supplier balance is insufficient.');
-          await tx.provider.update({
-            where: { id: provider.id },
-            data: { balance: balanceAfter },
-          });
-          return { success: true, newBalance: balanceAfter.toNumber() };
+          throw new NotFoundException('يجب إنشاء وتمويل حساب المورد الدائم قبل تنفيذ الطلب.');
         }
 
         const balanceBefore = new Prisma.Decimal(account.balance);
@@ -444,13 +335,9 @@ export class SupplierBalanceService {
           createdAt: row.createdAt,
         }));
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        this.logger.error(`Supplier transaction listing failed: ${error?.message || error}`);
-        this.assertDatabaseForFinancialOperation();
-      }
-      return providerCode
-        ? this.memoryTransactions.filter((row) => row.providerCode === providerCode.toUpperCase())
-        : this.memoryTransactions;
+      this.logger.error('Supplier transaction listing failed: ' + (error?.message || error));
+      this.assertDatabaseForFinancialOperation();
+
     }
   }
 }
