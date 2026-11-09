@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ITopupProviderAdapter } from './adapters/provider-adapter.interface';
 import { MockProviderAdapter } from './adapters/mock-provider.adapter';
@@ -33,10 +33,14 @@ export class ProvidersService {
   }
 
   getAdapter(providerCode: string): ITopupProviderAdapter {
-    const adapter = this.adapters.get(providerCode.toUpperCase());
+    const code = providerCode?.trim().toUpperCase();
+    if (!code) throw new ServiceUnavailableException('لم يتم تعيين مزود تنفيذ للمنتج.');
+    if (process.env.NODE_ENV === 'production' && code === 'MOCK') {
+      throw new ServiceUnavailableException('محول MOCK محظور في بيئة الإنتاج.');
+    }
+    const adapter = this.adapters.get(code);
     if (!adapter) {
-      this.logger.warn(`No adapter configured for ${providerCode}. Falling back to MOCK.`);
-      return this.mockAdapter;
+      throw new ServiceUnavailableException(`لا يوجد محول مسجل للمزود ${code}؛ تم رفض التنفيذ دون تحويل إلى MOCK.`);
     }
     return adapter;
   }
@@ -183,9 +187,12 @@ export class ProvidersService {
       throw new NotFoundException(`Provider ${providerId} not found`);
     }
 
+    if (provider.code === 'MOCK' || provider.code === 'MANUAL') {
+      throw new ServiceUnavailableException('لا يمكن اعتبار MOCK أو MANUAL اتصالاً خارجياً أو مزوداً برصيد آلي.');
+    }
     const adapter = this.getAdapter(provider.code);
+    // A provider-specific authenticated adapter is required for a live test.
     const balanceInfo = await adapter.fetchBalance();
-
     await this.prisma.provider.update({
       where: { id: providerId },
       data: {
@@ -193,7 +200,6 @@ export class ProvidersService {
         currency: (balanceInfo.currency as CurrencyCode) || CurrencyCode.USD,
       },
     });
-
     return {
       success: true,
       provider: provider.name,
