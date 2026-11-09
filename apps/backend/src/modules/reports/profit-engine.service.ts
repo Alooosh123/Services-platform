@@ -17,54 +17,14 @@ export interface InMemoryOrderRecord {
 @Injectable()
 export class ProfitEngineService {
   private readonly logger = new Logger(ProfitEngineService.name);
+  // Memory injection remains available to isolated unit tests only; it is never seeded.
   private memoryOrders: Map<string, InMemoryOrderRecord> = new Map();
   private memoryCashBalances: Map<CurrencyCode, number> = new Map();
-  private memoryCustomerLiabilities: Map<CurrencyCode, number> = new Map([
-    [CurrencyCode.YER, 400000],
-    [CurrencyCode.USD, 1200],
-    [CurrencyCode.SAR, 2000],
-  ]);
-  private memorySupplierPayables: Map<CurrencyCode, number> = new Map([
-    [CurrencyCode.YER, 50000],
-    [CurrencyCode.USD, 200],
-    [CurrencyCode.SAR, 300],
-  ]);
+  private memoryCustomerLiabilities: Map<CurrencyCode, number> = new Map();
+  private memorySupplierPayables: Map<CurrencyCode, number> = new Map();
 
-  constructor(private prisma: PrismaService) {
-    this.seedInitialOrders();
-  }
+  constructor(private prisma: PrismaService) {}
 
-  private seedInitialOrders() {
-    const now = new Date();
-    const o1: InMemoryOrderRecord = {
-      id: 'ord-seed-comp-1',
-      orderNumber: 'ORD-20261011-001',
-      status: OrderStatus.Completed,
-      currency: CurrencyCode.YER,
-      retailPrice: 5500,
-      costPrice: 4800,
-      profit: 700,
-      channelFee: 50,
-      createdAt: now,
-    };
-    const o2: InMemoryOrderRecord = {
-      id: 'ord-seed-comp-2',
-      orderNumber: 'ORD-20261011-002',
-      status: OrderStatus.Completed,
-      currency: CurrencyCode.USD,
-      retailPrice: 10.5,
-      costPrice: 9.0,
-      profit: 1.5,
-      channelFee: 0.1,
-      createdAt: now,
-    };
-    this.memoryOrders.set(o1.id, o1);
-    this.memoryOrders.set(o2.id, o2);
-  }
-
-  /**
-   * Helper for testing/mocking order ingestion in memory
-   */
   addMemoryOrder(order: InMemoryOrderRecord) {
     this.memoryOrders.set(order.id, order);
   }
@@ -93,17 +53,14 @@ export class ProfitEngineService {
     dateFilter?: string, // YYYY-MM-DD
   ): Promise<CurrencyCloseMetrics> {
     if (process.env.NODE_ENV !== 'production' &&
-        (this.memoryOrders.size > 0 || this.memoryCashBalances.size > 0 || process.env.NODE_ENV === 'test')) {
+        (this.memoryOrders.size > 0 || this.memoryCashBalances.size > 0)) {
       return this.calculateFromMemory(currency, dateFilter);
     }
     try {
       return await this.calculateFromDb(currency, dateFilter);
     } catch (error) {
-      if (process.env.NODE_ENV === 'production') {
-        this.logger.error(`Production profit calculation failed closed: ${(error as Error)?.message || error}`);
-        throw error;
-      }
-      return this.calculateFromMemory(currency, dateFilter);
+      this.logger.error(`Profit calculation failed closed: ${(error as Error)?.message || error}`);
+      throw error;
     }
   }
 
@@ -126,6 +83,8 @@ export class ProfitEngineService {
       completedAgg,
       pendingAgg,
       walletsAgg,
+      supplierAccounts,
+      customerPayoutsAgg,
     ] = await Promise.all([
       this.prisma.order.count({ where: whereBase }),
       this.prisma.order.count({ where: { ...whereBase, status: OrderStatus.Completed } }),
@@ -180,27 +139,51 @@ export class ProfitEngineService {
         where: { currency },
         _sum: { balance: true },
       }),
+      this.prisma.supplierAccount.findMany({
+        where: { currency, accountType: 'POSTPAID' },
+        select: { balance: true },
+      }),
+      this.prisma.payoutRequest.aggregate({
+        where: { currency, status: 'CONFIRMED' },
+        _sum: { amount: true },
+      }),
     ]);
 
     const grossSales = Number(completedAgg._sum.snapshotRetailPrice || 0);
     const supplierCost = Number(completedAgg._sum.snapshotCostPrice || 0);
-    const channelFees = Math.round(grossSales * 0.01 * 100) / 100; // 1% estimated/validated fees
-    const realizedProfit = Math.round((grossSales - supplierCost - channelFees) * 100) / 100;
+    // snapshotProfit is the immutable profit snapshot captured at checkout.
+    // Do not invent a provider/channel fee percentage during reporting.
+    const realizedProfit = Number(completedAgg._sum.snapshotProfit || 0);
+    const channelFees = Math.round((grossSales - supplierCost - realizedProfit) * 10000) / 10000;
 
-    const pendingRetail = Number(pendingAgg._sum.snapshotRetailPrice || 0);
-    const pendingCost = Number(pendingAgg._sum.snapshotCostPrice || 0);
-    const estimatedProfit = Math.round((pendingRetail - pendingCost) * 100) / 100;
-
+    const estimatedProfit = Number(pendingAgg._sum.snapshotProfit || 0);
     const customerWalletLiabilities = Number(walletsAgg._sum.balance || 0);
-    const supplierPayables = this.memorySupplierPayables.get(currency) || 0;
-    const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100; // 5% Contingency / Refund reserve
+    const supplierPayables = supplierAccounts.reduce((total, account) =>
+      total + Math.max(0, -Number(account.balance)), 0);
+    const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100;
     const cashAccounts = await this.prisma.ledgerAccount.findMany({
-      where: { currency, type: 'ASSET', code: { startsWith: '100' } },
-      include: { entries: { select: { debitAmount: true, creditAmount: true } } },
+      where: {
+        currency,
+        type: 'ASSET',
+        OR: [
+          { code: { startsWith: '100' } },
+          { code: '1110-CASH' },
+        ],
+      },
+      include: {
+        entries: {
+          where: { transaction: { status: 'POSTED' } },
+          select: { debitAmount: true, creditAmount: true },
+        },
+      },
     });
-    const actualCashBalance = cashAccounts.reduce((total, account) => total + account.entries.reduce((net, entry) => net + Number(entry.debitAmount) - Number(entry.creditAmount), 0), 0);
+    const actualCashBalance = cashAccounts.reduce(
+      (total, account) => total + account.entries.reduce(
+        (net, entry) => net + Number(entry.debitAmount) - Number(entry.creditAmount), 0,
+      ), 0,
+    );
+    const totalPayoutsAmount = Number(customerPayoutsAgg._sum.amount || 0);
 
-    // Strict Liquidity Formula
     const freeCash = actualCashBalance - customerWalletLiabilities - supplierPayables - operatingReserve;
     const withdrawableLiquidity = Math.max(0, Math.round(Math.min(realizedProfit, freeCash) * 100) / 100);
 
@@ -216,7 +199,7 @@ export class ProfitEngineService {
       estimatedProfit,
       realizedProfit,
       totalDepositsAmount: actualCashBalance,
-      totalPayoutsAmount: 0,
+      totalPayoutsAmount,
       customerWalletLiabilities,
       supplierPayables,
       operatingReserve,
