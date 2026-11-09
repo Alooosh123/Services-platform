@@ -34,6 +34,7 @@ const TENANT_DIRECT_MODELS = new Set([
   'LinkedServiceConsent',
   'LinkedServiceAccountReview',
   'ReconciliationAdjustment',
+  'WalletAgentOperation',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
@@ -63,6 +64,7 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   SupplierTransaction: { account: { is: { tenantId: '__TENANT_ID__' } } },
   ReconciliationItem: { batch: { is: { tenantId: '__TENANT_ID__' } } },
   ReconciliationAdjustment: { item: { is: { batch: { is: { tenantId: '__TENANT_ID__' } } } } },
+  WalletAgentOperation: { tenantId: '__TENANT_ID__' },
   DailyCloseAdjustment: { report: { is: { tenantId: '__TENANT_ID__' } } },
   OwnerPayoutTransaction: {
     beneficiary: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } },
@@ -138,6 +140,13 @@ const TENANT_WRITE_REFERENCES: Record<
     { field: 'itemId', relation: 'item', delegate: 'reconciliationItem' },
     { field: 'proposedByUserId', delegate: 'user' },
     { field: 'approvedByUserId', delegate: 'user' },
+  ],
+  WalletAgentOperation: [
+    { field: 'depositRequestId', relation: 'depositRequest', delegate: 'depositRequest' },
+    { field: 'payoutRequestId', relation: 'payoutRequest', delegate: 'payoutRequest' },
+    { field: 'customerUserId', relation: 'customerUser', delegate: 'user' },
+    { field: 'agentUserId', relation: 'agentUser', delegate: 'user' },
+    { field: 'financeReviewedByUserId', relation: 'financeReviewer', delegate: 'user' },
   ],
   OwnerPayoutTransaction: [
     { field: 'userId', delegate: 'user' },

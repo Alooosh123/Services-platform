@@ -11,6 +11,7 @@ export enum UserRole {
   FINANCE = 'FINANCE',
   RESELLER = 'RESELLER',
   SUB_AGENT = 'SUB_AGENT',
+  PAYMENT_AGENT = 'PAYMENT_AGENT',
 }
 
 export enum CurrencyCode {

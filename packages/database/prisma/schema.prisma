@@ -43,6 +43,7 @@ enum UserRole {
   SUPER_ADMIN
   RESELLER
   SUB_AGENT
+  PAYMENT_AGENT
 }
 
 enum AccountStatus {
@@ -335,6 +336,9 @@ model User {
   linkedServiceAccounts    LinkedServiceAccount[]
   linkedServiceConsents     LinkedServiceConsent[]
   linkedServiceReviews      LinkedServiceAccountReview[]
+  walletAgentCustomerOperations WalletAgentOperation[] @relation("WalletAgentCustomer")
+  walletAgentAssignedOperations WalletAgentOperation[] @relation("WalletAgentAssigned")
+  walletAgentFinanceReviews WalletAgentOperation[] @relation("WalletAgentFinance")
 
   @@index([parentAgentId])
   @@index([tenantId, role, status])
@@ -520,6 +524,7 @@ model DepositRequest {
   wallet        Wallet                 @relation(fields: [walletId], references: [id], onDelete: Cascade)
   reviewedBy    User?                  @relation("DepositReviewedBy", fields: [reviewedByUserId], references: [id])
   statusHistory DepositStatusHistory[]
+  walletAgentOperation WalletAgentOperation?
 
   @@unique([paymentMethodCode, referenceNumber])
   @@index([userId, status])
@@ -556,8 +561,8 @@ model PaymentChannelConfig {
   supportedCurrencies     Json // ["YER"] or ["YER","USD"]
   minAmount               Decimal                   @default(1.0000) @db.Decimal(18, 4)
   maxAmount               Decimal                   @default(10000000.0000) @db.Decimal(18, 4)
-  mode                    PaymentChannelMode        @default(MANUAL)
-  verificationStatus      ChannelVerificationStatus @default(VERIFIED)
+  mode                    PaymentChannelMode        @default(BLOCKED_EXTERNAL)
+  verificationStatus      ChannelVerificationStatus @default(PENDING_REVIEW)
   verifiedByFinanceUserId String?
   verifiedAt              DateTime?
   financeApprovalRequired Boolean                   @default(false)
@@ -568,7 +573,15 @@ model PaymentChannelConfig {
   pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
   killSwitchReason        String?
   killSwitchAt            DateTime?
-  isActive                Boolean                   @default(true)
+  regulatoryApprovalReference String?
+  regulatoryApprovalDocumentUrl String?
+  providerAgreementReference String?
+  providerAgreementDocumentUrl String?
+  pendingRegulatoryApprovalReference String?
+  pendingRegulatoryApprovalDocumentUrl String?
+  pendingProviderAgreementReference String?
+  pendingProviderAgreementDocumentUrl String?
+  isActive                Boolean                   @default(false)
   createdAt               DateTime                  @default(now())
   updatedAt               DateTime                  @updatedAt
 
@@ -1101,6 +1114,7 @@ model PayoutRequest {
   updatedAt          DateTime           @updatedAt
 
   user User @relation(fields: [userId], references: [id])
+  walletAgentOperation WalletAgentOperation?
 
   @@index([userId, status])
   @@map("payout_requests")
@@ -1609,6 +1623,7 @@ model SaaSTenant {
   linkedServiceConsents  LinkedServiceConsent[]
   linkedServiceReviews   LinkedServiceAccountReview[]
   reconciliationAdjustments ReconciliationAdjustment[]
+  walletAgentOperations WalletAgentOperation[]
 
   @@index([status])
   @@map("saas_tenants")
@@ -1775,4 +1790,50 @@ model ReconciliationAdjustment {
 
   @@index([tenantId, status, createdAt])
   @@map("reconciliation_adjustments")
+}
+
+
+// ----------------------------------------------------
+// Controlled manual-wallet agent operations
+// ----------------------------------------------------
+model WalletAgentOperation {
+  id                         String   @id @default(uuid())
+  tenantId                   String?
+  channelCode                PaymentChannelCode
+  direction                  String   // INBOUND_DEPOSIT | OUTBOUND_PAYOUT
+  status                     String   @default("PENDING") // PENDING, CLAIMED, AGENT_SUBMITTED, NEEDS_REVIEW, POSTED, REJECTED, CANCELLED
+  depositRequestId           String?  @unique
+  payoutRequestId            String?  @unique
+  customerUserId             String?
+  agentUserId                String?
+  expectedAmount             Decimal  @db.Decimal(18, 4)
+  expectedCurrency           CurrencyCode
+  expectedReferenceNumber    String?
+  expectedAccountLastFour    String?
+  observedAmount             Decimal? @db.Decimal(18, 4)
+  observedCurrency           CurrencyCode?
+  observedReferenceNumber    String?
+  observedAccountLastFour    String?
+  evidenceReference          String?
+  agentNotes                 String?
+  claimedAt                  DateTime?
+  submittedAt                DateTime?
+  financeReviewedByUserId    String?
+  financeNotes               String?
+  ledgerTxId                 String?
+  postedAt                   DateTime?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  tenant         SaaSTenant?     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  depositRequest DepositRequest? @relation(fields: [depositRequestId], references: [id], onDelete: Cascade)
+  payoutRequest  PayoutRequest?  @relation(fields: [payoutRequestId], references: [id], onDelete: Cascade)
+  customerUser   User? @relation("WalletAgentCustomer", fields: [customerUserId], references: [id], onDelete: SetNull)
+  agentUser      User? @relation("WalletAgentAssigned", fields: [agentUserId], references: [id], onDelete: SetNull)
+  financeReviewer User? @relation("WalletAgentFinance", fields: [financeReviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status, direction, createdAt])
+  @@index([agentUserId, status])
+  @@index([channelCode, observedReferenceNumber])
+  @@map("wallet_agent_operations")
 }
