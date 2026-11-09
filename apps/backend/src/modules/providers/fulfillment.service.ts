@@ -156,109 +156,146 @@ export class FulfillmentService {
       };
     }
 
-    // 4. Handle Result
-    if (response.status === 'SUCCESS') {
-      if (process.env.NODE_ENV === 'production' && providerCode === 'MOCK') {
-        throw new ForbiddenException('لا يمكن تسوية قيود دفتر الأستاذ العام بالاعتماد على استجابة وهمية في بيئة الإنتاج');
-      }
-
-      // SETTLEMENT: confirmed success
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.Completed,
-          completedAt: new Date(),
-          voucherCode: response.pinCode || null,
-          providerTxId: response.providerOrderId || null,
-          statusHistory: {
-            create: {
-              oldStatus: OrderStatus.Processing,
-              newStatus: OrderStatus.Completed,
-              reason: 'Fulfillment completed successfully via provider',
-            },
-          },
-        },
-      });
-
-      // Strict Double-Entry Ledger Settlement
-      let settlementSucceeded = false;
+    // 4. Handle Result. A success flag alone is not enough: require a
+    // provider transaction reference and complete the financial settlement
+    // before the order can be marked Completed.
+    if (response.success === true && response.status === 'SUCCESS' && response.providerOrderId?.trim()) {
       try {
-        await this.ledgerService.recordOrderSettlement({
-          userId: order.userId,
-          walletId: wallet.id,
-          orderId: order.orderNumber,
-          currency,
-          retailPrice: retailPriceNumber,
-          costPrice: costPriceNumber,
-          serviceName: order.snapshotServiceName,
-          providerCode,
-        });
-        settlementSucceeded = true;
-      } catch (ledgerErr: any) {
-        this.logger.error(`Settlement ledger error for order ${order.orderNumber}: ${ledgerErr?.message}`);
-      }
+        await this.prisma.$transaction(async (tx) => {
+          const current = await tx.order.findUnique({ where: { id: order.id } });
+          if (!current || current.status !== OrderStatus.Processing) {
+            throw new BadRequestException('تغيرت حالة الطلب قبل تسوية التنفيذ؛ يلزم التحقق اليدوي.');
+          }
 
-      if (settlementSucceeded) {
-        await this.settleAgentCommission(order.id, currency);
-      }
-
-      // P05: Settle commercial cost from supplier account
-      if (this.supplierBalanceService) {
-        try {
-          await this.supplierBalanceService.deductOrderFulfillmentCost(
-            order.orderNumber,
-            providerCode,
+          const ledgerResult = await this.ledgerService.recordOrderSettlement({
+            userId: order.userId,
+            walletId: wallet.id,
+            orderId: order.orderNumber,
             currency,
-            costPriceNumber,
-          );
-        } catch (suppErr: any) {
-          this.logger.warn(`Supplier balance deduction warning: ${suppErr?.message}`);
-        }
+            retailPrice: retailPriceNumber,
+            costPrice: costPriceNumber,
+            serviceName: order.snapshotServiceName,
+            providerCode,
+          }, tx);
+          const ledgerTxId = ledgerResult?.transaction?.id || ledgerResult?.transaction?.txNumber;
+          if (!ledgerTxId) {
+            throw new BadRequestException('لم يتم إنشاء قيد دفتر الأستاذ؛ لا يمكن إكمال الطلب.');
+          }
+
+          if (costPriceNumber > 0) {
+            if (!this.supplierBalanceService) {
+              throw new BadRequestException('خدمة رصيد المورد غير متاحة؛ لا يمكن تسوية تكلفة الشحن.');
+            }
+            await this.supplierBalanceService.deductOrderFulfillmentCost(
+              order.orderNumber,
+              providerCode,
+              currency,
+              costPriceNumber,
+              tx,
+            );
+          }
+
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              status: OrderStatus.Completed,
+              completedAt: new Date(),
+              voucherCode: response.pinCode || null,
+              providerTxId: response.providerOrderId,
+              errorMessage: null,
+              statusHistory: {
+                create: {
+                  oldStatus: OrderStatus.Processing,
+                  newStatus: OrderStatus.Completed,
+                  reason: `تم تأكيد التنفيذ من المزود ${providerCode} بمرجع ${response.providerOrderId}، وترحيل القيد ${ledgerTxId}.`,
+                },
+              },
+            },
+          });
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      } catch (settlementError: any) {
+        const reason = `أفاد المزود بنجاح التنفيذ لكن تعذر إكمال التسوية المالية: ${settlementError?.message || settlementError}. تم الاحتفاظ بحجز رصيد العميل ومنع إعادة الإرسال الآلي.`;
+        this.logger.error(`Order ${order.orderNumber} requires settlement review: ${reason}`);
+        await this.prisma.order.updateMany({
+          where: { id: order.id, status: OrderStatus.Processing },
+          data: {
+            status: OrderStatus.ManualReview,
+            errorMessage: reason,
+            statusHistory: {
+              create: {
+                oldStatus: OrderStatus.Processing,
+                newStatus: OrderStatus.ManualReview,
+                reason,
+              },
+            },
+          },
+        });
+        return {
+          success: false,
+          status: OrderStatus.ManualReview,
+          orderNumber: order.orderNumber,
+          message: 'المزود أبلغ عن نجاح الشحن لكن القيد أو التسوية لم يكتمل؛ الطلب محجوز للمراجعة ولا يتم اعتباره ناجحاً محاسبياً.',
+        };
       }
 
+      await this.settleAgentCommission(order.id, currency);
       return { success: true, status: OrderStatus.Completed, orderNumber: order.orderNumber };
-    } else if (response.status === 'FAILED') {
-      // CONFIRMED FAILURE: release hold immediately
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.Failed,
-          errorMessage: response.errorMessage || 'Provider failed to fulfill',
-          statusHistory: {
-            create: {
-              oldStatus: OrderStatus.Processing,
-              newStatus: OrderStatus.Failed,
-              reason: `Fulfillment rejected by provider: ${response.errorMessage || 'Unknown failure'}`,
-            },
-          },
-        },
-      });
-
-      // Release lockedBalance hold so funds return to customer available balance
-      await this.ledgerService.releaseWalletHold(wallet.id, retailPriceNumber);
-
-      return { success: false, status: OrderStatus.Failed, orderNumber: order.orderNumber, message: response.errorMessage };
-    } else {
-      // PENDING or TIMEOUT (e.g. Manual Fulfillment or Gateway Timeout)
-      const nextStatus = providerCode === 'MANUAL' ? OrderStatus.ManualReview : OrderStatus.ManualReview;
-
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: nextStatus,
-          errorMessage: response.errorMessage || (providerCode === 'MANUAL' ? 'بانتظار تنفيذ المشغل اليدوي' : 'استجابة المزود غير مؤكدة'),
-          statusHistory: {
-            create: {
-              oldStatus: OrderStatus.Processing,
-              newStatus: nextStatus,
-              reason: response.errorMessage || 'Moved to operator manual review queue. Funds reserved in lockedBalance.',
-            },
-          },
-        },
-      });
-
-      return { success: true, status: nextStatus, orderNumber: order.orderNumber, message: 'Enqueued for manual review' };
     }
+
+    if (response.status === 'FAILED' && response.success === false) {
+      await this.prisma.$transaction(async (tx) => {
+        await this.ledgerService.releaseWalletHold(wallet.id, retailPriceNumber, tx);
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.Failed,
+            errorMessage: response.errorMessage || 'Provider confirmed failure.',
+            statusHistory: {
+              create: {
+                oldStatus: OrderStatus.Processing,
+                newStatus: OrderStatus.Failed,
+                reason: `رفض المزود تنفيذ الطلب: ${response.errorMessage || 'سبب غير محدد'}`,
+              },
+            },
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+      return {
+        success: false,
+        status: OrderStatus.Failed,
+        orderNumber: order.orderNumber,
+        message: response.errorMessage || 'رفض المزود تنفيذ العملية.',
+      };
+    }
+
+    // PENDING, timeout, incomplete success or missing provider reference:
+    // keep the wallet hold and prevent automatic resubmission until review.
+    const pendingReason = response.errorMessage ||
+      (response.status === 'SUCCESS'
+        ? 'استجابة المزود تفتقر إلى مرجع عملية موثوق؛ يتطلب الطلب مراجعة يدوية.'
+        : 'استجابة المزود غير نهائية؛ تم تعليق الطلب للمراجعة دون إعادة إرسال.');
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: OrderStatus.ManualReview,
+        errorMessage: pendingReason,
+        statusHistory: {
+          create: {
+            oldStatus: OrderStatus.Processing,
+            newStatus: OrderStatus.ManualReview,
+            reason: pendingReason,
+          },
+        },
+      },
+    });
+
+    return {
+      success: false,
+      status: OrderStatus.ManualReview,
+      orderNumber: order.orderNumber,
+      message: 'الطلب ينتظر مراجعة بشرية؛ لم يتم اعتماد نجاح أو خصم نهائي.',
+    };
   }
 
   /**
@@ -274,42 +311,53 @@ export class FulfillmentService {
         manualFulfillment: true,
       },
     });
-
-    if (!order) {
-      throw new NotFoundException('Order not found');
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status === OrderStatus.Completed) throw new BadRequestException('Order is already completed.');
+    if (order.status !== OrderStatus.ManualReview) {
+      throw new BadRequestException('لا يمكن إتمام طلب يدوياً إلا بعد تحويله إلى قائمة المراجعة اليدوية.');
     }
-
-    if (order.status === OrderStatus.Completed) {
-      throw new BadRequestException('Order is already marked as completed');
+    if (!dto.voucherCode?.trim() && !dto.proofScreenshotUrl?.trim()) {
+      throw new BadRequestException('إثبات التنفيذ مطلوب: رمز تسليم فعلي أو صورة إيصال موثقة. لا يمكن اختلاق رمز نجاح.');
     }
 
     const currency = order.snapshotCurrency as CurrencyCode;
-    const wallet = order.user.wallets.find((w) => w.currency === currency);
-    if (!wallet) {
-      throw new NotFoundException(`Customer wallet not found for currency ${currency}`);
-    }
+    const wallet = order.user.wallets.find((item) => item.currency === currency);
+    if (!wallet) throw new NotFoundException(`Customer wallet not found for currency ${currency}`);
 
     const retailPriceNumber = Number(order.snapshotRetailPrice);
     const costPriceNumber = Number(order.snapshotCostPrice);
 
-    // 1. Update order and manual fulfillment
     await this.prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.Completed,
-          completedAt: new Date(),
-          voucherCode: dto.voucherCode || order.voucherCode || 'MANUAL-FULFILLED',
-          statusHistory: {
-            create: {
-              oldStatus: order.status,
-              newStatus: OrderStatus.Completed,
-              reason: dto.operatorNotes || 'تم التنفيذ والتسليم يدوياً من قبل المشغل',
-              changedByUserId: staffId,
-            },
-          },
-        },
-      });
+      const current = await tx.order.findUnique({ where: { id: order.id } });
+      if (!current || current.status !== OrderStatus.ManualReview) {
+        throw new BadRequestException('تغيرت حالة الطلب؛ أعد تحميله قبل إتمام التنفيذ اليدوي.');
+      }
+
+      const ledgerResult = await this.ledgerService.recordOrderSettlement({
+        userId: order.userId,
+        walletId: wallet.id,
+        orderId: order.orderNumber,
+        currency,
+        retailPrice: retailPriceNumber,
+        costPrice: costPriceNumber,
+        serviceName: order.snapshotServiceName,
+        providerCode: 'MANUAL',
+      }, tx);
+      const ledgerTxId = ledgerResult?.transaction?.id || ledgerResult?.transaction?.txNumber;
+      if (!ledgerTxId) throw new BadRequestException('لم يتم إنشاء قيد دفتر الأستاذ؛ بقي الطلب في المراجعة.');
+
+      if (costPriceNumber > 0) {
+        if (!this.supplierBalanceService) {
+          throw new BadRequestException('خدمة رصيد المورد غير متاحة؛ لا يمكن تسوية تكلفة الشحن اليدوي.');
+        }
+        await this.supplierBalanceService.deductOrderFulfillmentCost(
+          order.orderNumber,
+          'MANUAL',
+          currency,
+          costPriceNumber,
+          tx,
+        );
+      }
 
       await tx.manualFulfillment.upsert({
         where: { orderId: order.id },
@@ -317,8 +365,8 @@ export class FulfillmentService {
           status: 'COMPLETED',
           assignedOperatorId: staffId,
           operatorNotes: dto.operatorNotes || null,
-          proofVoucherCode: dto.voucherCode || null,
-          proofScreenshotUrl: dto.proofScreenshotUrl || null,
+          proofVoucherCode: dto.voucherCode?.trim() || null,
+          proofScreenshotUrl: dto.proofScreenshotUrl?.trim() || null,
           completedAt: new Date(),
         },
         create: {
@@ -326,26 +374,32 @@ export class FulfillmentService {
           status: 'COMPLETED',
           assignedOperatorId: staffId,
           operatorNotes: dto.operatorNotes || null,
-          proofVoucherCode: dto.voucherCode || null,
-          proofScreenshotUrl: dto.proofScreenshotUrl || null,
+          proofVoucherCode: dto.voucherCode?.trim() || null,
+          proofScreenshotUrl: dto.proofScreenshotUrl?.trim() || null,
           completedAt: new Date(),
         },
       });
-    });
 
-    // 2. Strict Double-Entry Ledger Settlement
-    await this.ledgerService.recordOrderSettlement({
-      userId: order.userId,
-      walletId: wallet.id,
-      orderId: order.orderNumber,
-      currency,
-      retailPrice: retailPriceNumber,
-      costPrice: costPriceNumber,
-      serviceName: order.snapshotServiceName,
-      providerCode: 'MANUAL',
-    });
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.Completed,
+          completedAt: new Date(),
+          voucherCode: dto.voucherCode?.trim() || null,
+          errorMessage: null,
+          statusHistory: {
+            create: {
+              oldStatus: OrderStatus.ManualReview,
+              newStatus: OrderStatus.Completed,
+              reason: dto.operatorNotes || `تنفيذ يدوي موثق بواسطة الموظف ${staffId}؛ قيد دفتر الأستاذ ${ledgerTxId}.`,
+              changedByUserId: staffId,
+            },
+          },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
     await this.settleAgentCommission(order.id, currency);
-
     return this.prisma.order.findUnique({
       where: { id: order.id },
       include: { manualFulfillment: true, statusHistory: true },
