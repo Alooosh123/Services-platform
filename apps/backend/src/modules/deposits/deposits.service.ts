@@ -306,33 +306,82 @@ export class DepositsService {
         throw new ConflictException(`الرقم المرجعي "${dto.referenceNumber}" مسجل مسبقاً في النظام.`);
       }
 
-      const deposit = await this.prisma.depositRequest.create({
-        data: {
-          depositNumber,
-          userId,
-          walletId: wallet.id,
-          currency: dto.currency,
-          amount: dto.amount,
-          paymentMethodCode: dto.paymentMethodCode,
-          referenceNumber: dto.referenceNumber,
-          proofImageUrl: dto.proofImageUrl || null,
-          senderName: dto.senderName || null,
-          senderPhone: dto.senderPhone || null,
-          status: DepositStatus.PENDING,
-          statusHistory: {
-            create: {
-              fromStatus: null,
-              toStatus: DepositStatus.PENDING,
-              changedByUserId: userId,
-              notes: 'تم تقديم طلب الإيداع وهو بانتظار مراجعة المسؤول المالي',
+      const deposit = await this.prisma.$transaction(async (tx) => {
+        const config = await tx.paymentChannelConfig.findFirst({
+          where: {
+            tenantId: getCurrentTenantId() || null,
+            code: dto.paymentMethodCode,
+            isActive: true,
+            verificationStatus: ChannelVerificationStatus.VERIFIED,
+          },
+        });
+
+        const manualConfigReady = !!config &&
+          config.mode === PaymentChannelMode.MANUAL &&
+          !!config.accountNumber &&
+          config.accountNumber !== 'NOT_CONFIGURED' &&
+          !!config.regulatoryApprovalReference &&
+          !!config.regulatoryApprovalDocumentUrl &&
+          !!config.providerAgreementReference &&
+          !!config.providerAgreementDocumentUrl;
+
+        const sandboxOnly = process.env.NODE_ENV !== 'production' &&
+          !getCurrentTenantId() &&
+          dto.paymentMethodCode === PaymentChannelCode.WALLET;
+
+        if (!manualConfigReady && !sandboxOnly) {
+          throw new BadRequestException(
+            'قناة الدفع ليست جاهزة: يلزم حساب استقبال ووثائق اعتماد تنظيمي واتفاقية تاجر قبل تقديم طلب الإيداع.',
+          );
+        }
+
+        const created = await tx.depositRequest.create({
+          data: {
+            depositNumber,
+            userId,
+            walletId: wallet.id,
+            currency: dto.currency,
+            amount: dto.amount,
+            paymentMethodCode: dto.paymentMethodCode,
+            referenceNumber: dto.referenceNumber.trim(),
+            proofImageUrl: dto.proofImageUrl || null,
+            senderName: dto.senderName || null,
+            senderPhone: dto.senderPhone || null,
+            status: DepositStatus.PENDING,
+            statusHistory: {
+              create: {
+                fromStatus: null,
+                toStatus: DepositStatus.PENDING,
+                changedByUserId: userId,
+                notes: manualConfigReady
+                  ? 'تم استلام طلب الإيداع، وبانتظار تحقق وكيل المحافظ ثم اعتماد المالية.'
+                  : 'Sandbox test deposit request.',
+              },
             },
           },
-        },
-        include: {
-          statusHistory: { orderBy: { createdAt: 'desc' } },
-          wallet: true,
-        },
-      });
+          include: {
+            statusHistory: { orderBy: { createdAt: 'desc' } },
+            wallet: true,
+          },
+        });
+
+        if (manualConfigReady) {
+          await tx.walletAgentOperation.create({
+            data: {
+              channelCode: dto.paymentMethodCode,
+              direction: 'INBOUND_DEPOSIT',
+              status: 'PENDING',
+              depositRequestId: created.id,
+              customerUserId: userId,
+              expectedAmount: new Prisma.Decimal(dto.amount),
+              expectedCurrency: dto.currency,
+              expectedReferenceNumber: dto.referenceNumber.trim(),
+              expectedAccountLastFour: config!.accountNumber.slice(-4),
+            },
+          });
+        }
+        return created;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
         success: true,
@@ -574,9 +623,6 @@ export class DepositsService {
    * Strictly posts double-entry transaction and credits customer wallet atomically.
    */
   async approveAndCredit(staffUserId: string, depositId: string, dto?: ReviewDepositDto) {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      throw new ServiceUnavailableException('Deposit approval must use a persisted tenant-owned request.');
-    }
     if (process.env.NODE_ENV === 'test' && this.memoryDeposits.has(depositId)) {
       const deposit = this.memoryDeposits.get(depositId)!;
       if (deposit.status === DepositStatus.CREDITED || deposit.status === DepositStatus.APPROVED) {
@@ -619,6 +665,55 @@ export class DepositsService {
         throw new BadRequestException('لا يمكن اعتماد طلب الإيداع في حالته الحالية.');
       }
 
+      const channelConfig = await tx.paymentChannelConfig.findFirst({
+        where: {
+          tenantId: getCurrentTenantId() || null,
+          code: deposit.paymentMethodCode,
+          isActive: true,
+          mode: PaymentChannelMode.MANUAL,
+          verificationStatus: ChannelVerificationStatus.VERIFIED,
+        },
+      });
+      const requiresWalletAgent =
+        process.env.NODE_ENV === 'production' ||
+        !!getCurrentTenantId() ||
+        channelConfig?.mode === PaymentChannelMode.MANUAL;
+
+      let verifiedAgentOperation: any = null;
+      if (requiresWalletAgent) {
+        if (
+          !channelConfig ||
+          !channelConfig.accountNumber ||
+          channelConfig.accountNumber === 'NOT_CONFIGURED' ||
+          !channelConfig.regulatoryApprovalReference ||
+          !channelConfig.regulatoryApprovalDocumentUrl ||
+          !channelConfig.providerAgreementReference ||
+          !channelConfig.providerAgreementDocumentUrl
+        ) {
+          throw new ServiceUnavailableException('تعذر اعتماد الإيداع: قناة المحفظة لا تملك حساب استقبال ووثائق اعتماد صالحة.');
+        }
+
+        verifiedAgentOperation = await tx.walletAgentOperation.findUnique({
+          where: { depositRequestId: deposit.id },
+        });
+        if (
+          !verifiedAgentOperation ||
+          verifiedAgentOperation.status !== 'AGENT_SUBMITTED' ||
+          !verifiedAgentOperation.agentUserId ||
+          verifiedAgentOperation.agentUserId === staffUserId ||
+          !verifiedAgentOperation.observedAmount ||
+          !verifiedAgentOperation.observedAmount.equals(deposit.amount) ||
+          verifiedAgentOperation.observedCurrency !== deposit.currency ||
+          verifiedAgentOperation.observedReferenceNumber !== deposit.referenceNumber ||
+          verifiedAgentOperation.observedAccountLastFour !== channelConfig.accountNumber.slice(-4) ||
+          !verifiedAgentOperation.evidenceReference
+        ) {
+          throw new BadRequestException(
+            'يلزم تحقق وكيل مستقل من الحركة في سجل المحفظة الفعلي، مع تطابق المبلغ والعملة والمرجع وحساب الاستقبال، ثم اعتماد موظف مالية مختلف.',
+          );
+        }
+      }
+
       const claimed = await tx.depositRequest.updateMany({
         where: { id: depositId, status: deposit.status },
         data: {
@@ -654,6 +749,19 @@ export class DepositsService {
         notes,
       }, tx);
       const ledgerTxId = ledgerResult.transaction.id;
+
+      if (verifiedAgentOperation) {
+        await tx.walletAgentOperation.update({
+          where: { id: verifiedAgentOperation.id },
+          data: {
+            status: 'POSTED',
+            financeReviewedByUserId: staffUserId,
+            financeNotes: notes,
+            ledgerTxId,
+            postedAt: new Date(),
+          },
+        });
+      }
 
       const updated = await tx.depositRequest.update({
         where: { id: depositId },
@@ -1111,9 +1219,19 @@ export class DepositsService {
       if (
         config.verificationStatus !== ChannelVerificationStatus.VERIFIED ||
         !config.accountNumber ||
-        config.accountNumber === 'NOT_CONFIGURED'
+        config.accountNumber === 'NOT_CONFIGURED' ||
+        !config.accountHolderName ||
+        !config.regulatoryApprovalReference ||
+        !config.regulatoryApprovalDocumentUrl ||
+        !config.providerAgreementReference ||
+        !config.providerAgreementDocumentUrl ||
+        !config.verifiedAt ||
+        !config.verifiedByFinanceUserId ||
+        config.verifiedByFinanceUserId === actorUserId
       ) {
-        throw new BadRequestException('Finance must verify the receiver account before enabling this channel.');
+        throw new BadRequestException(
+          'لا يمكن تفعيل القناة: يلزم حساب استقبال موثق، ومرجع ووثيقة اعتماد تنظيمي، وعقد تاجر، واعتماد مالي مستقل، ثم تفعيل من مسؤول مختلف.',
+        );
       }
     }
 
@@ -1179,7 +1297,11 @@ export class DepositsService {
       (channel) =>
         channel.verificationStatus === ChannelVerificationStatus.VERIFIED &&
         !!channel.accountNumber &&
-        channel.accountNumber !== 'NOT_CONFIGURED',
+        channel.accountNumber !== 'NOT_CONFIGURED' &&
+        !!channel.regulatoryApprovalReference &&
+        !!channel.regulatoryApprovalDocumentUrl &&
+        !!channel.providerAgreementReference &&
+        !!channel.providerAgreementDocumentUrl,
     ).length;
     return {
       tenantId: getCurrentTenantId(),
@@ -1195,6 +1317,10 @@ export class DepositsService {
         mode: channel.mode,
         verificationStatus: channel.verificationStatus,
         hasReceiverAccount: !!channel.accountNumber && channel.accountNumber !== 'NOT_CONFIGURED',
+        regulatoryApprovalReference: channel.regulatoryApprovalReference,
+        hasRegulatoryDocument: !!channel.regulatoryApprovalDocumentUrl,
+        providerAgreementReference: channel.providerAgreementReference,
+        hasProviderAgreement: !!channel.providerAgreementDocumentUrl,
         verifiedAt: channel.verifiedAt,
         verifiedByFinanceUserId: channel.verifiedByFinanceUserId,
       })),
@@ -1302,6 +1428,64 @@ export class DepositsService {
     return updated;
   }
 
+  async proposeChannelComplianceEvidence(
+    channelCode: PaymentChannelCode,
+    dto: {
+      regulatoryApprovalReference: string;
+      regulatoryApprovalDocumentUrl: string;
+      providerAgreementReference: string;
+      providerAgreementDocumentUrl: string;
+    },
+    actorUserId: string,
+    actorUserRole: string,
+  ) {
+    const httpsUrl = (value: string) => {
+      try { return new URL(value).protocol === 'https:'; } catch { return false; }
+    };
+    if (
+      !dto.regulatoryApprovalReference?.trim() ||
+      !dto.providerAgreementReference?.trim() ||
+      !httpsUrl(dto.regulatoryApprovalDocumentUrl) ||
+      !httpsUrl(dto.providerAgreementDocumentUrl)
+    ) {
+      throw new BadRequestException('أدخل رقم اعتماد تنظيمي ورقم عقد، مع رابطين HTTPS للوثائق الرسمية.');
+    }
+
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('القناة غير موجودة.');
+
+    const updated = await this.prisma.paymentChannelConfig.update({
+      where: { id: config.id },
+      data: {
+        pendingRegulatoryApprovalReference: dto.regulatoryApprovalReference.trim(),
+        pendingRegulatoryApprovalDocumentUrl: dto.regulatoryApprovalDocumentUrl.trim(),
+        pendingProviderAgreementReference: dto.providerAgreementReference.trim(),
+        pendingProviderAgreementDocumentUrl: dto.providerAgreementDocumentUrl.trim(),
+        proposedByUserId: actorUserId,
+        financeApprovalRequired: true,
+        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+        isActive: false,
+        mode: PaymentChannelMode.BLOCKED_EXTERNAL,
+        killSwitchReason: 'بانتظار مراجعة مستقلة لوثائق الترخيص واتفاقية التاجر.',
+      },
+    });
+    await this.auditPaymentChannelChange(
+      actorUserId,
+      actorUserRole,
+      'PAYMENT_CHANNEL_COMPLIANCE_EVIDENCE_PROPOSED',
+      channelCode,
+      {
+        regulatoryApprovalReference: dto.regulatoryApprovalReference.trim(),
+        providerAgreementReference: dto.providerAgreementReference.trim(),
+        regulatoryApprovalDocumentUrl: dto.regulatoryApprovalDocumentUrl.trim(),
+        providerAgreementDocumentUrl: dto.providerAgreementDocumentUrl.trim(),
+      },
+    );
+    return updated;
+  }
+
   async approveChannelFinanceReview(
     adminUserId: string,
     adminUserRole: string,
@@ -1344,6 +1528,14 @@ export class DepositsService {
               pendingAccountHolderName: null,
               pendingInstructionsAr: null,
               pendingFeePercentage: null,
+              regulatoryApprovalReference: current.pendingRegulatoryApprovalReference || current.regulatoryApprovalReference,
+              regulatoryApprovalDocumentUrl: current.pendingRegulatoryApprovalDocumentUrl || current.regulatoryApprovalDocumentUrl,
+              providerAgreementReference: current.pendingProviderAgreementReference || current.providerAgreementReference,
+              providerAgreementDocumentUrl: current.pendingProviderAgreementDocumentUrl || current.providerAgreementDocumentUrl,
+              pendingRegulatoryApprovalReference: null,
+              pendingRegulatoryApprovalDocumentUrl: null,
+              pendingProviderAgreementReference: null,
+              pendingProviderAgreementDocumentUrl: null,
               proposedByUserId: null,
               financeApprovalRequired: false,
               verificationStatus: ChannelVerificationStatus.VERIFIED,
@@ -1359,6 +1551,10 @@ export class DepositsService {
               pendingAccountHolderName: null,
               pendingInstructionsAr: null,
               pendingFeePercentage: null,
+              pendingRegulatoryApprovalReference: null,
+              pendingRegulatoryApprovalDocumentUrl: null,
+              pendingProviderAgreementReference: null,
+              pendingProviderAgreementDocumentUrl: null,
               proposedByUserId: null,
               financeApprovalRequired: false,
               verificationStatus: ChannelVerificationStatus.REJECTED,

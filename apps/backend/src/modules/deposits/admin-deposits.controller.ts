@@ -153,6 +153,28 @@ export class AdminDepositsController {
     );
   }
 
+  @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
+  @Post('channels/:channel/propose-compliance')
+  @ApiOperation({ summary: 'Propose regulator authorization and provider merchant agreement evidence; independent finance review required' })
+  async proposeChannelCompliance(
+    @Param('channel') channel: string,
+    @Body() dto: {
+      regulatoryApprovalReference: string;
+      regulatoryApprovalDocumentUrl: string;
+      providerAgreementReference: string;
+      providerAgreementDocumentUrl: string;
+    },
+    @CurrentUser('id') actorUserId: string,
+    @CurrentUser('role') actorUserRole: string,
+  ) {
+    return this.depositsService.proposeChannelComplianceEvidence(
+      channel.toUpperCase() as PaymentChannelCode,
+      dto,
+      actorUserId,
+      actorUserRole,
+    );
+  }
+
   @Post('channels/:channel/finance-approval')
   @Roles(UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
   @ApiOperation({ summary: 'Finance Manager: Dual control approval for channel account change (AT-15)' })
