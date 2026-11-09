@@ -207,7 +207,7 @@ export class ServiceAccountsService {
     const since = new Date(Date.now() - 86400000);
     const [user, completedOrdersCount, recentLinkAttempts, revocations, activeConsent] = await Promise.all([
       this.prisma.user.findFirst({ where: { id: userId, tenantId }, select: { createdAt: true, phoneVerifiedAt: true } }),
-      this.prisma.order.count({ where: { userId, tenantId, status: 'Completed' } }),
+      this.prisma.order.count({ where: { userId, status: 'Completed' } }),
       this.prisma.linkedServiceAccount.count({ where: { userId, tenantId, createdAt: { gte: since } } }),
       this.prisma.linkedServiceAccount.count({ where: { userId, tenantId, status: ServiceAccountStatus.REVOKED } }),
       this.prisma.linkedServiceConsent.count({ where: { serviceAccountId: accountId, userId, tenantId, revokedAt: null } }),
