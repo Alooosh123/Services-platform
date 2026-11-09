@@ -138,6 +138,14 @@ export class ReportsController {
     return this.ownerEarningsService.listBeneficiaries(userId);
   }
 
+  @Get('owner-earnings/beneficiaries/:id/account')
+  @Roles(UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'Finance-only access to a payout beneficiary bank account with audit logging' })
+  async getBeneficiaryAccount(@Request() req: any, @Param('id') id: string) {
+    const financeUserId = req.user?.id || req.user?.userId;
+    return this.ownerEarningsService.getBeneficiaryForFinance(id, financeUserId);
+  }
+
   @Post('owner-earnings/beneficiaries/:id/approve')
   @Roles(UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Finance: independently approve or reject an owner payout beneficiary' })

@@ -167,6 +167,8 @@ export class ProfitEngineService {
         type: 'ASSET',
         OR: [
           { code: { startsWith: '100' } },
+          { code: '1010-CLEARING-USD' },
+          { code: '1011-CLEARING-SAR' },
           { code: '1110-CASH' },
         ],
       },
