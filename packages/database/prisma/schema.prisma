@@ -1706,7 +1706,7 @@ model LinkedServiceConsent {
   grantedAt        DateTime @default(now())
   revokedAt        DateTime?
 
-  tenant         SaaSTenant         ? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   serviceAccount LinkedServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
 
@@ -1735,7 +1735,7 @@ model LinkedServiceAccountReview {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  tenant         SaaSTenant         ? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   serviceAccount LinkedServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
 

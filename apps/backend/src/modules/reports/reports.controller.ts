@@ -117,7 +117,7 @@ export class ReportsController {
     @Request() req: any,
     @Query('currency') currency?: CurrencyCode,
   ) {
-    const userId = req.user?.id || req.user?.userId || 'user-owner-001';
+    const userId = req.user?.id || req.user?.userId;
     const cur = currency || CurrencyCode.YER;
     return this.ownerEarningsService.getEarningsStatement(userId, cur);
   }
@@ -136,6 +136,19 @@ export class ReportsController {
   async listBeneficiaries(@Request() req: any) {
     const userId = req.user?.id || req.user?.userId || 'user-owner-001';
     return this.ownerEarningsService.listBeneficiaries(userId);
+  }
+
+  @Post('owner-earnings/beneficiaries/:id/approve')
+  @Roles(UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'Finance: independently approve or reject an owner payout beneficiary' })
+  async approveBeneficiary(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body('approved') approved: boolean,
+    @Body('notes') notes?: string,
+  ) {
+    const financeUserId = req.user?.id || req.user?.userId;
+    return this.ownerEarningsService.approveBeneficiary(id, financeUserId, approved === true, notes);
   }
 
   @Post('owner-earnings/payouts/request')
@@ -162,7 +175,7 @@ export class ReportsController {
     @Param('id') id: string,
     @Body() dto: ApproveOwnerPayoutDto,
   ) {
-    const financeUserId = req.user?.id || req.user?.userId || 'user-finance-002';
+    const financeUserId = req.user?.id || req.user?.userId;
     return this.ownerEarningsService.approveOwnerPayout(id, dto, financeUserId);
   }
 

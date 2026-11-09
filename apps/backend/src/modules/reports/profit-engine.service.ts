@@ -18,11 +18,7 @@ export interface InMemoryOrderRecord {
 export class ProfitEngineService {
   private readonly logger = new Logger(ProfitEngineService.name);
   private memoryOrders: Map<string, InMemoryOrderRecord> = new Map();
-  private memoryCashBalances: Map<CurrencyCode, number> = new Map([
-    [CurrencyCode.YER, 1500000],
-    [CurrencyCode.USD, 5000],
-    [CurrencyCode.SAR, 8000],
-  ]);
+  private memoryCashBalances: Map<CurrencyCode, number> = new Map();
   private memoryCustomerLiabilities: Map<CurrencyCode, number> = new Map([
     [CurrencyCode.YER, 400000],
     [CurrencyCode.USD, 1200],
@@ -96,14 +92,17 @@ export class ProfitEngineService {
     currency: CurrencyCode,
     dateFilter?: string, // YYYY-MM-DD
   ): Promise<CurrencyCloseMetrics> {
-    if (this.memoryOrders.size > 0 || this.memoryCashBalances.size > 0 || process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV !== 'production' &&
+        (this.memoryOrders.size > 0 || this.memoryCashBalances.size > 0 || process.env.NODE_ENV === 'test')) {
       return this.calculateFromMemory(currency, dateFilter);
     }
     try {
-      // 1. Try DB aggregates if available
       return await this.calculateFromDb(currency, dateFilter);
-    } catch {
-      // 2. Memory engine fallback
+    } catch (error) {
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error(`Production profit calculation failed closed: ${(error as Error)?.message || error}`);
+        throw error;
+      }
       return this.calculateFromMemory(currency, dateFilter);
     }
   }
@@ -195,7 +194,11 @@ export class ProfitEngineService {
     const customerWalletLiabilities = Number(walletsAgg._sum.balance || 0);
     const supplierPayables = this.memorySupplierPayables.get(currency) || 0;
     const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100; // 5% Contingency / Refund reserve
-    const actualCashBalance = this.memoryCashBalances.get(currency) || 1000000;
+    const cashAccounts = await this.prisma.ledgerAccount.findMany({
+      where: { currency, type: 'ASSET', code: { startsWith: '100' } },
+      include: { entries: { select: { debitAmount: true, creditAmount: true } } },
+    });
+    const actualCashBalance = cashAccounts.reduce((total, account) => total + account.entries.reduce((net, entry) => net + Number(entry.debitAmount) - Number(entry.creditAmount), 0), 0);
 
     // Strict Liquidity Formula
     const freeCash = actualCashBalance - customerWalletLiabilities - supplierPayables - operatingReserve;
@@ -271,7 +274,7 @@ export class ProfitEngineService {
     const customerWalletLiabilities = this.memoryCustomerLiabilities.get(currency) || 0;
     const supplierPayables = this.memorySupplierPayables.get(currency) || 0;
     const operatingReserve = Math.round(grossSales * 0.05 * 100) / 100;
-    const actualCashBalance = this.memoryCashBalances.get(currency) || 1000000;
+    const actualCashBalance = this.memoryCashBalances.get(currency) || 0;
 
     // Strict Liquidity Formula
     const freeCash = actualCashBalance - customerWalletLiabilities - supplierPayables - operatingReserve;
