@@ -332,6 +332,9 @@ model User {
   supportTickets          SupportTicket[]
   notifications            Notification[]
   payoutBeneficiaries      PayoutBeneficiary[]
+  linkedServiceAccounts    LinkedServiceAccount[]
+  linkedServiceConsents     LinkedServiceConsent[]
+  linkedServiceReviews      LinkedServiceAccountReview[]
 
   @@index([parentAgentId])
   @@index([tenantId, role, status])
@@ -1601,6 +1604,9 @@ model SaaSTenant {
   productPrices          ProductPrice[]
   productTierPrices      ProductTierPrice[]
   pilotRunAudits          PilotRunAudit[]
+  linkedServiceAccounts  LinkedServiceAccount[]
+  linkedServiceConsents  LinkedServiceConsent[]
+  linkedServiceReviews   LinkedServiceAccountReview[]
 
   @@index([status])
   @@map("saas_tenants")
@@ -1654,4 +1660,87 @@ model SaaSInvoice {
   @@index([status])
   @@unique([paymentMethod, referenceNumber])
   @@map("saas_invoices")
+}
+
+
+// ----------------------------------------------------
+// Durable customer-linked service identifiers and consent evidence
+// ----------------------------------------------------
+model LinkedServiceAccount {
+  id                  String   @id @default(uuid())
+  tenantId            String?
+  userId              String
+  serviceSlug         String
+  serviceName         String
+  serviceNameAr       String
+  accountIdentifier   String
+  accountName         String?
+  serverZoneId        String?
+  status              String
+  verificationSource  String?
+  lastVerifiedAt      DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  tenant   SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consents LinkedServiceConsent[]
+  reviews  LinkedServiceAccountReview[]
+
+  @@unique([userId, serviceSlug, accountIdentifier])
+  @@index([tenantId, userId, status])
+  @@index([serviceSlug, accountIdentifier])
+  @@map("linked_service_accounts")
+}
+
+model LinkedServiceConsent {
+  id               String   @id @default(uuid())
+  tenantId         String?
+  userId           String
+  serviceAccountId String
+  serviceSlug      String
+  scopes           String[]
+  consentText      String
+  ipAddress        String?
+  userAgent        String?
+  grantedAt        DateTime @default(now())
+  revokedAt        DateTime?
+
+  tenant         SaaSTenant         ? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceAccount LinkedServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId, revokedAt])
+  @@index([serviceAccountId, revokedAt])
+  @@map("linked_service_consents")
+}
+
+model LinkedServiceAccountReview {
+  id                String   @id @default(uuid())
+  tenantId          String?
+  userId            String
+  serviceAccountId  String
+  serviceSlug       String
+  accountIdentifier String
+  accountName       String?
+  status            String
+  riskLevel         String
+  riskScore         Int
+  aiRecommendation  String
+  aiReasons         String[]
+  aiReasonsAr       String[]
+  operatorId        String?
+  operatorNotes     String?
+  resolvedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant         SaaSTenant         ? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceAccount LinkedServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
+  @@index([userId, status])
+  @@index([serviceAccountId])
+  @@map("linked_service_account_reviews")
 }
