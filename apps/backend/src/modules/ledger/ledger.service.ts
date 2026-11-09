@@ -580,7 +580,7 @@ export class LedgerService {
     destinationAccount: string;
     performedByUserId?: string;
     notes?: string;
-  }) {
+  }, existingTx?: Prisma.TransactionClient) {
     if (!Number.isFinite(params.amount) || params.amount <= 0) {
       throw new BadRequestException('Payout amount must be a positive finite number.');
     }
@@ -588,7 +588,7 @@ export class LedgerService {
     const channelAccountCode = this.getChannelAccountCode(params.channelCode, params.currency);
     const txNumber = `LTX-PO-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const execute = async (tx: Prisma.TransactionClient) => {
       const existing = await tx.ledgerTransaction.findUnique({
         where: { idempotencyKey: `PO-SETTLE-${params.payoutNumber}` },
         include: { entries: true },
@@ -635,9 +635,12 @@ export class LedgerService {
         },
         tx,
       );
+    };
+    if (existingTx) return execute(existingTx);
+    return this.prisma.$transaction(execute, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
   }
-
   /**
    * Holds an amount in the customer wallet's lockedBalance atomically to prevent double spending.
    * Throws if wallet is frozen or if available balance (balance - lockedBalance) < amount.
