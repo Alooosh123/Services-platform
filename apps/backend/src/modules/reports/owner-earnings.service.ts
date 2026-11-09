@@ -407,9 +407,18 @@ export class OwnerEarningsService {
       ? this.ledgerService.getChannelAccountCode(beneficiaryChannel, payout.currency)
       : this.ledgerService.getBankCashAccountCode(payout.currency);
 
+    const scopedCashAccountCode = this.ledgerService.scopeAccountCode(cashAccountCode);
     const updated = await this.prisma.$transaction(async (tx) => {
       const current = await tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
       if (!current || current.status !== OwnerPayoutStatus.APPROVED) throw new ConflictException('تغيرت حالة طلب السحب.');
+      const cashAccount = await tx.ledgerAccount.findFirst({
+        where: { code: scopedCashAccountCode, currency: current.currency, type: 'ASSET' },
+      });
+      if (!cashAccount) {
+        throw new BadRequestException(
+          'حساب النقد/المحفظة المختار غير موجود في دليل الحسابات لهذه العملة؛ لم يتم ترحيل السحب.',
+        );
+      }
       const ledger = await this.ledgerService.recordDoubleEntryTransaction({
         txNumber: 'TX-OWNER-PAYOUT-' + current.payoutNumber,
         type: LedgerTransactionType.ADJUSTMENT,
