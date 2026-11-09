@@ -51,12 +51,7 @@ export class SupplierBalanceService {
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
-  ) {
-    // Seed mock balances for local demo only. Tenant requests never share this store.
-    if (process.env.NODE_ENV !== 'production') {
-      this.seedDefaultAccounts();
-    }
-  }
+  ) {}
 
   private seedDefaultAccounts() {
     this.seedAccount('MOCK', 'prov-mock', CurrencyCode.USD, 10000, 5000);
@@ -152,15 +147,8 @@ export class SupplierBalanceService {
 
       if (tenantId) return { balance: 0, creditLimit: 0, available: 0 };
 
-      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      if (memory) {
-        return {
-          balance: memory.balance,
-          creditLimit: memory.creditLimit,
-          available: memory.balance + memory.creditLimit,
-        };
-      }
-      return { balance: 0, creditLimit: 0, available: 0 };
+      // No memory/demo supplier balances may authorize a financial fulfillment.
+      throw new ServiceUnavailableException('لا يتوفر رصيد مورد دائم في قاعدة البيانات؛ تم إيقاف التنفيذ.');
     } catch (error: any) {
       if (process.env.NODE_ENV === 'production' || tenantId) {
         this.logger.error(`Supplier balance read failed: ${error?.message || error}`);
@@ -195,7 +183,7 @@ export class SupplierBalanceService {
       };
     }
     if (costPrice === 0) {
-      return { allowed: true, availableBalance: 999999, requiredAmount: 0 };
+      return { allowed: true, availableBalance: 0, requiredAmount: 0 };
     }
 
     const { available, balance } = await this.getSupplierBalance(providerCode, currency);
@@ -353,6 +341,7 @@ export class SupplierBalanceService {
     providerCode: string,
     currency: CurrencyCode,
     costPrice: number,
+    existingTx?: Prisma.TransactionClient,
   ): Promise<{ success: boolean; newBalance: number }> {
     if (!Number.isFinite(costPrice) || costPrice < 0) {
       throw new BadRequestException('Supplier fulfillment cost is invalid.');
@@ -361,7 +350,7 @@ export class SupplierBalanceService {
 
     const tenantId = getCurrentTenantId();
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const execute = async (tx: Prisma.TransactionClient) => {
         const provider = await tx.provider.findUnique({
           where: { code: providerCode.toUpperCase() },
         });
@@ -416,37 +405,19 @@ export class SupplierBalanceService {
           },
         });
         return { success: true, newBalance: balanceAfter.toNumber() };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      };
+      if (existingTx) return await execute(existingTx);
+      return await this.prisma.$transaction(execute, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
+      if (existingTx || process.env.NODE_ENV === 'production' || tenantId) {
         this.logger.error(`Supplier fulfillment deduction failed: ${error?.message || error}`);
         throw error;
       }
       if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
         throw error;
       }
-      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      if (!memory) return { success: true, newBalance: 0 };
-      if (memory.balance + memory.creditLimit < costPrice) {
-        throw new BadRequestException('Local mock supplier balance is insufficient.');
-      }
-      const balanceBefore = memory.balance;
-      memory.balance -= costPrice;
-      memory.updatedAt = new Date();
-      const transaction: InMemorySupplierTransaction = {
-        id: `stx-${Date.now()}`,
-        providerCode: providerCode.toUpperCase(),
-        type: 'ORDER_FULFILLMENT',
-        currency,
-        amount: costPrice,
-        balanceBefore,
-        balanceAfter: memory.balance,
-        referenceId: orderId,
-        notes: `Local mock fulfillment cost ${orderId}`,
-        createdAt: new Date(),
-      };
-      this.memoryTransactions.unshift(transaction);
-      return { success: true, newBalance: memory.balance };
+      throw new ServiceUnavailableException('تعذر خصم رصيد المورد من قاعدة البيانات؛ لم يتم استخدام مخزن تجريبي.');
+
     }
   }
 
