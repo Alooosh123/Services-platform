@@ -1171,6 +1171,7 @@ export class DepositsService {
         !config.accountNumber ||
         config.accountNumber === 'NOT_CONFIGURED' ||
         !config.accountHolderName ||
+        /بانتظار|يُحدد|لم يتم اعتماد/i.test(config.accountHolderName) ||
         !config.regulatoryApprovalReference ||
         !config.regulatoryApprovalDocumentUrl ||
         !config.providerAgreementReference ||
@@ -1344,9 +1345,19 @@ export class DepositsService {
     feePercentage: number | undefined,
     actorUserId: string,
     actorUserRole: string,
+    accountHolderName?: string,
+    instructionsAr?: string,
   ) {
     const accountNumber = newAccountNumber?.trim();
     if (!accountNumber) throw new BadRequestException('A proposed receiver account number is required.');
+    const holderName = accountHolderName?.trim();
+    const channelInstructions = instructionsAr?.trim();
+    if (accountHolderName !== undefined && !holderName) {
+      throw new BadRequestException('A proposed legal account-holder name cannot be empty.');
+    }
+    if (instructionsAr !== undefined && !channelInstructions) {
+      throw new BadRequestException('Customer transfer instructions cannot be empty.');
+    }
     if (feePercentage !== undefined && (!Number.isFinite(feePercentage) || feePercentage < 0 || feePercentage > 100)) {
       throw new BadRequestException('Channel fee percentage must be between 0 and 100.');
     }
@@ -1360,6 +1371,8 @@ export class DepositsService {
       where: { id: config.id },
       data: {
         pendingAccountNumber: accountNumber,
+        pendingAccountHolderName: holderName || config.pendingAccountHolderName,
+        pendingInstructionsAr: channelInstructions || config.pendingInstructionsAr,
         pendingFeePercentage: feePercentage === undefined ? config.pendingFeePercentage : new Prisma.Decimal(feePercentage),
         proposedByUserId: actorUserId,
         financeApprovalRequired: true,
@@ -1372,6 +1385,8 @@ export class DepositsService {
     await this.auditPaymentChannelChange(actorUserId, actorUserRole, 'PAYMENT_CHANNEL_ACCOUNT_CHANGE_PROPOSED', channelCode, {
       tenantId: config.tenantId,
       proposedAccountNumber: accountNumber,
+      proposedAccountHolderName: holderName || null,
+      proposedInstructionsAr: channelInstructions || null,
       feePercentage: feePercentage ?? null,
       previousAccountNumber: config.accountNumber,
     });
