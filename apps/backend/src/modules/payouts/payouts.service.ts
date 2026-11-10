@@ -263,6 +263,41 @@ export class PayoutsService {
     if (payout.userId === staffUserId) throw new ForbiddenException('لا يمكن لمقدم طلب السحب اعتماده بنفسه.');
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.isRegulatedRuntime) {
+        const config = await tx.paymentChannelConfig.findFirst({
+          where: {
+            tenantId: getCurrentTenantId() || null,
+            code: payout.channelCode,
+            isActive: true,
+            verificationStatus: 'VERIFIED',
+          },
+        });
+        if (
+          !config ||
+          !config.accountNumber ||
+          config.accountNumber === 'NOT_CONFIGURED' ||
+          !config.regulatoryApprovalReference ||
+          !config.regulatoryApprovalDocumentUrl ||
+          !config.providerAgreementReference ||
+          !config.providerAgreementDocumentUrl
+        ) {
+          throw new ServiceUnavailableException('لا يمكن اعتماد السحب دون قناة موثقة واعتماد تنظيمي واتفاقية تاجر سارية.');
+        }
+        if (config.mode === PaymentChannelMode.MANUAL) {
+          const operation = await tx.walletAgentOperation.findUnique({
+            where: { payoutRequestId: payout.id },
+          });
+          if (!operation || operation.direction !== 'OUTBOUND_PAYOUT' || operation.status !== 'PENDING') {
+            throw new BadRequestException('مهمة الوكيل الصادر غير موجودة أو ليست في حالة انتظار قبل اعتماد السحب.');
+          }
+        } else if (
+          config.mode !== PaymentChannelMode.API ||
+          !this.adapterRegistry.getAdapter(payout.channelCode)?.getInfo().capabilities?.payout
+        ) {
+          throw new ServiceUnavailableException('لم يتم اعتماد محول API للسحب بهذه القناة؛ لا يمكن اعتماد الطلب.');
+        }
+      }
+
       const changed = await tx.payoutRequest.updateMany({
         where: { id: payoutId, status: PayoutStatus.REQUESTED },
         data: { status: PayoutStatus.APPROVED, approvedByUserId: staffUserId, approvalNotes: dto?.reviewNotes || 'تمت الموافقة المالية.' },
@@ -374,7 +409,15 @@ export class PayoutsService {
             },
           })
         : null;
-      if (this.isRegulatedRuntime && channelConfig?.mode === PaymentChannelMode.MANUAL) {
+      if (this.isRegulatedRuntime) {
+        if (
+          !channelConfig ||
+          !channelConfig.isActive ||
+          channelConfig.verificationStatus !== 'VERIFIED' ||
+          channelConfig.mode !== PaymentChannelMode.MANUAL
+        ) {
+          throw new ServiceUnavailableException('التأكيد اليدوي متاح فقط لقناة سحب يدوية موثقة ومعتمدة.');
+        }
         agentOperation = await this.assertManualPayoutAgentEvidence(tx, payout, staffUserId);
         if (!agentOperation || agentOperation.observedReferenceNumber !== externalRef.trim()) {
           throw new BadRequestException('يجب أن يطابق مرجع التحويل المدخل المرجع الذي سجله الوكيل من سجل المحفظة.');
