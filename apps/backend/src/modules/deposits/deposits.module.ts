@@ -15,6 +15,8 @@ import {
 } from './adapters/yemen-payment.adapters';
 import { LedgerModule } from '../ledger/ledger.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { EncryptionService } from '../../security/encryption.service';
+import { PaymentSenderAccountsService } from './payment-sender-accounts.service';
 
 @Module({
   imports: [LedgerModule, WalletModule],
@@ -22,6 +24,8 @@ import { WalletModule } from '../wallet/wallet.module';
   providers: [
     DepositsService,
     WalletAgentOperationsService,
+    PaymentSenderAccountsService,
+    EncryptionService,
     PaymentAdapterRegistry,
     JaibPaymentAdapter,
     JawaliPaymentAdapter,
