@@ -30,6 +30,9 @@ describe('Phase 07 — Owner Earnings, Payouts, Liquidity & Daily Close Reports'
     wallet: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { balance: 0 } }),
     },
+    supplierAccount: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     dailyCloseReport: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockImplementation((args) => Promise.resolve(args.data)),
