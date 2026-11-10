@@ -68,6 +68,14 @@ export interface InMemoryDeposit {
 export class DepositsService {
   private readonly logger = new Logger(DepositsService.name);
   private memoryDeposits: Map<string, InMemoryDeposit> = new Map();
+  private strictPersistenceModeForTests = false;
+
+  enableStrictPersistenceModeForTests(): void {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new Error('Strict persistence test mode can only be enabled in NODE_ENV=test.');
+    }
+    this.strictPersistenceModeForTests = true;
+  }
 
   private assertMemoryFallbackAllowed(operation: string, error?: any): void {
     if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
@@ -362,6 +370,9 @@ export class DepositsService {
         throw new ConflictException(`الرقم المرجعي "${suppliedReferenceNumber || requestReferenceNumber}" مسجل مسبقاً في النظام.`);
       }
       this.assertMemoryFallbackAllowed('create deposit request', err);
+      if (this.strictPersistenceModeForTests) {
+        throw err;
+      }
       if (process.env.NODE_ENV === 'test') {
         const memoryDeposit: InMemoryDeposit = {
           id: `test-dep-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
