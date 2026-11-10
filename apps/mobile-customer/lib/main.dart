@@ -34,8 +34,133 @@ class _AuthPageState extends State<AuthPage>{
  ]))))))));
 }
 class Shell extends StatefulWidget{const Shell({super.key});@override State<Shell> createState()=>_ShellState();}
-class _ShellState extends State<Shell>{int index=0;final pages=const[CatalogPage(),OrdersPage(),WalletPage(),ProfilePage()];@override Widget build(BuildContext c)=>Scaffold(body:IndexedStack(index:index,children:pages),bottomNavigationBar:NavigationBar(backgroundColor:panel,selectedIndex:index,onDestinationSelected:(i)=>setState(()=>index=i),destinations:const[
- NavigationDestination(icon:Icon(Icons.storefront),label:'المتجر'),NavigationDestination(icon:Icon(Icons.receipt_long),label:'طلباتي'),NavigationDestination(icon:Icon(Icons.account_balance_wallet),label:'المحفظة'),NavigationDestination(icon:Icon(Icons.person),label:'حسابي')]));
+class _ShellState extends State<Shell>{int index=0;final pages=const[CatalogPage(),OrdersPage(),WalletPage(),NotificationsPage(),ProfilePage()];@override Widget build(BuildContext c)=>Scaffold(body:IndexedStack(index:index,children:pages),bottomNavigationBar:NavigationBar(backgroundColor:panel,selectedIndex:index,onDestinationSelected:(i)=>setState(()=>index=i),destinations:const[
+ NavigationDestination(icon:Icon(Icons.storefront),label:'المتجر'),NavigationDestination(icon:Icon(Icons.receipt_long),label:'طلباتي'),NavigationDestination(icon:Icon(Icons.account_balance_wallet),label:'المحفظة'),NavigationDestination(icon:Icon(Icons.notifications),label:'الإشعارات'),NavigationDestination(icon:Icon(Icons.person),label:'حسابي')]));
+}
+
+class NotificationsPage extends StatefulWidget {
+  const NotificationsPage({super.key});
+  @override
+  State<NotificationsPage> createState() => _NotificationsPageState();
+}
+
+class _NotificationsPageState extends State<NotificationsPage> {
+  bool loading = true;
+  int unreadCount = 0;
+  List<Map<String, dynamic>> notifications = [];
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    if (mounted) setState(() { loading = true; error = null; });
+    try {
+      final result = await ApiClient.instance.get('/notifications?limit=50');
+      if (!mounted) return;
+      final map = result is Map ? result : <String, dynamic>{};
+      setState(() {
+        unreadCount = (map['unreadCount'] as num?)?.toInt() ?? 0;
+        notifications = rows(map['notifications']);
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { error = e.toString(); loading = false; });
+    }
+  }
+
+  Future<void> markRead(String id) async {
+    try {
+      await ApiClient.instance.patch('/notifications/$id/read');
+      await load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> markAllRead() async {
+    try {
+      await ApiClient.instance.post('/notifications/mark-all-read');
+      await load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('الإشعارات'),
+      actions: [
+        if (unreadCount > 0)
+          IconButton(
+            tooltip: 'تعليم الكل كمقروء',
+            onPressed: markAllRead,
+            icon: const Icon(Icons.done_all),
+          ),
+      ],
+    ),
+    body: loading
+      ? const Center(child: CircularProgressIndicator())
+      : RefreshIndicator(
+          onRefresh: load,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (error != null)
+                Card(color: panel, child: ListTile(
+                  leading: const Icon(Icons.cloud_off, color: Colors.orangeAccent),
+                  title: const Text('تعذر تحميل الإشعارات'),
+                  subtitle: Text(error!),
+                  trailing: IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
+                )),
+              if (error == null)
+                Card(
+                  color: panel,
+                  child: ListTile(
+                    leading: const Icon(Icons.notifications_active, color: purple),
+                    title: const Text('مركز إشعارات حسابك'),
+                    subtitle: Text('إشعارات غير مقروءة: $unreadCount'),
+                    trailing: IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
+                  ),
+                ),
+              if (error == null && notifications.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(28),
+                  child: Center(child: Text('لا توجد إشعارات حالياً.', style: TextStyle(color: Colors.white60))),
+                ),
+              for (final item in notifications)
+                Card(
+                  color: panel,
+                  child: ListTile(
+                    leading: Icon(
+                      item['status'] == 'UNREAD' ? Icons.mark_email_unread : Icons.notifications_none,
+                      color: item['status'] == 'UNREAD' ? purple : Colors.white54,
+                    ),
+                    title: Text(item['title']?.toString() ?? 'إشعار'),
+                    subtitle: Text(
+                      '${item['message']?.toString() ?? ''}\n${item['createdAt']?.toString() ?? ''}',
+                      style: const TextStyle(height: 1.5),
+                    ),
+                    isThreeLine: true,
+                    trailing: item['status'] == 'UNREAD'
+                      ? IconButton(
+                          tooltip: 'تعليم كمقروء',
+                          onPressed: () => markRead(item['id'].toString()),
+                          icon: const Icon(Icons.done, color: green),
+                        )
+                      : null,
+                    onTap: item['status'] == 'UNREAD' ? () => markRead(item['id'].toString()) : null,
+                  ),
+                ),
+            ],
+          ),
+        ),
+  );
 }
 class CatalogPage extends StatefulWidget{const CatalogPage({super.key});@override State<CatalogPage> createState()=>_CatalogPageState();}
 class _CatalogPageState extends State<CatalogPage>{
