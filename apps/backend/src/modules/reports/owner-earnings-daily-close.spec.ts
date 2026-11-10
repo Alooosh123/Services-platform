@@ -67,6 +67,9 @@ describe('Phase 07 — Owner Earnings, Payouts, Liquidity & Daily Close Reports'
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
     },
+    ledgerTransaction: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     auditLog: {
       create: jest.fn().mockResolvedValue({ id: 'audit-test' }),
     },
