@@ -436,6 +436,7 @@ export interface CreateDynamicChannelDto {
   minAmount: number;
   maxAmount: number;
   mode?: PaymentChannelMode;
+  senderIdentifierType?: PaymentSenderIdentifierType;
   isLegalVerified?: boolean;
 }
 
