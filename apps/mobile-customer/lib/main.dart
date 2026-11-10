@@ -470,6 +470,8 @@ class _DepositPageState extends State<DepositPage> {
                         (item['supportedCurrencies'] as List? ?? const []).contains(currency)
                       ).toList();
                       channelCode = next.isEmpty ? null : next.first['code']?.toString();
+                      senderIdentifier.clear();
+                      consentAccepted = false;
                     });
                   },
                 ),
@@ -484,7 +486,11 @@ class _DepositPageState extends State<DepositPage> {
                         child: Text(item['nameAr']?.toString() ?? item['code'].toString()),
                       ),
                   ],
-                  onChanged: (value) => setState(() => channelCode = value),
+                  onChanged: (value) => setState(() {
+                    channelCode = value;
+                    senderIdentifier.clear();
+                    consentAccepted = false;
+                  }),
                 ),
                 if (channel != null) ...[
                   const SizedBox(height: 12),
