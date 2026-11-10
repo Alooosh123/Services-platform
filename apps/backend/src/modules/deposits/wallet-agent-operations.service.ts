@@ -33,6 +33,9 @@ export class WalletAgentOperationsService {
       select: { id: true, role: true, tenantId: true },
     });
     if (!agent) throw new ForbiddenException('حساب الوكيل غير مفعل أو لا يحمل دور وكيل المحافظ.');
+    if (this.tenantId && agent.tenantId !== this.tenantId) {
+      throw new ForbiddenException('لا يمكن لوكيل العمل على مهام متجر آخر.');
+    }
     return agent;
   }
 
@@ -68,7 +71,12 @@ export class WalletAgentOperationsService {
       },
       orderBy: { createdAt: 'asc' },
     });
-    return rows.map((row) => ({
+    const eligibleRows = rows.filter((row) =>
+      row.status !== 'PENDING' ||
+      row.direction !== 'OUTBOUND_PAYOUT' ||
+      row.payoutRequest?.status === 'APPROVED',
+    );
+    return eligibleRows.map((row) => ({
       ...row,
       expectedAmount: Number(row.expectedAmount),
       observedAmount: row.observedAmount === null ? null : Number(row.observedAmount),
@@ -89,11 +97,29 @@ export class WalletAgentOperationsService {
   async claim(operationId: string, agentUserId: string) {
     await this.assertAgent(agentUserId);
     return this.prisma.$transaction(async (tx) => {
+      const current = await tx.walletAgentOperation.findFirst({
+        where: { id: operationId, tenantId: this.tenantId, status: 'PENDING', agentUserId: null },
+      });
+      if (!current) throw new ConflictException('المهمة ليست متاحة أو سبق أن استلمها وكيل آخر.');
+
+      if (current.direction === 'OUTBOUND_PAYOUT') {
+        const payout = current.payoutRequestId
+          ? await tx.payoutRequest.findUnique({ where: { id: current.payoutRequestId } })
+          : null;
+        if (!payout || payout.status !== 'APPROVED') {
+          throw new ForbiddenException('لا يجوز للوكيل تنفيذ سحب قبل اعتماد طلبه من موظف المالية.');
+        }
+        if (payout.approvedByUserId === agentUserId) {
+          throw new ForbiddenException('من اعتمد طلب السحب لا يجوز أن ينفذ التحويل بصفة وكيل.');
+        }
+      }
+
       const changed = await tx.walletAgentOperation.updateMany({
         where: { id: operationId, tenantId: this.tenantId, status: 'PENDING', agentUserId: null },
         data: { status: 'CLAIMED', agentUserId, claimedAt: new Date() },
       });
-      if (changed.count !== 1) throw new ConflictException('المهمة ليست متاحة أو سبق أن استلمها وكيل آخر.');
+      if (changed.count !== 1) throw new ConflictException('تم استلام المهمة بواسطة وكيل آخر بالتزامن.');
+
       const operation = await tx.walletAgentOperation.findFirst({
         where: { id: operationId, agentUserId, status: 'CLAIMED' },
       });
@@ -157,6 +183,33 @@ export class WalletAgentOperationsService {
           submittedAt: new Date(),
         },
       });
+      if (operation.direction === 'INBOUND_DEPOSIT' && operation.depositRequestId) {
+        const deposit = await tx.depositRequest.findUnique({
+          where: { id: operation.depositRequestId },
+          select: { id: true, status: true },
+        });
+        if (!deposit) throw new NotFoundException('طلب الإيداع المرتبط بمهمة الوكيل غير موجود.');
+        await tx.depositRequest.update({
+          where: { id: deposit.id },
+          data: {
+            verificationStatus: isMatch ? 'AGENT_SUBMITTED' : 'NEEDS_REVIEW',
+            ...(deposit.status === 'PENDING' ? { status: 'UNDER_REVIEW' } : {}),
+            ...(deposit.status === 'PENDING' ? {
+              statusHistory: {
+                create: {
+                  fromStatus: 'PENDING',
+                  toStatus: 'UNDER_REVIEW',
+                  changedByUserId: agentUserId,
+                  notes: isMatch
+                    ? 'سجل وكيل المحفظة تفاصيل الحركة؛ تنتظر مراجعة المالية المستقلة.'
+                    : 'رصد وكيل المحفظة اختلافاً؛ عُزل الإيداع للمراجعة المالية.',
+                },
+              },
+            } : {}),
+          },
+        });
+      }
+
       await tx.auditLog.create({
         data: {
           userId: agentUserId,
