@@ -73,6 +73,20 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
       expect(code?.length).toBe(6);
     });
 
+    it('must not leave a verifiable OTP challenge when the production SMS adapter refuses dispatch', async () => {
+      service.setSmsAdapter(new ProductionSmsAdapter());
+
+      await expect(
+        service.sendOtp({ phone: '773100200' }, 'user-sms-gateway-test', '127.0.0.10'),
+      ).rejects.toThrow('لم يتم تركيب محول موثق لمزود SMS');
+
+      await expect(
+        service.verifyOtp({ phone: '773100200', code: '123456' }, 'user-sms-gateway-test'),
+      ).rejects.toThrow('لا يوجد طلب تحقق نشط');
+
+      service.setSmsAdapter(sandboxAdapter);
+    });
+
     it('should successfully verify valid OTP and mark phone as verified', async () => {
       const code = sandboxAdapter.getLastCodeForPhone('+967771999888')!;
       const verifyRes = await service.verifyOtp({ phone: testPhone, code }, 'user-cust-1');
