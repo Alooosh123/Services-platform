@@ -1348,6 +1348,41 @@ export class DepositsService {
     });
   }
 
+  async updateSenderIdentifierType(
+    channelCode: PaymentChannelCode,
+    identifierType: PaymentSenderIdentifierType,
+    actorUserId: string,
+    actorUserRole: string,
+  ) {
+    if (!Object.values(PaymentSenderIdentifierType).includes(identifierType)) {
+      throw new BadRequestException('نوع معرّف حساب المرسل غير صالح.');
+    }
+    const config = await this.prisma.paymentChannelConfig.findFirst({
+      where: this.currentChannelTenantWhere(channelCode),
+    });
+    if (!config) throw new NotFoundException('إعداد قناة الدفع غير موجود لهذا المتجر.');
+
+    const updated = await this.prisma.paymentChannelConfig.update({
+      where: { id: config.id },
+      data: { senderIdentifierType: identifierType },
+    });
+    await this.auditPaymentChannelChange(
+      actorUserId,
+      actorUserRole,
+      'PAYMENT_CHANNEL_SENDER_IDENTIFIER_TYPE_CHANGED',
+      channelCode,
+      {
+        previousIdentifierType: config.senderIdentifierType,
+        newIdentifierType: identifierType,
+      },
+    );
+    return {
+      channelCode,
+      senderIdentifierType: updated.senderIdentifierType,
+      message: 'تم تحديث نوع معرّف حساب الإرسال للقناة. سيحتاج العميل إلى إعادة حفظ معرّفه إذا تغير النوع.',
+    };
+  }
+
   async createDynamicChannel(dto: CreateDynamicChannelDto, actorUserId: string, actorUserRole: string) {
     if (!Object.values(PaymentChannelCode).includes(dto.code)) {
       throw new BadRequestException('Channel code is not supported by the current database enum.');
