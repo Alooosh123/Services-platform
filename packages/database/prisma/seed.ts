@@ -20,6 +20,13 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config();
 
+// This seed includes development/sample users, products and provider fixtures.
+// Production must bootstrap real administrator, merchant and catalog records
+// through the secured onboarding workflows instead of importing demo identities.
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Production seeding is disabled: use the audited production bootstrap procedure.');
+}
+
 const prisma = new PrismaClient();
 
 const defaultTiers = [
