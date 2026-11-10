@@ -153,7 +153,7 @@ export class WalletService {
       throw new BadRequestException('عملة المحفظة غير مدعومة.');
     }
 
-    // Resolve wallet IDs first so the result is always scoped to the authenticated customer.
+    // Resolve wallet IDs first so the query can never return another customer's ledger entries.
     const wallets = await this.prisma.wallet.findMany({
       where: { userId, ...(currency ? { currency } : {}) },
       select: { id: true, currency: true },
@@ -163,37 +163,63 @@ export class WalletService {
       return { items: [], page: safePage, limit: safeLimit, total: 0, pages: 0 };
     }
 
-    const where = { walletId: { in: walletIds } };
+    const where = {
+      walletId: { in: walletIds },
+      transaction: { status: { in: ['POSTED', 'REVERSED'] } },
+    };
     const [rows, total] = await this.prisma.$transaction([
-      this.prisma.walletLedgerEntry.findMany({
+      this.prisma.ledgerEntry.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: (safePage - 1) * safeLimit,
         take: safeLimit,
-        include: { wallet: { select: { currency: true } } },
+        include: {
+          transaction: {
+            select: {
+              id: true,
+              txNumber: true,
+              status: true,
+              referenceType: true,
+              referenceId: true,
+              notes: true,
+              postedAt: true,
+              isReversal: true,
+            },
+          },
+        },
       }),
-      this.prisma.walletLedgerEntry.count({ where }),
+      this.prisma.ledgerEntry.count({ where }),
     ]);
 
     return {
-      items: rows.map((row) => ({
-        id: row.id,
-        direction: row.entryType,
-        amount: Number(row.amount),
-        balanceBefore: Number(row.balanceBefore),
-        balanceAfter: Number(row.balanceAfter),
-        currency: row.wallet.currency,
-        referenceType: row.referenceType,
-        referenceId: row.referenceId,
-        description: row.description,
-        createdAt: row.createdAt,
-      })),
+      items: rows.map((row) => {
+        const debit = Number(row.debitAmount);
+        const credit = Number(row.creditAmount);
+        const wallet = wallets.find((candidate) => candidate.id === row.walletId);
+        return {
+          id: row.id,
+          transactionId: row.transaction.id,
+          transactionNumber: row.transaction.txNumber,
+          direction: credit > 0 ? 'CREDIT' : 'DEBIT',
+          amount: credit > 0 ? credit : debit,
+          currency: row.currency,
+          referenceType: row.transaction.referenceType,
+          referenceId: row.transaction.referenceId,
+          description: row.notes || row.transaction.notes || null,
+          status: row.transaction.status,
+          isReversal: row.transaction.isReversal,
+          postedAt: row.transaction.postedAt,
+          createdAt: row.createdAt,
+          walletCurrency: wallet?.currency || row.currency,
+        };
+      }),
       page: safePage,
       limit: safeLimit,
       total,
       pages: Math.ceil(total / safeLimit),
     };
   }
+
 
   async getWallet(userId: string, currency: CurrencyCode) {
     try {
