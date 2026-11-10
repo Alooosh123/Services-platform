@@ -68,6 +68,13 @@ export enum PaymentChannelCode {
   USDT_BEP20 = 'USDT_BEP20',
 }
 
+export enum PaymentSenderIdentifierType {
+  ALIAS = 'ALIAS',
+  PHONE = 'PHONE',
+  WALLET_ID = 'WALLET_ID',
+  ACCOUNT_NUMBER = 'ACCOUNT_NUMBER',
+}
+
 export enum LedgerAccountType {
   ASSET = 'ASSET',
   LIABILITY = 'LIABILITY',
