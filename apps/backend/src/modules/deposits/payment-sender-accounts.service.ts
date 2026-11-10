@@ -28,9 +28,170 @@ export class PaymentSenderAccountsService {
         maskedIdentifier: true,
         status: true,
         verifiedAt: true,
+        reviewNotes: true,
+        reviewedAt: true,
         createdAt: true,
         updatedAt: true,
       },
+    });
+  }
+
+  /**
+   * Owner-only review queue. The complete identifier is decrypted only for
+   * this endpoint; the controller restricts it to OWNER/SUPER_ADMIN.
+   */
+  async listPendingForOwner() {
+    const accounts = await this.prisma.paymentSenderAccount.findMany({
+      where: { tenantId: this.tenantId, status: 'PENDING_VERIFICATION' },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            fullNameAr: true,
+            email: true,
+            phone: true,
+            isVerified: true,
+            phoneVerifiedAt: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    return accounts.map((account: any) => ({
+      id: account.id,
+      channelCode: account.channelCode,
+      identifierType: account.identifierType,
+      identifier: this.encryption.decrypt(account.identifierCiphertext),
+      maskedIdentifier: account.maskedIdentifier,
+      status: account.status,
+      consentGrantedAt: account.consentGrantedAt,
+      createdAt: account.createdAt,
+      user: account.user,
+    }));
+  }
+
+  async approveForOwner(accountId: string, ownerUserId: string, reviewNotes?: string) {
+    const now = new Date();
+    const cleanNotes = reviewNotes?.trim().slice(0, 500) || null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.paymentSenderAccount.updateMany({
+        where: {
+          id: accountId,
+          tenantId: this.tenantId,
+          status: 'PENDING_VERIFICATION',
+        },
+        data: {
+          status: 'VERIFIED',
+          verifiedAt: now,
+          reviewedAt: now,
+          reviewedByUserId: ownerUserId,
+          reviewNotes: cleanNotes,
+        },
+      });
+
+      if (result.count !== 1) {
+        throw new ConflictException('طلب التوثيق غير موجود أو تمت مراجعته مسبقاً. حدّث قائمة الطلبات.');
+      }
+
+      const account = await tx.paymentSenderAccount.findFirst({
+        where: { id: accountId, tenantId: this.tenantId },
+        select: {
+          id: true,
+          userId: true,
+          channelCode: true,
+          identifierType: true,
+          maskedIdentifier: true,
+          status: true,
+          verifiedAt: true,
+          reviewedAt: true,
+          reviewNotes: true,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: ownerUserId,
+          action: 'PAYMENT_SENDER_ACCOUNT_APPROVED',
+          entityName: 'PaymentSenderAccount',
+          entityId: accountId,
+          newValues: {
+            customerUserId: account?.userId,
+            channelCode: account?.channelCode,
+            identifierType: account?.identifierType,
+            maskedIdentifier: account?.maskedIdentifier,
+            status: 'VERIFIED',
+            reviewNotes: cleanNotes,
+          },
+        },
+      });
+
+      return account;
+    });
+  }
+
+  async rejectForOwner(accountId: string, ownerUserId: string, rejectionReason: string) {
+    const reason = rejectionReason?.trim();
+    if (!reason || reason.length > 500) {
+      throw new BadRequestException('سبب رفض رقم المحفظة مطلوب وبحد أقصى 500 حرف.');
+    }
+    const now = new Date();
+
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.paymentSenderAccount.updateMany({
+        where: {
+          id: accountId,
+          tenantId: this.tenantId,
+          status: 'PENDING_VERIFICATION',
+        },
+        data: {
+          status: 'REJECTED',
+          verifiedAt: null,
+          reviewedAt: now,
+          reviewedByUserId: ownerUserId,
+          reviewNotes: reason,
+        },
+      });
+
+      if (result.count !== 1) {
+        throw new ConflictException('طلب التوثيق غير موجود أو تمت مراجعته مسبقاً. حدّث قائمة الطلبات.');
+      }
+
+      const account = await tx.paymentSenderAccount.findFirst({
+        where: { id: accountId, tenantId: this.tenantId },
+        select: {
+          id: true,
+          userId: true,
+          channelCode: true,
+          identifierType: true,
+          maskedIdentifier: true,
+          status: true,
+          reviewedAt: true,
+          reviewNotes: true,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: ownerUserId,
+          action: 'PAYMENT_SENDER_ACCOUNT_REJECTED',
+          entityName: 'PaymentSenderAccount',
+          entityId: accountId,
+          newValues: {
+            customerUserId: account?.userId,
+            channelCode: account?.channelCode,
+            identifierType: account?.identifierType,
+            maskedIdentifier: account?.maskedIdentifier,
+            status: 'REJECTED',
+            rejectionReason: reason,
+          },
+        },
+      });
+
+      return account;
     });
   }
 
@@ -104,16 +265,20 @@ export class PaymentSenderAccountsService {
         where: { tenantId: this.tenantId, userId, channelCode: dto.channelCode },
       });
       const changedIdentifier = !existing || existing.identifierLookupHash !== lookupHash;
+      const alreadyVerified = !!existing && !changedIdentifier && existing.status === 'VERIFIED';
       const data = {
         identifierType: dto.identifierType,
         identifierCiphertext: this.encryption.encrypt(normalized),
         identifierLookupHash: lookupHash,
         maskedIdentifier,
         identifierLastFour: lastFour,
-        status: changedIdentifier ? 'PENDING_VERIFICATION' : existing.status,
-        verifiedAt: changedIdentifier ? null : existing.verifiedAt,
+        status: alreadyVerified ? 'VERIFIED' : 'PENDING_VERIFICATION',
+        verifiedAt: alreadyVerified ? existing.verifiedAt : null,
+        reviewedByUserId: alreadyVerified ? existing.reviewedByUserId : null,
+        reviewedAt: alreadyVerified ? existing.reviewedAt : null,
+        reviewNotes: alreadyVerified ? existing.reviewNotes : null,
         consentGrantedAt: new Date(),
-        consentTextVersion: 'payment-sender-account-v1',
+        consentTextVersion: 'payment-sender-account-v2-owner-review',
       };
 
       const account = existing
@@ -150,6 +315,8 @@ export class PaymentSenderAccountsService {
         maskedIdentifier: account.maskedIdentifier,
         status: account.status,
         verifiedAt: account.verifiedAt,
+        reviewNotes: account.reviewNotes,
+        reviewedAt: account.reviewedAt,
       };
     });
   }
