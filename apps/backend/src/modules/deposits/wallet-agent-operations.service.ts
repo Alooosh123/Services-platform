@@ -292,6 +292,7 @@ export class WalletAgentOperationsService {
           !!deposit.senderAccountId &&
           !!deposit.senderAccount &&
           ['PENDING_VERIFICATION', 'VERIFIED'].includes(deposit.senderAccount.status) &&
+          deposit.senderAccount.identifierType === channelConfig?.senderIdentifierType &&
           !!operation.expectedSenderAccountLastFour &&
           senderIdentityMatches &&
           senderLastFour === operation.expectedSenderAccountLastFour &&
