@@ -31,7 +31,7 @@ export class LedgerService {
     return value.startsWith(prefix) ? value : `${prefix}${value}`;
   }
 
-  private scopeAccountCode(value: string): string {
+  scopeAccountCode(value: string): string {
     return this.scopeTenantKey(value);
   }
 
