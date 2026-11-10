@@ -126,6 +126,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           retailPrice: 550,
           costPrice: 495,
         }),
+        expect.anything(),
       );
     });
 
@@ -150,7 +151,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           }),
         }),
       );
-      expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith('wallet-yer-1', 550);
+      expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith('wallet-yer-1', 550, expect.anything());
     });
 
     it('3. should move order to ManualReview and preserve balance hold on timeout', async () => {
@@ -210,12 +211,19 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
         operatorNotes: 'تم التسليم بالاتصال مع الموزع',
       });
 
-      expect(mockPrisma.order.update).toHaveBeenCalledWith(
+      expect(mockPrisma.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: 'ord-test-1', status: OrderStatus.ManualReview },
           data: expect.objectContaining({
             status: OrderStatus.Completed,
             voucherCode: 'MANUAL-PIN-5544',
           }),
+        }),
+      );
+      expect(mockPrisma.manualFulfillment.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { orderId: 'ord-test-1' },
+          create: expect.objectContaining({ proofVoucherCode: 'MANUAL-PIN-5544' }),
         }),
       );
       expect(mockLedgerService.recordOrderSettlement).toHaveBeenCalledWith(
@@ -223,6 +231,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           orderId: mockOrder.orderNumber,
           providerCode: 'MANUAL',
         }),
+        expect.anything(),
       );
     });
   });
