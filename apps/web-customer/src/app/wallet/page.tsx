@@ -811,7 +811,7 @@ export default function CustomerWalletPage() {
                     <td className="py-4 px-4 font-mono font-black text-sm text-emerald-400">
                       {dep.amount.toLocaleString('en-US')} {dep.currency}
                     </td>
-                    <td className="py-4 px-4 font-mono text-slate-300">{dep.referenceNumber}</td>
+                    <td className="py-4 px-4 font-mono text-slate-300">{dep.referenceNumber?.startsWith('PENDING-') ? 'بانتظار مرجع الحركة' : dep.referenceNumber}</td>
                     <td className="py-4 px-4">{getStatusBadge(dep.status)}</td>
                     <td className="py-4 px-4 text-slate-400 font-mono text-[11px]">
                       {new Date(dep.createdAt).toLocaleDateString('ar-EG', {
