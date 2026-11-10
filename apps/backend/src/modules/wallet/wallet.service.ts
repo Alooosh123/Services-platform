@@ -141,6 +141,60 @@ export class WalletService {
   /**
    * Retrieves a specific single-currency wallet for a user.
    */
+  async getWalletTransactions(
+    userId: string,
+    currency?: CurrencyCode,
+    page = 1,
+    limit = 20,
+  ) {
+    const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
+    const safeLimit = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 20;
+    if (currency && ![CurrencyCode.YER, CurrencyCode.USD, CurrencyCode.SAR].includes(currency)) {
+      throw new BadRequestException('عملة المحفظة غير مدعومة.');
+    }
+
+    // Resolve wallet IDs first so the result is always scoped to the authenticated customer.
+    const wallets = await this.prisma.wallet.findMany({
+      where: { userId, ...(currency ? { currency } : {}) },
+      select: { id: true, currency: true },
+    });
+    const walletIds = wallets.map((wallet) => wallet.id);
+    if (!walletIds.length) {
+      return { items: [], page: safePage, limit: safeLimit, total: 0, pages: 0 };
+    }
+
+    const where = { walletId: { in: walletIds } };
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.walletLedgerEntry.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+        include: { wallet: { select: { currency: true } } },
+      }),
+      this.prisma.walletLedgerEntry.count({ where }),
+    ]);
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        direction: row.entryType,
+        amount: Number(row.amount),
+        balanceBefore: Number(row.balanceBefore),
+        balanceAfter: Number(row.balanceAfter),
+        currency: row.wallet.currency,
+        referenceType: row.referenceType,
+        referenceId: row.referenceId,
+        description: row.description,
+        createdAt: row.createdAt,
+      })),
+      page: safePage,
+      limit: safeLimit,
+      total,
+      pages: Math.ceil(total / safeLimit),
+    };
+  }
+
   async getWallet(userId: string, currency: CurrencyCode) {
     try {
       let wallet = await this.prisma.wallet.findUnique({
