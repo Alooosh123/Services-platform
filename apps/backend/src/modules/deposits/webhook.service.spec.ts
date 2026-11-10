@@ -62,6 +62,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
   };
 
   beforeEach(async () => {
+    delete process.env.WEBHOOK_HMAC_SECRET;
     jest.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -106,8 +107,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
         transactionReference: 'REF-IDEMP-JAIB-99',
         amount: 50000,
         currency: CurrencyCode.YER,
-        beneficiaryAccount: '770123456',
-        senderPhone: '+967770000003',
+          senderPhone: '+967770000003',
       });
 
       expect(firstWebhook.success).toBe(true);
@@ -217,6 +217,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
 
   describe('P05 Acceptance Criteria: Mismatch Guard (Amount / Currency)', () => {
     it('مرجع إيداع لا يطابق المبلغ أو العملة لا يعتمد تلقائيًا: Amount or currency mismatch is rejected from auto-crediting', async () => {
+      delete process.env.WEBHOOK_HMAC_SECRET;
       // Customer requested 50,000 YER
       await depositsService.createDepositRequest('user-customer-003', {
         currency: CurrencyCode.YER,
@@ -249,6 +250,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
     });
 
     it('rejects webhook if beneficiary receiving account does not match platform registered account', async () => {
+      delete process.env.WEBHOOK_HMAC_SECRET;
       const webhookRes = await depositsService.handleInboundWebhook(PaymentChannelCode.JAIB, {
         channelCode: PaymentChannelCode.JAIB,
         transactionReference: 'REF-BENEF-FAKE-01',
