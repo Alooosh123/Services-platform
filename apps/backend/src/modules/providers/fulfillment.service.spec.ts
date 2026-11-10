@@ -3,7 +3,7 @@ import { FulfillmentService } from './fulfillment.service';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { ProvidersService } from './providers.service';
-import { OrderStatus, CurrencyCode } from '@digital-topup/shared';
+import { OrderStatus, CurrencyCode, SupplierAccountType } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
 describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
@@ -49,7 +49,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
   };
 
   const mockLedgerService = {
-    recordOrderSettlement: jest.fn(),
+    recordOrderSettlement: jest.fn().mockResolvedValue({ transaction: { id: 'ledger-settlement-1', txNumber: 'LTX-SETTLEMENT-1' } }),
     releaseWalletHold: jest.fn(),
     recordOrderRefund: jest.fn(),
     recordAgentCommission: jest.fn(),
@@ -63,6 +63,21 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
   const mockProvidersService = {
     getAdapter: jest.fn().mockReturnValue(mockAdapter),
   };
+  const mockSupplierBalanceService = {
+    checkFulfillmentGating: jest.fn().mockResolvedValue({
+      allowed: true,
+      availableBalance: 100000,
+      requiredAmount: 100,
+      accountType: SupplierAccountType.PREPAID,
+    }),
+    deductOrderFulfillmentCost: jest.fn().mockResolvedValue({ success: true, newBalance: 99985 }),
+    getSupplierBalance: jest.fn().mockResolvedValue({
+      balance: 100000,
+      creditLimit: 0,
+      available: 100000,
+      accountType: SupplierAccountType.PREPAID,
+    }),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -73,6 +88,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: LedgerService, useValue: mockLedgerService },
         { provide: ProvidersService, useValue: mockProvidersService },
+        { provide: (await import('./supplier-balance.service')).SupplierBalanceService, useValue: mockSupplierBalanceService },
       ],
     }).compile();
 
@@ -81,7 +97,9 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
 
   describe('dispatchOrder', () => {
     it('1. should complete order and settle ledger on provider success', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockAdapter.submitOrder.mockResolvedValue({
         status: 'SUCCESS',
         success: true,
@@ -155,7 +173,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       };
       mockPrisma.order.findUnique
         .mockResolvedValueOnce(commissionOrder)
-        .mockResolvedValueOnce(commissionOrder);
+        .mockResolvedValue({ ...commissionOrder, status: OrderStatus.Processing });
       mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'reseller-wallet-1' });
       mockAdapter.submitOrder.mockResolvedValue({
         status: 'SUCCESS',
@@ -178,15 +196,10 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
 
   describe('fulfillManualOrder', () => {
     it('4. should fulfill order manually, record proof, and settle ledger', async () => {
-      mockPrisma.order.findUnique
-        .mockResolvedValueOnce({
-          ...mockOrder,
-          status: OrderStatus.ManualReview,
-        })
-        .mockResolvedValueOnce({
-          ...mockOrder,
-          status: OrderStatus.Completed,
-        });
+      mockPrisma.order.findUnique.mockResolvedValue({
+        ...mockOrder,
+        status: OrderStatus.ManualReview,
+      });
 
       await service.fulfillManualOrder('staff-op-1', 'ord-test-1', {
         voucherCode: 'MANUAL-PIN-5544',
