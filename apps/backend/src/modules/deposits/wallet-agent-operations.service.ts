@@ -10,6 +10,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import {
   UserRole,
+  PaymentChannelCode,
   DepositStatus,
   CurrencyCode,
   PaymentChannelMode,
@@ -377,7 +378,7 @@ export class WalletAgentOperationsService {
             walletId: deposit.walletId,
             currency: deposit.currency as CurrencyCode,
             amount: Number(deposit.amount),
-            paymentChannel: deposit.paymentMethodCode,
+            paymentChannel: deposit.paymentMethodCode as PaymentChannelCode,
             referenceId: deposit.id,
             performedByUserId: agentUserId,
             notes: `Agent auto-credit; evidence ${dto.evidenceReference.trim()}; external ref ${dto.observedReferenceNumber.trim()}`,
