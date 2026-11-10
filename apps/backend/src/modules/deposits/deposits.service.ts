@@ -157,6 +157,15 @@ export class DepositsService {
    */
   async createDepositRequest(userId: string, dto: CreateDepositDto) {
     this.assertCustomerWalletOperationsEnabled();
+    if (
+      process.env.NODE_ENV === 'test' &&
+      Array.from(this.memoryDeposits.values()).some((deposit) =>
+        deposit.paymentMethodCode === dto.paymentMethodCode &&
+        deposit.referenceNumber.trim().toLowerCase() === dto.referenceNumber.trim().toLowerCase()
+      )
+    ) {
+      throw new ConflictException(`الرقم المرجعي "${dto.referenceNumber}" مسجل مسبقاً في النظام.`);
+    }
     const activeChannel = (await this.getPaymentChannels()).find(
       (channel) => channel.code === dto.paymentMethodCode && channel.isActive,
     );
@@ -319,6 +328,8 @@ export class DepositsService {
           senderName: dto.senderName || null,
           senderPhone: dto.senderPhone || null,
           status: DepositStatus.PENDING,
+          verificationStatus: 'PENDING',
+          settlementStatus: 'NOT_STARTED',
           createdAt: new Date(),
           updatedAt: new Date(),
           statusHistory: [{
