@@ -60,139 +60,17 @@ interface DepositRequest {
 export default function CustomerWalletPage() {
   const [selectedCurrency, setSelectedCurrency] = useState<'YER' | 'USD' | 'SAR'>('YER');
   const [activeTab, setActiveTab] = useState<'overview' | 'deposit' | 'requests'>('overview');
-  const [wallets, setWallets] = useState<Record<string, WalletData>>({
-    YER: {
-      id: 'w-yer',
-      currency: 'YER',
-      balance: 50000,
-      lockedBalance: 0,
-      availableBalance: 50000,
-      isFrozen: false,
-    },
-    USD: {
-      id: 'w-usd',
-      currency: 'USD',
-      balance: 100,
-      lockedBalance: 0,
-      availableBalance: 100,
-      isFrozen: false,
-    },
-    SAR: {
-      id: 'w-sar',
-      currency: 'SAR',
-      balance: 200,
-      lockedBalance: 0,
-      availableBalance: 200,
-      isFrozen: false,
-    },
-  });
-
-  const [channels, setChannels] = useState<PaymentChannel[]>([
-    {
-      code: 'JAIB',
-      name: 'Jaib Wallet',
-      nameAr: 'محفظة جيب (بنك CAC)',
-      accountNumber: '770123456',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق جيب إلى الحساب رقم 770123456 باسم منصة الشحن، ثم أدخل رقم الحوالة هنا.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 2000000,
-    },
-    {
-      code: 'JAWALI',
-      name: 'Jawali Wallet',
-      nameAr: 'محفظة جوالي (بنك اليمن والكويت)',
-      accountNumber: '733987654',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق جوالي إلى الحساب رقم 733987654، ثم أرفق الرقم المرجعي للعملية.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 2000000,
-    },
-    {
-      code: 'CASH',
-      name: 'Cash Wallet',
-      nameAr: 'محفظة كاش (بنك سبأ الإسلامي)',
-      accountNumber: '711223344',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق كاش إلى الرقم 711223344 باسم المنصة، وأدخل رقم العملية.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 2000000,
-    },
-    {
-      code: 'ONE_CASH',
-      name: 'One Cash',
-      nameAr: 'ون كاش (شركة YOU)',
-      accountNumber: '739112233',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'حول المبلغ عبر ون كاش إلى الرقم 739112233 ثم اكتب رقم الإشعار للتحقق المالي.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 1500000,
-    },
-    {
-      code: 'EASY',
-      name: 'Easy Wallet',
-      nameAr: 'محفظة إيزي للدفع الإلكتروني',
-      accountNumber: '775544332',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'حول إلى محفظة إيزي رقم 775544332 وأدخل رقم العملية للتأكيد من المشرفين.',
-      supportedCurrencies: ['YER'],
-      minAmount: 500,
-      maxAmount: 1500000,
-    },
-  ]);
-
-  const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([
-    {
-      id: 'dep-1',
-      depositNumber: 'DEP-20261009-0001',
-      currency: 'YER',
-      amount: 50000,
-      paymentMethodCode: 'JAIB',
-      referenceNumber: 'REF-JAIB-112233',
-      senderName: 'أحمد محمد الحاشدي',
-      status: 'CREDITED',
-      reviewNotes: 'تم التحقق من الحوالة وتغذية رصيد المحفظة بواسطة النظام المحاسبي المزدوج',
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-    {
-      id: 'dep-2',
-      depositNumber: 'DEP-20261009-0002',
-      currency: 'YER',
-      amount: 25000,
-      paymentMethodCode: 'JAWALI',
-      referenceNumber: 'REF-JAWALI-998877',
-      senderName: 'أحمد محمد الحاشدي',
-      status: 'PENDING',
-      createdAt: new Date(Date.now() - 7200000).toISOString(),
-    },
-    {
-      id: 'dep-3',
-      depositNumber: 'DEP-20261009-0003',
-      currency: 'YER',
-      amount: 15000,
-      paymentMethodCode: 'CASH',
-      referenceNumber: 'REF-CASH-445566',
-      senderName: 'أحمد محمد الحاشدي',
-      status: 'UNDER_REVIEW',
-      reviewNotes: 'جاري مطابقة الحوالة مع كشف حساب بنك سبأ الإسلامي',
-      createdAt: new Date(Date.now() - 14400000).toISOString(),
-    },
-  ]);
+  const [wallets, setWallets] = useState<Record<string, WalletData>>({});
+  const [channels, setChannels] = useState<PaymentChannel[]>([]);
+  const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([]);
 
   // Form states for deposit request
   const [depositChannel, setDepositChannel] = useState('JAIB');
   const [depositAmount, setDepositAmount] = useState('25000');
   const [depositRefNumber, setDepositRefNumber] = useState('');
-  const [senderName, setSenderName] = useState('أحمد محمد الحاشدي');
-  const [senderPhone, setSenderPhone] = useState('+967770000003');
-  const [proofUrl, setProofUrl] = useState('/images/proofs/sample-receipt.jpg');
+  const [senderName, setSenderName] = useState('');
+  const [senderPhone, setSenderPhone] = useState('');
+  const [proofUrl, setProofUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [depositError, setDepositError] = useState<string | null>(null);
@@ -234,6 +112,11 @@ export default function CustomerWalletPage() {
         const data = await res.json();
         if (Array.isArray(data)) {
           setChannels(data);
+          setDepositChannel((current) =>
+            data.some((channel: PaymentChannel) => channel.code === current)
+              ? current
+              : data[0]?.code || '',
+          );
         }
       }
     } catch {
@@ -326,7 +209,11 @@ export default function CustomerWalletPage() {
     isFrozen: false,
   };
 
-  const selectedChannelInfo = channels.find((c) => c.code === depositChannel) || channels[0];
+  const currencyChannels = channels.filter((channel) =>
+    channel.supportedCurrencies.includes(selectedCurrency),
+  );
+  const selectedChannelInfo =
+    currencyChannels.find((channel) => channel.code === depositChannel) || currencyChannels[0];
 
   const getStatusBadge = (status: DepositRequest['status']) => {
     switch (status) {
@@ -640,7 +527,7 @@ export default function CustomerWalletPage() {
                   onChange={(e) => setDepositChannel(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right"
                 >
-                  {channels.map((c) => (
+                  {currencyChannels.map((c) => (
                     <option key={c.code} value={c.code}>
                       {c.nameAr}
                     </option>
@@ -654,7 +541,14 @@ export default function CustomerWalletPage() {
                 </label>
                 <select
                   value={selectedCurrency}
-                  onChange={(e) => setSelectedCurrency(e.target.value as any)}
+                  onChange={(e) => {
+                    const nextCurrency = e.target.value as any;
+                    setSelectedCurrency(nextCurrency);
+                    const available = channels.filter((channel) =>
+                      channel.supportedCurrencies.includes(nextCurrency),
+                    );
+                    setDepositChannel(available[0]?.code || '');
+                  }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right font-bold"
                 >
                   <option value="YER">ريال يمني (YER)</option>
@@ -705,7 +599,7 @@ export default function CustomerWalletPage() {
                   type="text"
                   value={senderName}
                   onChange={(e) => setSenderName(e.target.value)}
-                  placeholder="أحمد محمد"
+                  placeholder="اسم صاحب الحساب المحول"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white text-right focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -732,7 +626,7 @@ export default function CustomerWalletPage() {
                 type="text"
                 value={proofUrl}
                 onChange={(e) => setProofUrl(e.target.value)}
-                placeholder="/images/proofs/receipt.jpg"
+                placeholder="رابط مستند الإثبات إن توفر"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono text-right focus:outline-none focus:border-indigo-500"
               />
             </div>
