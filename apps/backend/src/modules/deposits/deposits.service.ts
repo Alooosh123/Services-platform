@@ -51,6 +51,8 @@ export interface InMemoryDeposit {
   senderName?: string | null;
   senderPhone?: string | null;
   status: DepositStatus;
+  verificationStatus?: 'PENDING' | 'AGENT_SUBMITTED' | 'NEEDS_REVIEW' | 'VERIFIED' | 'REJECTED';
+  settlementStatus?: 'NOT_STARTED' | 'PENDING_LEDGER' | 'POSTED' | 'FAILED' | 'REVERSED';
   reviewedByUserId?: string | null;
   reviewNotes?: string | null;
   rejectionReason?: string | null;
@@ -82,117 +84,17 @@ export class DepositsService {
     private walletService: WalletService,
     private adapterRegistry: PaymentAdapterRegistry,
     private hmacSignatureService: HmacSignatureService,
-  ) {
-    this.seedInitialMemoryDeposits();
-  }
+  ) {}
 
-  private seedInitialMemoryDeposits() {
-    const custId = 'user-customer-003';
-    const dep1: InMemoryDeposit = {
-      id: 'dep-seed-001',
-      depositNumber: 'DEP-20261009-0001',
-      userId: custId,
-      walletId: 'w-cust-yer',
-      currency: CurrencyCode.YER,
-      amount: 50000.0,
-      paymentMethodCode: PaymentChannelCode.JAIB,
-      referenceNumber: 'REF-JAIB-112233',
-      proofImageUrl: '/images/proofs/sample-receipt-1.png',
-      senderName: 'أحمد محمد الحاشدي',
-      senderPhone: '+967770000003',
-      status: DepositStatus.CREDITED,
-      reviewedByUserId: 'user-finance-002',
-      reviewNotes: 'تم التحقق من استلام المبلغ وتغذيته في المحفظة بواسطة النظام المحاسبي المزدوج.',
-      ledgerTxId: 'LTX-INIT-YER-001',
-      createdAt: new Date(Date.now() - 3600000 * 24),
-      updatedAt: new Date(Date.now() - 3600000 * 24),
-      statusHistory: [
-        {
-          id: 'hist-1',
-          fromStatus: null,
-          toStatus: DepositStatus.PENDING,
-          changedByUserId: custId,
-          notes: 'طلب إيداع أولي',
-          createdAt: new Date(Date.now() - 3600000 * 24),
-        },
-        {
-          id: 'hist-2',
-          fromStatus: DepositStatus.PENDING,
-          toStatus: DepositStatus.CREDITED,
-          changedByUserId: 'user-finance-002',
-          notes: 'موافقة وتغذية رصيد',
-          createdAt: new Date(Date.now() - 3600000 * 24),
-        },
-      ],
-    };
-
-    const dep2: InMemoryDeposit = {
-      id: 'dep-seed-002',
-      depositNumber: 'DEP-20261009-0002',
-      userId: custId,
-      walletId: 'w-cust-yer',
-      currency: CurrencyCode.YER,
-      amount: 25000.0,
-      paymentMethodCode: PaymentChannelCode.JAWALI,
-      referenceNumber: 'REF-JAWALI-998877',
-      proofImageUrl: '/images/proofs/sample-receipt-2.png',
-      senderName: 'أحمد محمد الحاشدي',
-      senderPhone: '+967770000003',
-      status: DepositStatus.PENDING,
-      createdAt: new Date(Date.now() - 3600000 * 2),
-      updatedAt: new Date(Date.now() - 3600000 * 2),
-      statusHistory: [
-        {
-          id: 'hist-3',
-          fromStatus: null,
-          toStatus: DepositStatus.PENDING,
-          changedByUserId: custId,
-          notes: 'طلب إيداع قيد الانتظار لمراجعة الإدارة المالية',
-          createdAt: new Date(Date.now() - 3600000 * 2),
-        },
-      ],
-    };
-
-    const dep3: InMemoryDeposit = {
-      id: 'dep-seed-003',
-      depositNumber: 'DEP-20261009-0003',
-      userId: custId,
-      walletId: 'w-cust-yer',
-      currency: CurrencyCode.YER,
-      amount: 15000.0,
-      paymentMethodCode: PaymentChannelCode.CASH,
-      referenceNumber: 'REF-CASH-445566',
-      proofImageUrl: '/images/proofs/sample-receipt-3.png',
-      senderName: 'أحمد محمد الحاشدي',
-      senderPhone: '+967770000003',
-      status: DepositStatus.UNDER_REVIEW,
-      reviewedByUserId: 'user-finance-002',
-      reviewNotes: 'جاري مطابقة الحوالة مع كشف حساب بنك سبأ الإسلامي',
-      createdAt: new Date(Date.now() - 3600000 * 5),
-      updatedAt: new Date(Date.now() - 3600000 * 1),
-      statusHistory: [
-        {
-          id: 'hist-4',
-          fromStatus: null,
-          toStatus: DepositStatus.PENDING,
-          changedByUserId: custId,
-          notes: 'طلب إيداع قيد الانتظار',
-          createdAt: new Date(Date.now() - 3600000 * 5),
-        },
-        {
-          id: 'hist-5',
-          fromStatus: DepositStatus.PENDING,
-          toStatus: DepositStatus.UNDER_REVIEW,
-          changedByUserId: 'user-finance-002',
-          notes: 'بدء التدقيق المالي من قبل ضابط المالية',
-          createdAt: new Date(Date.now() - 3600000 * 1),
-        },
-      ],
-    };
-
-    this.memoryDeposits.set(dep1.id, dep1);
-    this.memoryDeposits.set(dep2.id, dep2);
-    this.memoryDeposits.set(dep3.id, dep3);
+  private assertCustomerWalletOperationsEnabled(): void {
+    if (
+      (process.env.NODE_ENV === 'production' || getCurrentTenantId()) &&
+      process.env.ENABLE_CUSTOMER_WALLET_OPERATIONS !== 'true'
+    ) {
+      throw new ServiceUnavailableException(
+        'عمليات إيداع/سحب محافظ العملاء معطلة حتى استكمال الاعتماد التنظيمي واتفاقيات قنوات الدفع.',
+      );
+    }
   }
 
   /**
@@ -254,6 +156,7 @@ export class DepositsService {
    * Strictly creates request in PENDING state; NEVER credits customer wallet automatically.
    */
   async createDepositRequest(userId: string, dto: CreateDepositDto) {
+    this.assertCustomerWalletOperationsEnabled();
     const activeChannel = (await this.getPaymentChannels()).find(
       (channel) => channel.code === dto.paymentMethodCode && channel.isActive,
     );
@@ -639,6 +542,8 @@ export class DepositsService {
         notes: dto?.reviewNotes,
       });
       deposit.status = DepositStatus.CREDITED;
+      deposit.verificationStatus = 'VERIFIED';
+      deposit.settlementStatus = 'POSTED';
       deposit.reviewedByUserId = staffUserId;
       deposit.ledgerTxId = ledgerResult.transaction.id;
       deposit.updatedAt = new Date();
@@ -718,6 +623,8 @@ export class DepositsService {
         where: { id: depositId, status: deposit.status },
         data: {
           status: DepositStatus.APPROVED,
+          verificationStatus: 'VERIFIED',
+          settlementStatus: 'PENDING_LEDGER',
           reviewedByUserId: staffUserId,
           reviewNotes: dto?.reviewNotes || null,
         },
@@ -767,6 +674,8 @@ export class DepositsService {
         where: { id: depositId },
         data: {
           status: DepositStatus.CREDITED,
+          verificationStatus: 'VERIFIED',
+          settlementStatus: 'POSTED',
           reviewedByUserId: staffUserId,
           reviewNotes: notes,
           ledgerTxId,
@@ -813,6 +722,7 @@ export class DepositsService {
         where: { id: depositId },
         data: {
           status: DepositStatus.REJECTED,
+          verificationStatus: 'REJECTED',
           reviewedByUserId: staffUserId,
           rejectionReason: dto.rejectionReason,
           reviewNotes: dto.notes || dto.rejectionReason,
@@ -840,6 +750,7 @@ export class DepositsService {
       const memDep = this.memoryDeposits.get(depositId);
       if (memDep) {
         memDep.status = DepositStatus.REJECTED;
+        memDep.verificationStatus = 'REJECTED';
         memDep.reviewedByUserId = staffUserId;
         memDep.rejectionReason = dto.rejectionReason;
         memDep.reviewNotes = dto.notes || dto.rejectionReason;
@@ -908,6 +819,7 @@ export class DepositsService {
         where: { id: depositId },
         data: {
           status: DepositStatus.UNDER_REVIEW,
+          verificationStatus: 'NEEDS_REVIEW',
           reviewNotes: reason,
           statusHistory: {
             create: {
@@ -923,6 +835,7 @@ export class DepositsService {
       const mem = this.memoryDeposits.get(depositId);
       if (mem) {
         mem.status = DepositStatus.UNDER_REVIEW;
+        mem.verificationStatus = 'NEEDS_REVIEW';
         mem.reviewNotes = reason;
         mem.statusHistory.unshift({
           id: `hist-${Date.now()}`,
@@ -1132,6 +1045,8 @@ export class DepositsService {
       senderName: payload.senderName || 'تحويل مباشر',
       senderPhone: payload.senderPhone || null,
       status: DepositStatus.UNDER_REVIEW,
+      verificationStatus: 'NEEDS_REVIEW',
+      settlementStatus: 'NOT_STARTED',
       reviewNotes: matchedUserId
         ? 'إيداع وارد عبر الويب هوك - بانتظار التأكيد المالي النهائي'
         : 'إيداع وارد مجهول المصدر (Unknown Deposit) - تم حجزه للمطابقة اليدوية والتسوية',
