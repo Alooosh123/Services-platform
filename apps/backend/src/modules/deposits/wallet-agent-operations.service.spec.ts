@@ -61,6 +61,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
       regulatoryApprovalDocumentUrl: 'https://example.test/regulatory.pdf',
       providerAgreementReference: 'AGR-001',
       providerAgreementDocumentUrl: 'https://example.test/agreement.pdf',
+      senderIdentifierType: 'PHONE',
     };
     duplicateReference = null;
 
