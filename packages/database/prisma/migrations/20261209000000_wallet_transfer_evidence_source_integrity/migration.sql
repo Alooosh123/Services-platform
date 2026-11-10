@@ -34,13 +34,11 @@ CREATE TABLE "wallet_transfer_evidence" (
     CHECK ("status" <> 'VERIFIED' OR "verifiedAt" IS NOT NULL)
 );
 
--- Coalesce the nullable tenant key so platform-level evidence cannot be duplicated.
-CREATE UNIQUE INDEX "wallet_transfer_evidence_tenant_channel_reference_uq"
-  ON "wallet_transfer_evidence"(COALESCE("tenantId", ''), "channelCode", "externalReference");
+CREATE UNIQUE INDEX "wallet_transfer_evidence_tenantId_channelCode_externalReference_key"
+  ON "wallet_transfer_evidence"("tenantId", "channelCode", "externalReference");
 
-CREATE UNIQUE INDEX "wallet_transfer_evidence_provider_event_uq"
-  ON "wallet_transfer_evidence"(COALESCE("tenantId", ''), "channelCode", "providerEventId")
-  WHERE "providerEventId" IS NOT NULL;
+CREATE UNIQUE INDEX "wallet_transfer_evidence_tenantId_channelCode_providerEventId_key"
+  ON "wallet_transfer_evidence"("tenantId", "channelCode", "providerEventId");
 
 CREATE INDEX "wallet_transfer_evidence_tenant_status_channel_created_idx"
   ON "wallet_transfer_evidence"("tenantId", "status", "channelCode", "createdAt");
