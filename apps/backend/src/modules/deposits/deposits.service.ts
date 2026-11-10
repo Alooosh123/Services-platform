@@ -142,7 +142,7 @@ export class DepositsService {
           isActive: c.isActive,
           mode: c.mode as PaymentChannelMode,
           isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
-          senderIdentifierType: c.senderIdentifierType,
+          senderIdentifierType: c.senderIdentifierType as PaymentSenderIdentifierType,
         }));
       }
     } catch (err: any) {
