@@ -14,15 +14,20 @@ describe('Customer payout production safety', () => {
     payoutRequest: {
       findUnique: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
     },
-    user: { findUnique: jest.fn() },
+    paymentChannelConfig: { findFirst: jest.fn().mockResolvedValue(null) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'customer-real-id', phoneVerifiedAt: null, createdAt: new Date(Date.now() - 3 * 24 * 3600 * 1000) }),
+    },
+    $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
   };
   const ledger = {
     holdWalletBalance: jest.fn(),
     releaseWalletHold: jest.fn(),
     recordPayoutSettlement: jest.fn(),
   };
-  const wallet = { getWallet: jest.fn() };
+  const wallet = { getWallet: jest.fn().mockResolvedValue({ id: 'wallet-1' }) };
   const registry = {
     getAdapter: jest.fn(() => ({
       getInfo: () => ({
@@ -52,6 +57,11 @@ describe('Customer payout production safety', () => {
   });
 
   it('refuses unverified Yemeni wallet payout channels instead of accepting fake receiving numbers', async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalWalletFlag = process.env.ENABLE_CUSTOMER_WALLET_OPERATIONS;
+    process.env.NODE_ENV = 'production';
+    process.env.ENABLE_CUSTOMER_WALLET_OPERATIONS = 'true';
+    try {
     await expect(service.createPayoutRequest('customer-real-id', {
       currency: CurrencyCode.YER,
       amount: 1000,
@@ -61,6 +71,12 @@ describe('Customer payout production safety', () => {
       idempotencyKey: 'PAYOUT-UNVERIFIED-001',
     })).rejects.toThrow(ServiceUnavailableException);
     expect(ledger.holdWalletBalance).not.toHaveBeenCalled();
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalWalletFlag === undefined) delete process.env.ENABLE_CUSTOMER_WALLET_OPERATIONS;
+      else process.env.ENABLE_CUSTOMER_WALLET_OPERATIONS = originalWalletFlag;
+    }
   });
 
   it('keeps payout history database-backed and returns no seeded in-memory requests', async () => {
