@@ -16,7 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { DepositStatus, UserRole, PaymentChannelCode, PaymentChannelMode } from '@digital-topup/shared';
+import { DepositStatus, UserRole, PaymentChannelCode, PaymentChannelMode, PaymentSenderIdentifierType } from '@digital-topup/shared';
 
 @ApiTags('Deposits (Admin Financial Operations)')
 @Controller('admin/deposits')
@@ -96,6 +96,24 @@ export class AdminDepositsController {
     @CurrentUser('role') actorUserRole: string,
   ) {
     return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode, actorUserId, actorUserRole);
+  }
+
+@Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
+  @Post('channels/:channel/sender-identifier-type')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: choose customer sender identifier type (ALIAS, PHONE, WALLET_ID or ACCOUNT_NUMBER)' })
+  async updateSenderIdentifierType(
+    @Param('channel') channel: string,
+    @Body('identifierType') identifierType: PaymentSenderIdentifierType,
+    @CurrentUser('id') actorUserId: string,
+    @CurrentUser('role') actorUserRole: string,
+  ) {
+    return this.depositsService.updateSenderIdentifierType(
+      channel.toUpperCase() as PaymentChannelCode,
+      identifierType,
+      actorUserId,
+      actorUserRole,
+    );
   }
 
 @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
