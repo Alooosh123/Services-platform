@@ -295,7 +295,7 @@ export default function WalletAgentPage() {
                       <textarea rows={2} value={form.agentNotes} onChange={(e) => updateForm(operation.id, 'agentNotes', e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white" />
                     </label>
                     <p className="text-xs leading-6 text-amber-300 sm:col-span-2">
-                      لا تدخل PIN أو OTP أو كلمة مرور المحفظة أو بيانات تسجيل الدخول. لا تعتمد صورة العميل وحدها؛ يجب مطابقة الحركة في سجل الحساب الرسمي.
+                      لا تدخل PIN المحفظة أو كلمة مرورها أو رمز OTP الوارد من مزود المحفظة. الرمز أعلاه هو TOTP من تطبيق المصادقة المرتبط بحساب الوكيل فقط. لا تعتمد صورة العميل وحدها؛ طابق الحركة في سجل حساب الاستقبال الرسمي.
                     </p>
                     <div className="sm:col-span-2">
                       <button type="submit" disabled={busyId === operation.id} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">
