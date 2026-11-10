@@ -41,6 +41,11 @@ describe('PaymentSenderAccountsService security', () => {
         findFirst: jest.fn().mockResolvedValue({
           id: 'channel-1',
           senderIdentifierType: PaymentSenderIdentifierType.PHONE,
+          accountNumber: '7700001234',
+          regulatoryApprovalReference: 'REG-001',
+          regulatoryApprovalDocumentUrl: 'https://example.test/regulatory.pdf',
+          providerAgreementReference: 'AGR-001',
+          providerAgreementDocumentUrl: 'https://example.test/agreement.pdf',
         }),
       },
       paymentSenderAccount: tx.paymentSenderAccount,
