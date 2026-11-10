@@ -26,6 +26,7 @@ import {
   InboundWebhookPayload,
   DepositConfirmResult,
   ChannelVerificationStatus,
+  PaymentSenderIdentifierType,
   CreateDynamicChannelDto,
   ApproveChannelChangeDto,
 } from '@digital-topup/shared';
@@ -1349,6 +1350,12 @@ export class DepositsService {
       throw new BadRequestException('At least one supported currency is required.');
     }
     if (
+      dto.senderIdentifierType &&
+      !Object.values(PaymentSenderIdentifierType).includes(dto.senderIdentifierType)
+    ) {
+      throw new BadRequestException('Sender account identifier type is invalid.');
+    }
+    if (
       !Number.isFinite(dto.minAmount) ||
       !Number.isFinite(dto.maxAmount) ||
       dto.minAmount < 0 ||
@@ -1371,6 +1378,7 @@ export class DepositsService {
         accountHolderName: 'بانتظار اعتماد بيانات حساب الاستقبال',
         instructionsAr: 'قناة غير مفعلة حتى اعتماد بيانات الاستقبال من مسؤول مالي مستقل.',
         supportedCurrencies: dto.supportedCurrencies,
+        senderIdentifierType: dto.senderIdentifierType || PaymentSenderIdentifierType.PHONE,
         minAmount: new Prisma.Decimal(dto.minAmount),
         maxAmount: new Prisma.Decimal(dto.maxAmount),
         mode: PaymentChannelMode.BLOCKED_EXTERNAL,
