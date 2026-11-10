@@ -142,6 +142,13 @@ export class PayoutsService {
       throw new BadRequestException('حساب المستفيد واسمه مطلوبان.');
     }
 
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, phoneVerifiedAt: true, createdAt: true } });
+    if (!user) throw new NotFoundException('حساب العميل غير موجود.');
+    if (user.phoneVerifiedAt && Date.now() - user.phoneVerifiedAt.getTime() < 24 * 3600 * 1000 &&
+        Date.now() - user.createdAt.getTime() > 24 * 3600 * 1000) {
+      throw new BadRequestException('تم تطبيق فترة تبريد أمني لمدة 24 ساعة بعد تغيير/تأكيد الهاتف.');
+    }
+
     const existing = await this.prisma.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
     if (existing) {
       if (existing.userId !== userId) {
@@ -153,13 +160,6 @@ export class PayoutsService {
     const adapter = this.adapterRegistry.getAdapter(dto.channelCode);
     if (!adapter) throw new BadRequestException(`قناة السحب ${dto.channelCode} غير مدعومة.`);
     const channel = adapter.getInfo();
-
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, phoneVerifiedAt: true, createdAt: true } });
-    if (!user) throw new NotFoundException('حساب العميل غير موجود.');
-    if (user.phoneVerifiedAt && Date.now() - user.phoneVerifiedAt.getTime() < 24 * 3600 * 1000 &&
-        Date.now() - user.createdAt.getTime() > 24 * 3600 * 1000) {
-      throw new BadRequestException('تم تطبيق فترة تبريد أمني لمدة 24 ساعة بعد تغيير/تأكيد الهاتف.');
-    }
 
     const recentCount = await this.prisma.payoutRequest.count({
       where: { userId, createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } },
