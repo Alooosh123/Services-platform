@@ -5,6 +5,7 @@ import { ServiceCapabilitiesConfig } from './capabilities/service-capabilities.c
 import { PrismaService } from '../../database/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ServiceAccountStatus } from '@digital-topup/shared';
+import { DeterministicRulesEngine } from './engine/deterministic-rules.engine';
 
 describe('Linked service accounts: persistent consent and review requirements', () => {
   let service: ServiceAccountsService;
@@ -23,6 +24,7 @@ describe('Linked service accounts: persistent consent and review requirements', 
       providers: [
         ServiceAccountsService,
         AiRiskEvaluatorService,
+        DeterministicRulesEngine,
         { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
