@@ -151,6 +151,13 @@ enum PaymentChannelCode {
   USDT_BEP20
 }
 
+enum PaymentSenderIdentifierType {
+  ALIAS
+  PHONE
+  WALLET_ID
+  ACCOUNT_NUMBER
+}
+
 enum LedgerAccountType {
   ASSET
   LIABILITY
@@ -336,6 +343,7 @@ model User {
   sessions                 Session[]
   walletTopups             WalletTopup[]
   depositRequests          DepositRequest[]       @relation("UserDeposits")
+  paymentSenderAccounts    PaymentSenderAccount[]
   reviewedDeposits         DepositRequest[]       @relation("DepositReviewedBy")
   depositHistories         DepositStatusHistory[] @relation("DepositHistoryChangedBy")
   currencyExchanges        CurrencyExchange[]
@@ -524,7 +532,8 @@ model DepositRequest {
   currency          CurrencyCode
   amount            Decimal            @db.Decimal(18, 4)
   paymentMethodCode PaymentChannelCode
-  referenceNumber   String // Customer transfer transaction reference number
+  referenceNumber   String // Customer reference or server-generated pending token; replaced by observed transaction reference on verification
+  senderAccountId   String?
   proofImageUrl     String? // Receipt screenshot
   senderName        String? // Sender account/payer name
   senderPhone       String? // Sender phone number
@@ -542,6 +551,7 @@ model DepositRequest {
   wallet        Wallet                 @relation(fields: [walletId], references: [id], onDelete: Cascade)
   reviewedBy    User?                  @relation("DepositReviewedBy", fields: [reviewedByUserId], references: [id])
   statusHistory DepositStatusHistory[]
+  senderAccount PaymentSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
   walletAgentOperation WalletAgentOperation?
 
   @@unique([paymentMethodCode, referenceNumber])
@@ -567,6 +577,32 @@ model DepositStatusHistory {
   @@map("deposit_status_histories")
 }
 
+model PaymentSenderAccount {
+  id                    String   @id @default(uuid())
+  tenantId              String?
+  userId                String
+  channelCode           PaymentChannelCode
+  identifierType        PaymentSenderIdentifierType
+  identifierCiphertext  String
+  identifierLookupHash  String
+  maskedIdentifier      String
+  identifierLastFour    String
+  status                String   @default("PENDING_VERIFICATION")
+  consentGrantedAt      DateTime @default(now())
+  consentTextVersion    String   @default("payment-sender-account-v1")
+  verifiedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deposits DepositRequest[]
+
+  @@unique([userId, channelCode])
+  @@index([tenantId, userId, channelCode, status])
+  @@index([tenantId, channelCode, identifierLookupHash])
+  @@map("payment_sender_accounts")
+}
+
 model PaymentChannelConfig {
   id                      String                    @id @default(uuid())
   tenantId                String?
@@ -577,6 +613,7 @@ model PaymentChannelConfig {
   accountHolderName       String // E.g. "منصة الشحن الرقمية المحدودة"
   instructionsAr          String
   supportedCurrencies     Json // ["YER"] or ["YER","USD"]
+  senderIdentifierType    PaymentSenderIdentifierType @default(PHONE)
   minAmount               Decimal                   @default(1.0000) @db.Decimal(18, 4)
   maxAmount               Decimal                   @default(10000000.0000) @db.Decimal(18, 4)
   mode                    PaymentChannelMode        @default(BLOCKED_EXTERNAL)
@@ -1828,10 +1865,12 @@ model WalletAgentOperation {
   expectedCurrency           CurrencyCode
   expectedReferenceNumber    String?
   expectedAccountLastFour    String?
+  expectedSenderAccountLastFour String?
   observedAmount             Decimal? @db.Decimal(18, 4)
   observedCurrency           CurrencyCode?
   observedReferenceNumber    String?
   observedAccountLastFour    String?
+  observedSenderAccountLastFour String?
   evidenceReference          String?
   agentNotes                 String?
   claimedAt                  DateTime?
