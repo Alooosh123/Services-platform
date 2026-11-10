@@ -192,7 +192,7 @@ export class WalletAgentOperationsService {
     agentUserId: string,
     dto: SubmitWalletAgentOperationDto,
   ) {
-    await this.assertAgent(agentUserId);
+    const agent = await this.assertAgent(agentUserId);
     if (!Number.isFinite(dto.observedAmount) || dto.observedAmount <= 0) {
       throw new BadRequestException('المبلغ المرصود في محفظة الوكيل غير صالح.');
     }
