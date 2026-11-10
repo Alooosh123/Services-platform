@@ -117,6 +117,7 @@ databaseDescribe('Wallet sender identity approval database workflow (PostgreSQL)
       adapterRegistry,
       new HmacSignatureService(),
     );
+    deposits.enableStrictPersistenceModeForTests();
   }, 30000);
 
   afterAll(async () => {
