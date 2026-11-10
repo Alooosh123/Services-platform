@@ -529,6 +529,7 @@ class _DepositPageState extends State<DepositPage> {
                   TextField(
                     controller: senderIdentifier,
                     maxLength: 80,
+                    onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
                       labelText: identifierLabel,
                       hintText: saved == null
