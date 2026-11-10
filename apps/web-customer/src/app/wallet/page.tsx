@@ -50,6 +50,8 @@ interface SavedSenderAccount {
   identifierType: string;
   maskedIdentifier: string;
   status: string;
+  reviewNotes?: string | null;
+  reviewedAt?: string | null;
 }
 
 interface DepositRequest {
@@ -709,9 +711,10 @@ export default function CustomerWalletPage() {
                 )}
 
                 {selectedSenderAccount?.status === 'PENDING_VERIFICATION' && (
-                  <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-6 text-amber-200">
-                    رقم المحفظة المحفوظ: <strong>{selectedSenderAccount.maskedIdentifier}</strong>. طلب التوثيق لدى صاحب التطبيق وبانتظار الموافقة. لن تتمكن من الشحن بهذه المحفظة حتى اعتماد الرقم.
-                  </p>
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-6 text-amber-200 space-y-2">
+                    <p>رقم المحفظة المحفوظ: <strong>{selectedSenderAccount.maskedIdentifier}</strong>. طلب التوثيق لدى صاحب التطبيق وبانتظار الموافقة. لن تتمكن من الشحن بهذه المحفظة حتى اعتماد الرقم.</p>
+                    <button type="button" onClick={() => void fetchMySenderAccounts()} className="underline underline-offset-4 text-amber-100">تحديث حالة التوثيق</button>
+                  </div>
                 )}
 
                 {selectedSenderAccount?.status === 'REJECTED' && (
