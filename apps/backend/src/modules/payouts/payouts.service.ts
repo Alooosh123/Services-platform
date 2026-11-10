@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { LedgerService } from '../ledger/ledger.service';
 import { WalletService } from '../wallet/wallet.service';
 import { PaymentAdapterRegistry } from '../deposits/adapters/yemen-payment.adapters';
@@ -54,6 +55,61 @@ export class PayoutsService {
     private adapterRegistry: PaymentAdapterRegistry,
   ) {}
 
+  private get isRegulatedRuntime(): boolean {
+    return process.env.NODE_ENV === 'production' || !!getCurrentTenantId();
+  }
+
+  private assertCustomerPayoutsEnabled(): void {
+    if (this.isRegulatedRuntime && process.env.ENABLE_CUSTOMER_WALLET_OPERATIONS !== 'true') {
+      throw new ForbiddenException('طلبات سحب العملاء معطلة حتى اعتماد قنوات الدفع والتحويل التجاري صراحةً.');
+    }
+  }
+
+  private async assertManualPayoutAgentEvidence(
+    tx: Prisma.TransactionClient,
+    payout: any,
+    reviewerUserId: string,
+  ) {
+    const config = await tx.paymentChannelConfig.findFirst({
+      where: {
+        tenantId: getCurrentTenantId() || null,
+        code: payout.channelCode,
+        isActive: true,
+        mode: PaymentChannelMode.MANUAL,
+        verificationStatus: 'VERIFIED',
+      },
+    });
+    if (!this.isRegulatedRuntime || config?.mode !== PaymentChannelMode.MANUAL) return null;
+    if (
+      !config.accountNumber ||
+      config.accountNumber === 'NOT_CONFIGURED' ||
+      !config.regulatoryApprovalReference ||
+      !config.regulatoryApprovalDocumentUrl ||
+      !config.providerAgreementReference ||
+      !config.providerAgreementDocumentUrl
+    ) {
+      throw new ServiceUnavailableException('قناة السحب اليدوي تفتقر إلى إثبات الاعتماد أو اتفاقية التاجر.');
+    }
+    const operation = await tx.walletAgentOperation.findUnique({
+      where: { payoutRequestId: payout.id },
+    });
+    if (
+      !operation ||
+      operation.status !== 'AGENT_SUBMITTED' ||
+      !operation.agentUserId ||
+      operation.agentUserId === reviewerUserId ||
+      !operation.observedAmount ||
+      !operation.observedAmount.equals(payout.amount) ||
+      operation.observedCurrency !== payout.currency ||
+      operation.observedAccountLastFour !== String(payout.destinationAccount).slice(-4) ||
+      !operation.observedReferenceNumber ||
+      !operation.evidenceReference
+    ) {
+      throw new BadRequestException('يلزم تحقق وكيل مستقل من عملية التحويل الفعلية ومطابقة المبلغ والعملة والمستفيد والمرجع قبل تأكيد السحب.');
+    }
+    return operation;
+  }
+
   private mapPayout(row: any): InMemoryPayout {
     return {
       id: row.id,
@@ -79,8 +135,12 @@ export class PayoutsService {
   }
 
   async createPayoutRequest(userId: string, dto: CreatePayoutDto): Promise<{ success: boolean; payout: InMemoryPayout }> {
+    this.assertCustomerPayoutsEnabled();
     if (!dto.idempotencyKey?.trim()) throw new BadRequestException('مفتاح عدم التكرار إلزامي لمنع الازدواج المالي.');
     if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('مبلغ السحب يجب أن يكون موجباً وصالحاً.');
+    if (!dto.destinationAccount?.trim() || !dto.beneficiaryName?.trim()) {
+      throw new BadRequestException('حساب المستفيد واسمه مطلوبان.');
+    }
 
     const existing = await this.prisma.payoutRequest.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
     if (existing) {
@@ -93,17 +153,12 @@ export class PayoutsService {
     const adapter = this.adapterRegistry.getAdapter(dto.channelCode);
     if (!adapter) throw new BadRequestException(`قناة السحب ${dto.channelCode} غير مدعومة.`);
     const channel = adapter.getInfo();
-    if (!channel.isActive || channel.mode === PaymentChannelMode.DISABLED) {
-      throw new ServiceUnavailableException(`قناة السحب ${dto.channelCode} غير مفعلة أو غير معتمدة.`);
-    }
-    if (channel.minAmount && dto.amount < channel.minAmount) throw new BadRequestException(`الحد الأدنى للسحب ${channel.minAmount} ${dto.currency}.`);
-    if (channel.maxAmount && dto.amount > channel.maxAmount) throw new BadRequestException(`الحد الأقصى للسحب ${channel.maxAmount} ${dto.currency}.`);
 
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, phoneVerifiedAt: true, createdAt: true } });
     if (!user) throw new NotFoundException('حساب العميل غير موجود.');
     if (user.phoneVerifiedAt && Date.now() - user.phoneVerifiedAt.getTime() < 24 * 3600 * 1000 &&
         Date.now() - user.createdAt.getTime() > 24 * 3600 * 1000) {
-      throw new BadRequestException('السحب موقوف مؤقتاً لمدة 24 ساعة بعد تغيير/تأكيد الهاتف للحماية من SIM Swap.');
+      throw new BadRequestException('تم تطبيق فترة تبريد أمني لمدة 24 ساعة بعد تغيير/تأكيد الهاتف.');
     }
 
     const recentCount = await this.prisma.payoutRequest.count({
@@ -120,8 +175,39 @@ export class PayoutsService {
           if (duplicate.userId !== userId) throw new ConflictException('مفتاح عدم التكرار يعود إلى عميل آخر.');
           return duplicate;
         }
+
+        const config = await tx.paymentChannelConfig.findFirst({
+          where: {
+            tenantId: getCurrentTenantId() || null,
+            code: dto.channelCode,
+            isActive: true,
+            verificationStatus: 'VERIFIED',
+          },
+        });
+        const strict = this.isRegulatedRuntime;
+        if (strict) {
+          if (!config || !config.accountNumber || config.accountNumber === 'NOT_CONFIGURED' ||
+              !config.regulatoryApprovalReference || !config.regulatoryApprovalDocumentUrl ||
+              !config.providerAgreementReference || !config.providerAgreementDocumentUrl) {
+            throw new ServiceUnavailableException('قناة السحب غير مفعلة بوثائق اعتماد تنظيمي واتفاقية تاجر موثقتين.');
+          }
+          if (![PaymentChannelMode.MANUAL, PaymentChannelMode.API].includes(config.mode)) {
+            throw new ServiceUnavailableException('وضع قناة السحب غير معتمد للتشغيل الفعلي.');
+          }
+          if (config.mode === PaymentChannelMode.API && !channel.capabilities?.payout) {
+            throw new ServiceUnavailableException('لا يوجد محول API موثق ومختبر لهذه القناة؛ لم يتم حجز الرصيد.');
+          }
+        } else if (!channel.isActive || [PaymentChannelMode.DISABLED, PaymentChannelMode.BLOCKED_EXTERNAL].includes(channel.mode)) {
+          throw new ServiceUnavailableException(`قناة السحب ${dto.channelCode} غير مفعلة.`);
+        }
+
+        const minAmount = config ? Number(config.minAmount) : channel.minAmount;
+        const maxAmount = config ? Number(config.maxAmount) : channel.maxAmount;
+        if (minAmount && dto.amount < minAmount) throw new BadRequestException(`الحد الأدنى للسحب ${minAmount} ${dto.currency}.`);
+        if (maxAmount && dto.amount > maxAmount) throw new BadRequestException(`الحد الأقصى للسحب ${maxAmount} ${dto.currency}.`);
+
         await this.ledgerService.holdWalletBalance(wallet.id, dto.amount, tx);
-        return tx.payoutRequest.create({
+        const created = await tx.payoutRequest.create({
           data: {
             payoutNumber,
             userId,
@@ -130,12 +216,29 @@ export class PayoutsService {
             amount: new Prisma.Decimal(dto.amount),
             feeAmount: new Prisma.Decimal(0),
             channelCode: dto.channelCode,
-            destinationAccount: dto.destinationAccount,
-            beneficiaryName: dto.beneficiaryName,
+            destinationAccount: dto.destinationAccount.trim(),
+            beneficiaryName: dto.beneficiaryName.trim(),
             idempotencyKey: dto.idempotencyKey,
             status: PayoutStatus.REQUESTED,
           },
         });
+
+        if (strict && config?.mode === PaymentChannelMode.MANUAL) {
+          await tx.walletAgentOperation.create({
+            data: {
+              tenantId: getCurrentTenantId() || null,
+              channelCode: dto.channelCode,
+              direction: 'OUTBOUND_PAYOUT',
+              status: 'PENDING',
+              payoutRequestId: created.id,
+              customerUserId: userId,
+              expectedAmount: new Prisma.Decimal(dto.amount),
+              expectedCurrency: dto.currency,
+              expectedAccountLastFour: dto.destinationAccount.trim().slice(-4),
+            },
+          });
+        }
+        return created;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return { success: true, payout: this.mapPayout(row) };
     } catch (error: any) {
@@ -146,6 +249,9 @@ export class PayoutsService {
           return { success: true, payout: this.mapPayout(duplicate) };
         }
       }
+      if (error instanceof BadRequestException || error instanceof ForbiddenException ||
+          error instanceof NotFoundException || error instanceof ConflictException ||
+          error instanceof ServiceUnavailableException) throw error;
       this.logger.error(`Atomic payout request failed: ${error?.message || error}`);
       throw new ServiceUnavailableException('تعذر حفظ طلب السحب وحجز الرصيد معاً؛ لم يتم استخدام مخزن مؤقت.');
     }
@@ -156,12 +262,24 @@ export class PayoutsService {
     if (payout.status !== PayoutStatus.REQUESTED) throw new BadRequestException(`حالة الطلب لا تسمح بالاعتماد: ${payout.status}`);
     if (payout.userId === staffUserId) throw new ForbiddenException('لا يمكن لمقدم طلب السحب اعتماده بنفسه.');
 
-    const changed = await this.prisma.payoutRequest.updateMany({
-      where: { id: payoutId, status: PayoutStatus.REQUESTED },
-      data: { status: PayoutStatus.APPROVED, approvedByUserId: staffUserId, approvalNotes: dto?.reviewNotes || 'تمت الموافقة المالية.' },
-    });
-    if (changed.count !== 1) throw new ConflictException('تغيرت حالة الطلب بالتزامن.');
-    return { success: true, payout: await this.getPayoutById(payoutId) };
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.payoutRequest.updateMany({
+        where: { id: payoutId, status: PayoutStatus.REQUESTED },
+        data: { status: PayoutStatus.APPROVED, approvedByUserId: staffUserId, approvalNotes: dto?.reviewNotes || 'تمت الموافقة المالية.' },
+      });
+      if (changed.count !== 1) throw new ConflictException('تغيرت حالة الطلب بالتزامن.');
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId,
+          action: 'CUSTOMER_PAYOUT_APPROVED',
+          entityName: 'PayoutRequest',
+          entityId: payoutId,
+          newValues: { amount: payout.amount, currency: payout.currency, channelCode: payout.channelCode, approvalNotes: dto?.reviewNotes || null },
+        },
+      });
+      return tx.payoutRequest.findUnique({ where: { id: payoutId } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return { success: true, payout: this.mapPayout(updated) };
   }
 
   async dispatchPayout(staffUserId: string, payoutId: string): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
@@ -238,13 +356,29 @@ export class PayoutsService {
 
   async confirmManualPayout(staffUserId: string, payoutId: string, externalRef: string, notes?: string): Promise<{ success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
-    if (![PayoutStatus.APPROVED, PayoutStatus.UNKNOWN].includes(payout.status)) throw new BadRequestException(`لا يمكن تأكيد الطلب بحالته الحالية: ${payout.status}`);
+    if (payout.status !== PayoutStatus.APPROVED) throw new BadRequestException(`لا يمكن تأكيد الطلب بحالته الحالية: ${payout.status}`);
     if (payout.approvedByUserId === staffUserId) throw new ForbiddenException('يجب أن يؤكد التحويل موظف مختلف عن صاحب الموافقة.');
     if (!externalRef?.trim() || externalRef.trim().length < 5) throw new BadRequestException('مرجع التحويل الرسمي مطلوب ويجب ألا يقل عن 5 خانات.');
 
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.payoutRequest.findUnique({ where: { id: payout.id } });
-      if (!current || ![PayoutStatus.APPROVED, PayoutStatus.UNKNOWN].includes(current.status as PayoutStatus)) throw new ConflictException('تغيرت حالة طلب السحب.');
+      if (!current || current.status !== PayoutStatus.APPROVED) throw new ConflictException('تغيرت حالة طلب السحب.');
+      let agentOperation: any = null;
+      const channelConfig = await tx.paymentChannelConfig.findFirst({
+        where: {
+          tenantId: getCurrentTenantId() || null,
+          code: payout.channelCode,
+          isActive: true,
+          verificationStatus: 'VERIFIED',
+        },
+      });
+      if (this.isRegulatedRuntime && channelConfig?.mode === PaymentChannelMode.MANUAL) {
+        agentOperation = await this.assertManualPayoutAgentEvidence(tx, payout, staffUserId);
+        if (!agentOperation || agentOperation.observedReferenceNumber !== externalRef.trim()) {
+          throw new BadRequestException('يجب أن يطابق مرجع التحويل المدخل المرجع الذي سجله الوكيل من سجل المحفظة.');
+        }
+      }
+
       const ledger = await this.ledgerService.recordPayoutSettlement({
         payoutId: payout.id, payoutNumber: payout.payoutNumber, userId: payout.userId,
         walletId: payout.walletId || undefined, currency: payout.currency, amount: payout.amount,
@@ -256,6 +390,27 @@ export class PayoutsService {
       await tx.payoutRequest.update({
         where: { id: payout.id },
         data: { status: PayoutStatus.CONFIRMED, externalReference: externalRef.trim(), ledgerTxId: String(ledgerId), failureReason: null },
+      });
+      if (agentOperation) {
+        await tx.walletAgentOperation.update({
+          where: { id: agentOperation.id },
+          data: {
+            status: 'POSTED',
+            financeReviewedByUserId: staffUserId,
+            financeNotes: notes?.trim() || 'اعتماد تسوية التحويل اليدوي بعد تحقق الوكيل.',
+            ledgerTxId: String(ledgerId),
+            postedAt: new Date(),
+          },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId,
+          action: 'MANUAL_PAYOUT_SETTLED',
+          entityName: 'PayoutRequest',
+          entityId: payout.id,
+          newValues: { externalReference: externalRef.trim(), ledgerTxId: String(ledgerId), agentUserId: agentOperation?.agentUserId || null },
+        },
       });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return { success: true, payout: await this.getPayoutById(payoutId) };
