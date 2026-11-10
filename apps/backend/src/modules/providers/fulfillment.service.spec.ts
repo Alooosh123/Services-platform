@@ -37,6 +37,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
     order: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     wallet: {
       findUnique: jest.fn(),
