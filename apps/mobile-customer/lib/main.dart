@@ -592,7 +592,7 @@ class _DepositPageState extends State<DepositPage> {
                     ),
                     const SizedBox(height: 8),
                   ],
-                  if (saved == null || saved?['status'] == 'REJECTED' || editingSavedAccount) ...[
+                  if (saved == null || saved['status'] == 'REJECTED' || editingSavedAccount) ...[
                     TextField(
                       controller: senderIdentifier,
                       maxLength: 80,
