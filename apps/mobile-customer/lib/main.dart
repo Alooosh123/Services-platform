@@ -278,6 +278,8 @@ class _DepositPageState extends State<DepositPage> {
   bool consentAccepted = false;
   bool loading = true;
   bool submitting = false;
+  bool savingSenderAccount = false;
+  bool editingSavedAccount = false;
   List<Map<String, dynamic>> channels = [];
   List<Map<String, dynamic>> senderAccounts = [];
 
@@ -354,6 +356,59 @@ class _DepositPageState extends State<DepositPage> {
     }
   }
 
+  Future<void> saveSenderAccount() async {
+    final channel = selectedChannel;
+    if (channel == null || senderIdentifier.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('اختر المحفظة وأدخل رقم الهاتف أو الرقم البديل أولاً.')),
+      );
+      return;
+    }
+    if (!consentAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يجب الموافقة على حفظ الرقم مشفراً لغرض التوثيق.')),
+      );
+      return;
+    }
+
+    setState(() => savingSenderAccount = true);
+    try {
+      final result = await ApiClient.instance.post(
+        '/deposits/sender-accounts',
+        body: {
+          'channelCode': channelCode,
+          'identifierType': channel['senderIdentifierType'] ?? 'PHONE',
+          'identifier': senderIdentifier.text.trim(),
+          'consentAccepted': true,
+        },
+      );
+      if (result is! Map || result['id'] == null) {
+        throw const ApiException('تعذر حفظ رقم المحفظة وإرساله للمراجعة.');
+      }
+      if (!mounted) return;
+      setState(() {
+        senderAccounts = [
+          ...senderAccounts.where((a) => a['channelCode'] != channelCode),
+          Map<String, dynamic>.from(result),
+        ];
+        senderIdentifier.clear();
+        consentAccepted = false;
+        editingSavedAccount = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حفظ رقم المحفظة وإرساله لصاحب التطبيق للموافقة. ستتمكن من الشحن بعد اعتماده.')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => savingSenderAccount = false);
+    }
+  }
+
   Future<void> submit() async {
     final channel = selectedChannel;
     if (channel == null) {
@@ -372,42 +427,16 @@ class _DepositPageState extends State<DepositPage> {
 
     setState(() => submitting = true);
     try {
-      String? senderAccountId;
       final saved = savedSenderAccount;
-      if (senderIdentifier.text.trim().isNotEmpty) {
-        if (!consentAccepted) {
-          throw const ApiException('وافق على حفظ معرّف حساب الإرسال مشفّراً حتى يستخدمه الوكيل في المطابقة.');
-        }
-        final savedResult = await ApiClient.instance.post(
-          '/deposits/sender-accounts',
-          body: {
-            'channelCode': channelCode,
-            'identifierType': channel['senderIdentifierType'] ?? 'PHONE',
-            'identifier': senderIdentifier.text.trim(),
-            'consentAccepted': true,
-          },
-        );
-        if (savedResult is! Map || savedResult['id'] == null) {
-          throw const ApiException('تعذر حفظ حساب الإرسال.');
-        }
-        senderAccountId = savedResult['id'].toString();
-        senderAccounts = [
-          ...senderAccounts.where((a) => a['channelCode'] != channelCode),
-          Map<String, dynamic>.from(savedResult),
-        ];
-        senderIdentifier.clear();
-        consentAccepted = false;
-      } else if (saved != null) {
-        senderAccountId = saved['id']?.toString();
-      } else {
-        throw const ApiException('أدخل رقم البديل أو رقم الهاتف المرتبط بمحفظتك واحفظه أولاً.');
+      if (saved == null || saved['status'] != 'VERIFIED' || editingSavedAccount) {
+        throw const ApiException('يجب تسجيل رقم هذه المحفظة وانتظار موافقة صاحب التطبيق قبل الشحن.');
       }
 
       final payload = <String, dynamic>{
         'currency': currency,
         'amount': value,
         'paymentMethodCode': channelCode,
-        'senderAccountId': senderAccountId,
+        'senderAccountId': saved['id']?.toString(),
         'senderName': senderName.text.trim(),
         if (reference.text.trim().isNotEmpty)
           'referenceNumber': reference.text.trim(),
@@ -519,42 +548,81 @@ class _DepositPageState extends State<DepositPage> {
                     decoration: InputDecoration(labelText: 'المبلغ ($currency)'),
                   ),
                   const SizedBox(height: 12),
-                  if (saved != null) ...[
+                  if (saved?['status'] == 'VERIFIED' && !editingSavedAccount) ...[
                     Card(
                       color: panel,
                       child: ListTile(
-                        title: Text('الحساب المحفوظ: ${saved['maskedIdentifier'] ?? '—'}'),
-                        subtitle: Text(saved['status'] == 'VERIFIED'
-                          ? 'تم التحقق من الحساب'
-                          : 'بانتظار أول مطابقة من الوكيل'),
-                        leading: const Icon(Icons.verified_user_outlined),
+                        leading: const Icon(Icons.verified, color: green),
+                        title: Text('الحساب المعتمد: ${saved?['maskedIdentifier'] ?? '—'}'),
+                        subtitle: const Text('تمت موافقة صاحب التطبيق. سيُستخدم هذا الرقم تلقائياً في طلبات الشحن القادمة دون إعادة إدخاله.'),
+                        trailing: TextButton(
+                          onPressed: () => setState(() {
+                            editingSavedAccount = true;
+                            senderIdentifier.clear();
+                            consentAccepted = false;
+                          }),
+                          child: const Text('تغيير الرقم'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ] else if (saved?['status'] == 'PENDING_VERIFICATION' && !editingSavedAccount) ...[
+                    Card(
+                      color: panel,
+                      child: ListTile(
+                        leading: const Icon(Icons.hourglass_top, color: Colors.amber),
+                        title: Text('الرقم المحفوظ: ${saved?['maskedIdentifier'] ?? '—'}'),
+                        subtitle: const Text('بانتظار مراجعة وموافقة صاحب التطبيق. لن تتمكن من الشحن بهذه المحفظة قبل الاعتماد. اسحب الشاشة للأسفل لتحديث الحالة.'),
+                        trailing: IconButton(
+                          onPressed: load,
+                          icon: const Icon(Icons.refresh),
+                          tooltip: 'تحديث الحالة',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ] else if (saved?['status'] == 'REJECTED') ...[
+                    Card(
+                      color: panel,
+                      child: ListTile(
+                        leading: const Icon(Icons.error_outline, color: Colors.redAccent),
+                        title: Text('تم رفض الرقم: ${saved?['maskedIdentifier'] ?? '—'}'),
+                        subtitle: Text(saved?['reviewNotes']?.toString() ?? 'يرجى تصحيح الرقم وإعادة إرساله للمراجعة.'),
                       ),
                     ),
                     const SizedBox(height: 8),
                   ],
-                  TextField(
-                    controller: senderIdentifier,
-                    maxLength: 80,
-                    onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(
-                      labelText: identifierLabel,
-                      hintText: saved == null
-                        ? 'أدخل المعرّف كما يظهر في تطبيق المحفظة'
-                        : 'اتركه فارغاً لاستخدام الحساب المحفوظ أو أدخل الجديد لتحديثه',
+                  if (saved == null || saved?['status'] == 'REJECTED' || editingSavedAccount) ...[
+                    TextField(
+                      controller: senderIdentifier,
+                      maxLength: 80,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: identifierLabel,
+                        hintText: 'أدخل الرقم كما يظهر في تطبيق المحفظة',
+                      ),
                     ),
-                  ),
-                  if (senderIdentifier.text.trim().isNotEmpty)
                     CheckboxListTile(
                       value: consentAccepted,
                       onChanged: (value) => setState(() => consentAccepted = value == true),
                       title: const Text(
-                        'أوافق على حفظ المعرّف مشفّراً واستخدامه لمطابقة الإيداعات.',
+                        'أوافق على حفظ المعرّف مشفّراً وربطه بحسابي لهذه المحفظة حتى يراجعه صاحب التطبيق.',
                         style: TextStyle(fontSize: 12),
                       ),
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                     ),
-                  const SizedBox(height: 8),
+                    FilledButton.icon(
+                      onPressed: savingSenderAccount || senderIdentifier.text.trim().isEmpty || !consentAccepted
+                        ? null
+                        : saveSenderAccount,
+                      icon: savingSenderAccount
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.save),
+                      label: Text(savingSenderAccount ? 'جارٍ إرسال الرقم للمراجعة...' : 'حفظ الرقم وإرساله للموافقة'),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   TextField(
                     controller: reference,
                     decoration: const InputDecoration(
