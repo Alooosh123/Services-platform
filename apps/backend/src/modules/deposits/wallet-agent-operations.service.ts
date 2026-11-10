@@ -198,6 +198,9 @@ export class WalletAgentOperationsService {
     if (!dto.evidenceReference?.trim() || dto.evidenceReference.trim().length < 5) {
       throw new BadRequestException('مرجع إثبات الحركة من كشف/سجل المحفظة الرسمي مطلوب.');
     }
+    if (dto.observedSenderIdentifier !== undefined && dto.observedSenderIdentifier.length > 80) {
+      throw new BadRequestException('معرّف حساب المرسل المرصود يتجاوز الحد المسموح.');
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const operation = await tx.walletAgentOperation.findFirst({
@@ -279,6 +282,7 @@ export class WalletAgentOperationsService {
       const isMatch = operation.direction === 'INBOUND_DEPOSIT'
         ? !!deposit &&
           !!deposit.senderAccountId &&
+          !!deposit.senderAccount &&
           ['PENDING_VERIFICATION', 'VERIFIED'].includes(deposit.senderAccount.status) &&
           !!operation.expectedSenderAccountLastFour &&
           senderIdentityMatches &&
