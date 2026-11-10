@@ -12,15 +12,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Refresh the root lockfile with npm's resolver without force-upgrading
+  # major framework versions. All build/test jobs wait for this job and
+  # checkout the resulting PR branch tip.
+  dependency-lock-refresh:
+    name: Safe Dependency Lockfile Refresh
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Resolve compatible lockfile without force upgrades
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Commit lockfile when dependency tree changed
+        env:
+          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json already matches all package manifests"
+          else
+            git add package-lock.json
+            git commit -m "chore(deps): refresh lockfile with patched compatible dependencies"
+            git push origin "HEAD:${SOURCE_BRANCH}"
+          fi
+
   # -------------------------------------------------------------
   # Job 1: Static Analysis, Linting & Type Checking
   # -------------------------------------------------------------
   quality-gate:
     name: Lint, Types & Security Audit
+    needs: [dependency-lock-refresh]
+    name: Lint, Types & Security Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -45,6 +94,7 @@ jobs:
   # -------------------------------------------------------------
   automated-tests:
     name: Backend Unit, Security & Stress Tests
+    needs: [dependency-lock-refresh]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -85,6 +135,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -115,6 +168,7 @@ jobs:
   # -------------------------------------------------------------
   migration-dryrun:
     name: Prisma Migration Apply & Safety Check
+    needs: [dependency-lock-refresh]
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: "postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public"
@@ -135,6 +189,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -160,10 +217,13 @@ jobs:
   build-production:
     name: Build Monorepo Packages & Apps
     runs-on: ubuntu-latest
-    needs: [automated-tests, migration-dryrun, mobile-quality]
+    needs: [quality-gate, automated-tests, migration-dryrun, mobile-quality]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -188,10 +248,14 @@ jobs:
   # -------------------------------------------------------------
   mobile-quality:
     name: Flutter Customer App Analysis & Tests
+    needs: [dependency-lock-refresh]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
