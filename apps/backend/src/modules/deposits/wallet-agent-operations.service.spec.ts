@@ -11,6 +11,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
   const originalChannels = process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS;
   const originalDailyCount = process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT;
   const originalDailyAmount = process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER;
+  const originalEvidenceIngestion = process.env.ENABLE_WALLET_TRANSFER_EVIDENCE_INGESTION;
   const originalEncryptionKey = process.env.ENCRYPTION_KEY;
   const agentTotpSecret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
   const encryption = new EncryptionService();
@@ -31,6 +32,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER = '10000';
     process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT = '10';
     process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER = '50000';
+    process.env.ENABLE_WALLET_TRANSFER_EVIDENCE_INGESTION = 'true';
     operation = {
       id: 'operation-1',
       tenantId: null,
@@ -157,6 +159,8 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     else process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT = originalDailyCount;
     if (originalDailyAmount === undefined) delete process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER;
     else process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER = originalDailyAmount;
+    if (originalEvidenceIngestion === undefined) delete process.env.ENABLE_WALLET_TRANSFER_EVIDENCE_INGESTION;
+    else process.env.ENABLE_WALLET_TRANSFER_EVIDENCE_INGESTION = originalEvidenceIngestion;
     if (originalEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY;
     else process.env.ENCRYPTION_KEY = originalEncryptionKey;
   });
