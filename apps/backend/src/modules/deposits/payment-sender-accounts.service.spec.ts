@@ -57,6 +57,11 @@ describe('PaymentSenderAccountsService security and owner review', () => {
         }),
       },
       auditLog: { create: jest.fn().mockResolvedValue({ id: 'audit-1' }) },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'owner-1' }]) },
+      notification: {
+        create: jest.fn().mockResolvedValue({ id: 'notification-customer-1' }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
     prisma = {
       paymentChannelConfig: {
@@ -131,6 +136,14 @@ describe('PaymentSenderAccountsService security and owner review', () => {
     expect(encryption.decrypt(persisted.identifierCiphertext)).toBe('967771234567');
     expect(persisted.identifierLookupHash).toMatch(/^[a-f0-9]{64}$/i);
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.notification.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: [expect.objectContaining({
+        userId: 'owner-1',
+        type: 'PAYMENT_SENDER_ACCOUNT_REVIEW',
+        status: 'UNREAD',
+        channel: 'IN_APP',
+      })],
+    }));
   });
 
   it('does not allow one sender identifier to be linked to another customer', async () => {
@@ -258,6 +271,14 @@ describe('PaymentSenderAccountsService security and owner review', () => {
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: 'PAYMENT_SENDER_ACCOUNT_APPROVED' }),
     }));
+    expect(tx.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        userId: 'customer-1',
+        type: 'PAYMENT_SENDER_ACCOUNT_APPROVED',
+        status: 'UNREAD',
+        channel: 'IN_APP',
+      }),
+    }));
   });
 
   it('rejects a pending sender account only with a reason and records the decision', async () => {
@@ -271,6 +292,13 @@ describe('PaymentSenderAccountsService security and owner review', () => {
     expect(result.reviewNotes).toBe('الرقم لا يطابق بيانات المحفظة');
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: 'PAYMENT_SENDER_ACCOUNT_REJECTED' }),
+    }));
+    expect(tx.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        userId: 'customer-1',
+        type: 'PAYMENT_SENDER_ACCOUNT_REJECTED',
+        message: expect.stringContaining('الرقم لا يطابق بيانات المحفظة'),
+      }),
     }));
   });
 
