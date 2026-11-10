@@ -386,7 +386,7 @@ export class WalletAgentOperationsService {
         }
 
         const totpSecret = this.decryptAgentTotpSecret(agent.twoFactorSecret);
-        if (!totpSecret || !/^\\d{6}$/.test(dto.agentTotpCode || '') || !TotpUtil.verifyCode(dto.agentTotpCode!, totpSecret)) {
+        if (!totpSecret || !/^\d{6}$/.test(dto.agentTotpCode || '') || !TotpUtil.verifyCode(dto.agentTotpCode!, totpSecret)) {
           throw new UnauthorizedException('رمز المصادقة الحديث للوكيل غير صحيح أو غير متاح؛ لم يُرحّل أي رصيد.');
         }
 
