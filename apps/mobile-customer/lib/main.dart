@@ -95,14 +95,159 @@ class OrderDetailPage extends StatelessWidget{final String id;const OrderDetailP
  return ListView(padding:const EdgeInsets.all(16),children:[InfoTile('رقم الطلب',d['orderNumber']),InfoTile('الحالة',d['status']),InfoTile('الخدمة',d['snapshotServiceNameAr']??d['snapshotServiceName']),InfoTile('الباقة',d['snapshotProductNameAr']??d['snapshotProductName']),InfoTile('المبلغ',money(d['snapshotRetailPrice'],d['snapshotCurrency']?.toString()??''))]);
  }));
 }
-class WalletPage extends StatefulWidget{const WalletPage({super.key});@override State<WalletPage> createState()=>_WalletPageState();}
-class _WalletPageState extends State<WalletPage>{
- late Future<dynamic> data;@override void initState(){super.initState();data=ApiClient.instance.get('/wallet/balances');}
- Future<void> reload()async=>setState(()=>data=ApiClient.instance.get('/wallet/balances'));
- @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('المحفظة'),actions:[IconButton(onPressed:reload,icon:const Icon(Icons.refresh))]),body:FutureBuilder(future:data,builder:(c,s){
- if(s.connectionState==ConnectionState.waiting)return const Center(child:CircularProgressIndicator());if(s.hasError)return Retry(s.error.toString(),reload);final list=rows(s.data);
- return RefreshIndicator(onRefresh:reload,child:ListView(padding:const EdgeInsets.all(16),children:[const Text('أرصدة منفصلة حسب العملة',style:TextStyle(fontSize:17,fontWeight:FontWeight.bold)),for(final w in list)Card(color:panel,child:ListTile(title:Text(w['currency']?.toString()??'—'),subtitle:Text('المتاح: '+money(w['availableBalance']??w['balance'],w['currency']?.toString()??'')+'\nالمحجوز: '+money(w['lockedBalance'],w['currency']?.toString()??'')),isThreeLine:true,trailing:Icon(w['isFrozen']==true?Icons.lock:Icons.check_circle_outline,color:w['isFrozen']==true?Colors.red:green))),const Text('تأكيد الإيداعات يتم بعد المطابقة المالية فقط.',style:TextStyle(color:Colors.white54))]));
- }));
+class WalletPage extends StatefulWidget {
+  const WalletPage({super.key});
+  @override
+  State<WalletPage> createState() => _WalletPageState();
+}
+
+class _WalletPageState extends State<WalletPage> {
+  late Future<dynamic> data;
+  late Future<dynamic> history;
+
+  @override
+  void initState() {
+    super.initState();
+    data = ApiClient.instance.get('/wallet/balances');
+    history = ApiClient.instance.getWalletTransactions(limit: 20);
+  }
+
+  Future<void> reload() async {
+    setState(() {
+      data = ApiClient.instance.get('/wallet/balances');
+      history = ApiClient.instance.getWalletTransactions(limit: 20);
+    });
+    await Future.wait([data, history]);
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+          title: const Text('المحفظة'),
+          actions: [IconButton(onPressed: reload, icon: const Icon(Icons.refresh))],
+        ),
+        body: FutureBuilder(
+          future: data,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) return Retry(snapshot.error.toString(), reload);
+            final wallets = rows(snapshot.data);
+            return RefreshIndicator(
+              onRefresh: reload,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'أرصدة منفصلة حسب العملة',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  for (final wallet in wallets)
+                    Card(
+                      color: panel,
+                      child: ListTile(
+                        title: Text(wallet['currency']?.toString() ?? '—'),
+                        subtitle: Text(
+                          'المتاح: ${money(wallet['availableBalance'] ?? wallet['balance'], wallet['currency']?.toString() ?? '')}'
+                          '\nالمحجوز: ${money(wallet['lockedBalance'], wallet['currency']?.toString() ?? '')}',
+                        ),
+                        isThreeLine: true,
+                        trailing: Icon(
+                          wallet['isFrozen'] == true ? Icons.lock : Icons.check_circle_outline,
+                          color: wallet['isFrozen'] == true ? Colors.red : green,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'آخر حركات المحفظة',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  FutureBuilder(
+                    future: history,
+                    builder: (context, historySnapshot) {
+                      if (historySnapshot.connectionState == ConnectionState.waiting) {
+                        return const Padding(
+                          padding: EdgeInsets.all(18),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+                      if (historySnapshot.hasError) {
+                        return Text(
+                          'تعذر تحميل سجل الحركات: ${historySnapshot.error}',
+                          style: const TextStyle(color: Colors.orangeAccent),
+                        );
+                      }
+                      final entries = rows(historySnapshot.data);
+                      if (entries.isEmpty) {
+                        return const Card(
+                          color: panel,
+                          child: Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text('لا توجد حركات مالية مسجلة حتى الآن.'),
+                          ),
+                        );
+                      }
+                      return Column(
+                        children: [
+                          for (final entry in entries)
+                            Builder(
+                              builder: (context) {
+                                final direction = entry['direction']?.toString() ?? '';
+                                final isCredit = ['CREDIT', 'REFUND', 'UNLOCK', 'COMMISSION'].contains(direction);
+                                final title = switch (direction) {
+                                  'CREDIT' => 'إضافة رصيد',
+                                  'DEBIT' => 'خصم',
+                                  'LOCK' => 'حجز مبلغ',
+                                  'UNLOCK' => 'تحرير مبلغ محجوز',
+                                  'REFUND' => 'استرداد',
+                                  'COMMISSION' => 'عمولة',
+                                  _ => 'حركة محفظة',
+                                };
+                                final created = DateTime.tryParse(entry['createdAt']?.toString() ?? '');
+                                final date = created == null
+                                    ? '—'
+                                    : created.toLocal().toString().substring(0, 16);
+                                return Card(
+                                  color: panel,
+                                  child: ListTile(
+                                    leading: Icon(
+                                      isCredit ? Icons.arrow_downward : Icons.arrow_upward,
+                                      color: isCredit ? green : Colors.orangeAccent,
+                                    ),
+                                    title: Text(title),
+                                    subtitle: Text(
+                                      '${entry['description'] ?? entry['referenceType'] ?? ''}\n$date',
+                                    ),
+                                    isThreeLine: true,
+                                    trailing: Text(
+                                      money(entry['amount'], entry['currency']?.toString() ?? ''),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: isCredit ? green : Colors.orangeAccent,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'لا يُضاف أي رصيد إلا بعد إثبات الاستلام وترحيل القيد المحاسبي.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
 }
 class ProfilePage extends StatefulWidget{const ProfilePage({super.key});@override State<ProfilePage> createState()=>_ProfilePageState();}
 class _ProfilePageState extends State<ProfilePage>{
