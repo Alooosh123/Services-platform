@@ -311,7 +311,7 @@ export class WalletAgentOperationsService {
       const encryptionKey = process.env.ENCRYPTION_KEY || '';
       const normalizedReceiverAccount = String(channelConfig?.accountNumber || '')
         .trim()
-        .replace(/\\s+/g, '')
+        .replace(/\s+/g, '')
         .toUpperCase();
       const receiverAccountLookupHash =
         /^[0-9a-f]{64}$/i.test(encryptionKey) && normalizedReceiverAccount
