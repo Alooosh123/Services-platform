@@ -5,6 +5,7 @@ import { MockProviderAdapter } from './adapters/mock-provider.adapter';
 import { ManualProviderAdapter } from './adapters/manual-provider.adapter';
 import { ExternalApiAdapter } from './adapters/external-api.adapter';
 import { EncryptionService } from '../../security/encryption.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import {
   PlayerValidationRequest,
   PlayerValidationResponse,
@@ -35,8 +36,15 @@ export class ProvidersService {
   getAdapter(providerCode: string): ITopupProviderAdapter {
     const code = providerCode?.trim().toUpperCase();
     if (!code) throw new ServiceUnavailableException('لم يتم تعيين مزود تنفيذ للمنتج.');
-    if (process.env.NODE_ENV === 'production' && code === 'MOCK') {
-      throw new ServiceUnavailableException('محول MOCK محظور في بيئة الإنتاج.');
+    if (
+      code === 'MOCK' &&
+      (
+        process.env.NODE_ENV === 'production' ||
+        !!getCurrentTenantId() ||
+        (process.env.NODE_ENV !== 'test' && process.env.ENABLE_MOCK_PROVIDERS !== 'true')
+      )
+    ) {
+      throw new ServiceUnavailableException('محول MOCK محظور خارج اختبارات النظام أو بيئة تطوير محلية مفعلة صراحةً.');
     }
     const adapter = this.adapters.get(code);
     if (!adapter) {
@@ -78,8 +86,9 @@ export class ProvidersService {
       errorMessage = err?.message || 'Unknown network error';
       response = {
         success: false,
-        status: 'FAILED',
-        errorMessage,
+        status: 'PENDING',
+        errorCode: 'PROVIDER_RESULT_UNKNOWN',
+        errorMessage: errorMessage + ' — النتيجة غير مؤكدة؛ تم الاحتفاظ بالحالة للمطابقة ومنع إعادة التنفيذ التلقائية.',
       };
     }
 
