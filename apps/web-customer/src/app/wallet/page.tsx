@@ -525,7 +525,8 @@ export default function CustomerWalletPage() {
                 <select
                   value={depositChannel}
                   onChange={(e) => setDepositChannel(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right"
+                  disabled={currencyChannels.length === 0}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right disabled:opacity-50"
                 >
                   {currencyChannels.map((c) => (
                     <option key={c.code} value={c.code}>
@@ -634,7 +635,7 @@ export default function CustomerWalletPage() {
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !selectedChannelInfo}
                 className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-sm transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? 'جاري إرسال الطلب...' : 'إرسال طلب الإيداع للمراجعة المالية'}
