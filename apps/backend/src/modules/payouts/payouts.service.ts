@@ -176,15 +176,15 @@ export class PayoutsService {
           return duplicate;
         }
 
-        const config = await tx.paymentChannelConfig.findFirst({
+        const strict = this.isRegulatedRuntime;
+        const config = strict ? await tx.paymentChannelConfig.findFirst({
           where: {
             tenantId: getCurrentTenantId() || null,
             code: dto.channelCode,
             isActive: true,
             verificationStatus: 'VERIFIED',
           },
-        });
-        const strict = this.isRegulatedRuntime;
+        }) : null;
         if (strict) {
           if (!config || !config.accountNumber || config.accountNumber === 'NOT_CONFIGURED' ||
               !config.regulatoryApprovalReference || !config.regulatoryApprovalDocumentUrl ||
@@ -364,14 +364,16 @@ export class PayoutsService {
       const current = await tx.payoutRequest.findUnique({ where: { id: payout.id } });
       if (!current || current.status !== PayoutStatus.APPROVED) throw new ConflictException('تغيرت حالة طلب السحب.');
       let agentOperation: any = null;
-      const channelConfig = await tx.paymentChannelConfig.findFirst({
-        where: {
-          tenantId: getCurrentTenantId() || null,
-          code: payout.channelCode,
-          isActive: true,
-          verificationStatus: 'VERIFIED',
-        },
-      });
+      const channelConfig = this.isRegulatedRuntime
+        ? await tx.paymentChannelConfig.findFirst({
+            where: {
+              tenantId: getCurrentTenantId() || null,
+              code: payout.channelCode,
+              isActive: true,
+              verificationStatus: 'VERIFIED',
+            },
+          })
+        : null;
       if (this.isRegulatedRuntime && channelConfig?.mode === PaymentChannelMode.MANUAL) {
         agentOperation = await this.assertManualPayoutAgentEvidence(tx, payout, staffUserId);
         if (!agentOperation || agentOperation.observedReferenceNumber !== externalRef.trim()) {
@@ -436,6 +438,10 @@ export class PayoutsService {
         data: { status: PayoutStatus.CANCELLED, failureReason: reason || 'رفض إداري', approvedByUserId: staffUserId },
       });
       if (changed.count !== 1) throw new ConflictException('تغيرت حالة طلب السحب بالتزامن؛ أُلغي تحرير الحجز.');
+      await tx.walletAgentOperation.updateMany({
+        where: { payoutRequestId: payout.id, status: { in: ['PENDING', 'CLAIMED', 'AGENT_SUBMITTED', 'NEEDS_REVIEW'] } },
+        data: { status: 'REJECTED', financeReviewedByUserId: staffUserId, financeNotes: reason || 'رفض إداري' },
+      });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return { success: true, payout: await this.getPayoutById(payoutId) };
   }
