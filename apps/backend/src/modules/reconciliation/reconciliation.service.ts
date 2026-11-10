@@ -442,7 +442,7 @@ export class ReconciliationService {
             accountCode: adjustment.creditAccountCode,
             debitAmount: 0,
             creditAmount: Number(adjustment.amount),
-            currency: adjustment.currency,
+            currency: adjustment.currency as CurrencyCode,
             notes: 'حساب دائن لتسوية فرق المطابقة ' + item.referenceNumber,
           },
         ],
