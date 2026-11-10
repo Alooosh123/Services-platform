@@ -270,20 +270,23 @@ export class DepositsService {
 
         let senderAccount: any = null;
         if (manualConfigReady) {
-          if (!dto.senderAccountId) {
-            throw new BadRequestException('احفظ رقم البديل أو رقم الهاتف المرتبط بمحفظتك أولاً حتى يتمكن الوكيل من مطابقة التحويل.');
-          }
+          // Resolve the customer's one saved account for this wallet on the server.
+          // The client never needs to re-enter or manually select the identifier.
           senderAccount = await tx.paymentSenderAccount.findFirst({
             where: {
-              id: dto.senderAccountId,
               tenantId: getCurrentTenantId() || null,
               userId,
               channelCode: dto.paymentMethodCode,
-              status: { in: ['PENDING_VERIFICATION', 'VERIFIED'] },
+              status: 'VERIFIED',
             },
           });
           if (!senderAccount) {
-            throw new BadRequestException('حساب الإرسال المحفوظ غير موجود أو لا يخص هذا العميل أو هذه القناة.');
+            throw new BadRequestException(
+              'رقم هذه المحفظة غير موثق بعد. أرسل الرقم مرة واحدة وانتظر موافقة صاحب التطبيق قبل إنشاء طلب شحن.',
+            );
+          }
+          if (dto.senderAccountId && dto.senderAccountId !== senderAccount.id) {
+            throw new BadRequestException('معرّف حساب الإرسال المرسل لا يطابق الحساب الموثق لهذه المحفظة.');
           }
           if (senderAccount.identifierType !== config!.senderIdentifierType) {
             throw new BadRequestException('نوع حساب الإرسال المحفوظ لا يطابق نوع المعرّف المعتمد للقناة.');
@@ -310,7 +313,7 @@ export class DepositsService {
                 toStatus: DepositStatus.PENDING,
                 changedByUserId: userId,
                 notes: manualConfigReady
-                  ? 'تم استلام طلب الإيداع؛ سيطابق الوكيل الحساب المرسل والحركة الواردة، ثم يضاف الرصيد آلياً عند اكتمال المطابقة وتفعيل السياسة.'
+                  ? 'تم استلام طلب الإيداع باستخدام حساب الإرسال الموثق مسبقاً؛ سيطابق الوكيل الحركة الواردة مع سجل المحفظة الرسمي.'
                   : 'Sandbox test deposit request.',
               },
             },
