@@ -4,7 +4,10 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  UnauthorizedException,
+  TooManyRequestsException,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
@@ -18,6 +21,8 @@ import {
 } from '@digital-topup/shared';
 import { LedgerService } from '../ledger/ledger.service';
 import { EncryptionService } from '../../security/encryption.service';
+import { RedisIdempotencyStore } from '../../security/redis-idempotency.store';
+import { TotpUtil } from '../auth/utils/totp.util';
 
 export interface SubmitWalletAgentOperationDto {
   observedAmount: number;
@@ -26,6 +31,8 @@ export interface SubmitWalletAgentOperationDto {
   observedAccountLastFour: string;
   observedSenderIdentifier?: string;
   evidenceReference: string;
+  /** Fresh six-digit authenticator code, required only when an eligible manual deposit is auto-credited. */
+  agentTotpCode?: string;
   agentNotes?: string;
 }
 
@@ -35,10 +42,18 @@ export class WalletAgentOperationsService {
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
     private readonly encryptionService: EncryptionService,
+    private readonly idempotencyStore: RedisIdempotencyStore,
   ) {}
 
   private get tenantId(): string | null {
     return getCurrentTenantId() || null;
+  }
+
+  private decryptAgentTotpSecret(storedSecret: string | null | undefined): string | null {
+    if (!storedSecret) return null;
+    if (storedSecret.startsWith('v1:')) return this.encryptionService.decrypt(storedSecret);
+    // Production must never use a plaintext MFA secret left by a legacy/manual database edit.
+    return process.env.NODE_ENV === 'production' ? null : storedSecret;
   }
 
   private async assertAgent(agentUserId: string) {
@@ -311,8 +326,13 @@ export class WalletAgentOperationsService {
       const autoCreditLimit = currencyLimitKey
         ? Number(process.env[currencyLimitKey] || 0)
         : 0;
-      const autoCreditEnabled =
+      const allowedAutoCreditChannels = (process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS || '')
+        .split(',')
+        .map((value) => value.trim().toUpperCase())
+        .filter(Boolean);
+      const autoCreditCandidate =
         process.env.ENABLE_AGENT_AUTO_CREDIT === 'true' &&
+        allowedAutoCreditChannels.includes(operation.channelCode) &&
         operation.direction === 'INBOUND_DEPOSIT' &&
         !!deposit &&
         Number.isFinite(autoCreditLimit) &&
@@ -321,6 +341,70 @@ export class WalletAgentOperationsService {
         isMatch &&
         agent.isTwoFactorEnabled === true &&
         !!agent.twoFactorSecret;
+
+      // Require bounded per-agent daily exposure. A missing or zero cap intentionally
+      // disables manual auto-credit and routes the deposit through the finance queue.
+      let dailyLimitAllowsCredit = false;
+      if (autoCreditCandidate && deposit) {
+        const dailyCountLimit = Number(process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT || 0);
+        const dailyAmountLimit = Number(
+          process.env[`WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_${deposit.currency}`] || 0,
+        );
+        if (
+          Number.isFinite(dailyCountLimit) && dailyCountLimit > 0 &&
+          Number.isFinite(dailyAmountLimit) && dailyAmountLimit > 0
+        ) {
+          const dayStart = new Date();
+          dayStart.setUTCHours(0, 0, 0, 0);
+          const dailyPosted = await tx.walletAgentOperation.aggregate({
+            where: {
+              tenantId: this.tenantId,
+              agentUserId,
+              direction: 'INBOUND_DEPOSIT',
+              status: 'POSTED',
+              observedCurrency: deposit.currency,
+              postedAt: { gte: dayStart },
+            },
+            _count: { _all: true },
+            _sum: { observedAmount: true },
+          });
+          const postedCount = Number(dailyPosted?._count?._all || 0);
+          const postedAmount = Number(dailyPosted?._sum?.observedAmount || 0);
+          dailyLimitAllowsCredit =
+            postedCount < dailyCountLimit &&
+            Number.isFinite(postedAmount) &&
+            postedAmount + dto.observedAmount <= dailyAmountLimit;
+        }
+      }
+
+      let autoCreditEnabled = false;
+      if (autoCreditCandidate && dailyLimitAllowsCredit) {
+        const rateLimitKey = `wallet-agent:totp-rate:${createHash('sha256').update(agentUserId).digest('hex')}`;
+        const rateLimitAcquired = await this.idempotencyStore.acquire(rateLimitKey, 'checking', 1000);
+        if (!rateLimitAcquired) {
+          throw new TooManyRequestsException('محاولات رمز الوكيل متقاربة جداً؛ انتظر ثانية ثم أعد المحاولة.');
+        }
+
+        const totpSecret = this.decryptAgentTotpSecret(agent.twoFactorSecret);
+        if (!totpSecret || !/^\\d{6}$/.test(dto.agentTotpCode || '') || !TotpUtil.verifyCode(dto.agentTotpCode!, totpSecret)) {
+          throw new UnauthorizedException('رمز المصادقة الحديث للوكيل غير صحيح أو غير متاح؛ لم يُرحّل أي رصيد.');
+        }
+
+        // Store only a one-way digest of the code in Redis. Fail closed if Redis is unavailable
+        // or if the same TOTP is replayed for another deposit during its validity window.
+        const codeDigest = createHash('sha256')
+          .update(`${agentUserId}:${dto.agentTotpCode}`)
+          .digest('hex');
+        const replayAccepted = await this.idempotencyStore.acquire(
+          `wallet-agent:totp-used:${codeDigest}`,
+          'used',
+          120000,
+        );
+        if (!replayAccepted) {
+          throw new UnauthorizedException('تم استخدام رمز المصادقة هذا مسبقاً؛ اطلب رمزاً جديداً من تطبيق المصادقة.');
+        }
+        autoCreditEnabled = true;
+      }
 
       await tx.walletAgentOperation.update({
         where: { id: operationId },
