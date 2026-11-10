@@ -728,26 +728,50 @@ export class DepositsService {
       throw new BadRequestException('لا يمكن رفض إيداع تم قيده وتغذيته في المحفظة مسبقاً.');
     }
 
+    if (deposit.settlementStatus === 'POSTED') {
+      throw new ConflictException('لا يمكن رفض إيداع له قيد تسوية مرحّل؛ يلزم مسار عكس محاسبي مستقل.');
+    }
+
     try {
-      const updated = await this.prisma.depositRequest.update({
-        where: { id: depositId },
-        data: {
-          status: DepositStatus.REJECTED,
-          verificationStatus: 'REJECTED',
-          reviewedByUserId: staffUserId,
-          rejectionReason: dto.rejectionReason,
-          reviewNotes: dto.notes || dto.rejectionReason,
-          statusHistory: {
-            create: {
-              fromStatus: deposit.status,
-              toStatus: DepositStatus.REJECTED,
-              changedByUserId: staffUserId,
-              notes: `تم الرفض: ${dto.rejectionReason}`,
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.depositRequest.findUnique({ where: { id: depositId } });
+        if (!current || current.status !== deposit.status || current.status === DepositStatus.CREDITED) {
+          throw new ConflictException('تغيرت حالة الإيداع بالتزامن؛ لم يتم رفض الطلب.');
+        }
+        const result = await tx.depositRequest.update({
+          where: { id: depositId, status: current.status },
+          data: {
+            status: DepositStatus.REJECTED,
+            verificationStatus: 'REJECTED',
+            reviewedByUserId: staffUserId,
+            rejectionReason: dto.rejectionReason,
+            reviewNotes: dto.notes || dto.rejectionReason,
+            statusHistory: {
+              create: {
+                fromStatus: current.status,
+                toStatus: DepositStatus.REJECTED,
+                changedByUserId: staffUserId,
+                notes: `تم الرفض: ${dto.rejectionReason}`,
+              },
             },
           },
-        },
-        include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
-      });
+          include: { statusHistory: { orderBy: { createdAt: 'desc' } } },
+        });
+        if (tx.walletAgentOperation?.updateMany) {
+          await tx.walletAgentOperation.updateMany({
+            where: {
+              depositRequestId: depositId,
+              status: { in: ['PENDING', 'CLAIMED', 'AGENT_SUBMITTED', 'NEEDS_REVIEW'] },
+            },
+            data: {
+              status: 'REJECTED',
+              financeReviewedByUserId: staffUserId,
+              financeNotes: dto.notes || dto.rejectionReason,
+            },
+          });
+        }
+        return result;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
         success: true,
