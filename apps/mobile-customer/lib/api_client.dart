@@ -47,6 +47,9 @@ class ApiClient {
   Future<dynamic> post(String path, {Object? body, Map<String, String>? headers}) =>
       _send('POST', path, body: body, headers: headers);
 
+  Future<dynamic> patch(String path, {Object? body, Map<String, String>? headers}) =>
+      _send('PATCH', path, body: body, headers: headers);
+
   Future<dynamic> getWalletTransactions({
     String? currency,
     int page = 1,
