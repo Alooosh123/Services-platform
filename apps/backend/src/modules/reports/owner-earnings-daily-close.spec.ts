@@ -32,6 +32,7 @@ describe('Phase 07 — Owner Earnings, Payouts, Liquidity & Daily Close Reports'
     },
     supplierAccount: {
       findMany: jest.fn().mockResolvedValue([]),
+      aggregate: jest.fn().mockResolvedValue({ _sum: { balance: 0, creditLimit: 0 } }),
     },
     dailyCloseReport: {
       findUnique: jest.fn().mockResolvedValue(null),
