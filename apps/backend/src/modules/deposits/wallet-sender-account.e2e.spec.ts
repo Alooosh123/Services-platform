@@ -12,7 +12,7 @@ import { EncryptionService } from '../../security/encryption.service';
 import { PaymentSenderAccountsService } from './payment-sender-accounts.service';
 import { DepositsService } from './deposits.service';
 import { HmacSignatureService } from '../../security/hmac-signature.service';
-import { PaymentAdapterRegistry, SandboxPaymentAdapter } from './adapters/yemen-payment.adapters';
+import { PaymentAdapterRegistry, SandboxPaymentAdapter, JaibPaymentAdapter, JawaliPaymentAdapter, CashPaymentAdapter, OneCashPaymentAdapter, EasyPaymentAdapter } from './adapters/yemen-payment.adapters';
 
 const databaseEnabled = !!process.env.DATABASE_URL && process.env.NODE_ENV === 'test';
 const databaseDescribe = databaseEnabled ? describe : describe.skip;
@@ -102,11 +102,11 @@ databaseDescribe('Wallet sender identity approval database workflow (PostgreSQL)
       },
     };
     const adapterRegistry = new PaymentAdapterRegistry(
-      new (require('./adapters/yemen-payment.adapters').JaibPaymentAdapter)(),
-      new (require('./adapters/yemen-payment.adapters').JawaliPaymentAdapter)(),
-      new (require('./adapters/yemen-payment.adapters').CashPaymentAdapter)(),
-      new (require('./adapters/yemen-payment.adapters').OneCashPaymentAdapter)(),
-      new (require('./adapters/yemen-payment.adapters').EasyPaymentAdapter)(),
+      new JaibPaymentAdapter(),
+      new JawaliPaymentAdapter(),
+      new CashPaymentAdapter(),
+      new OneCashPaymentAdapter(),
+      new EasyPaymentAdapter(),
       new SandboxPaymentAdapter(),
     );
 
