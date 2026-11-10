@@ -1,13 +1,18 @@
 import { Prisma } from '@prisma/client';
 import { UserRole, DepositStatus } from '@digital-topup/shared';
 import { EncryptionService } from '../../security/encryption.service';
+import { TotpUtil } from '../auth/utils/totp.util';
 import { LedgerService } from '../ledger/ledger.service';
 import { WalletAgentOperationsService } from './wallet-agent-operations.service';
 
 describe('WalletAgentOperationsService manual auto-credit security', () => {
   const originalEnabled = process.env.ENABLE_AGENT_AUTO_CREDIT;
   const originalLimit = process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER;
+  const originalChannels = process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS;
+  const originalDailyCount = process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT;
+  const originalDailyAmount = process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER;
   const originalEncryptionKey = process.env.ENCRYPTION_KEY;
+  const agentTotpSecret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
   const encryption = new EncryptionService();
   let service: WalletAgentOperationsService;
   let prisma: any;
@@ -16,12 +21,16 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
   let deposit: any;
   let config: any;
   let ledger: any;
+  let redisStore: any;
   let duplicateReference: any;
 
   beforeEach(() => {
     process.env.ENCRYPTION_KEY = 'b'.repeat(64);
     process.env.ENABLE_AGENT_AUTO_CREDIT = 'true';
+    process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS = 'JAIB';
     process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER = '10000';
+    process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT = '10';
+    process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER = '50000';
     operation = {
       id: 'operation-1',
       tenantId: null,
@@ -70,6 +79,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
         findFirst: jest.fn().mockResolvedValue(operation),
         update: jest.fn(async ({ data }: any) => ({ ...operation, ...data })),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        aggregate: jest.fn().mockResolvedValue({ _count: { _all: 0 }, _sum: { observedAmount: null } }),
       },
       depositRequest: {
         findUnique: jest.fn().mockResolvedValue(deposit),
@@ -102,16 +112,18 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
           role: UserRole.PAYMENT_AGENT,
           tenantId: null,
           isTwoFactorEnabled: true,
-          twoFactorSecret: 'agent-enrolled-totp-secret',
+          twoFactorSecret: encryption.encrypt(agentTotpSecret),
         }),
       },
       walletAgentOperation: tx.walletAgentOperation,
       $transaction: jest.fn(async (callback: any) => callback(tx)),
     };
+    redisStore = { acquire: jest.fn().mockResolvedValue(true) };
     service = new WalletAgentOperationsService(
       prisma,
       ledger as unknown as LedgerService,
       encryption,
+      redisStore as any,
     );
   });
 
@@ -120,6 +132,12 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     else process.env.ENABLE_AGENT_AUTO_CREDIT = originalEnabled;
     if (originalLimit === undefined) delete process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER;
     else process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER = originalLimit;
+    if (originalChannels === undefined) delete process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS;
+    else process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS = originalChannels;
+    if (originalDailyCount === undefined) delete process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT;
+    else process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_COUNT = originalDailyCount;
+    if (originalDailyAmount === undefined) delete process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER;
+    else process.env.WALLET_AGENT_AUTO_CREDIT_DAILY_MAX_AMOUNT_YER = originalDailyAmount;
     if (originalEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY;
     else process.env.ENCRYPTION_KEY = originalEncryptionKey;
   });
@@ -131,6 +149,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     observedAccountLastFour: '1234',
     observedSenderIdentifier: '+967 771 234 567',
     evidenceReference: 'STATEMENT-LINE-001',
+    agentTotpCode: TotpUtil.generateCode(agentTotpSecret),
     ...overrides,
   });
 
@@ -260,6 +279,45 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     );
 
     expect(result.autoCredited).toBe(false);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('requires a fresh valid TOTP before eligible manual auto-credit', async () => {
+    await expect(
+      service.submitVerification('operation-1', 'agent-1', verification({ agentTotpCode: '' })),
+    ).rejects.toThrow('رمز المصادقة الحديث للوكيل غير صحيح أو غير متاح');
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+    expect(tx.depositRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects replay of an already-used agent TOTP and never posts the ledger', async () => {
+    redisStore.acquire.mockImplementation(async (key: string) => !key.includes('wallet-agent:totp-used:'));
+    await expect(
+      service.submitVerification('operation-1', 'agent-1', verification()),
+    ).rejects.toThrow('تم استخدام رمز المصادقة هذا مسبقاً');
+    expect(redisStore.acquire).toHaveBeenCalledTimes(2);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+    expect(tx.depositRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('routes the deposit to finance when the agent daily count cap is reached', async () => {
+    tx.walletAgentOperation.aggregate.mockResolvedValue({
+      _count: { _all: 10 },
+      _sum: { observedAmount: new Prisma.Decimal(10000) },
+    });
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+    expect(result.autoCredited).toBe(false);
+    expect(result.requiresFinanceReview).toBe(true);
+    expect(redisStore.acquire).not.toHaveBeenCalled();
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-credit a channel that is not explicitly allowlisted', async () => {
+    process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS = 'JAWALI';
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+    expect(result.autoCredited).toBe(false);
+    expect(result.requiresFinanceReview).toBe(true);
+    expect(redisStore.acquire).not.toHaveBeenCalled();
     expect(ledger.recordTopup).not.toHaveBeenCalled();
   });
 
