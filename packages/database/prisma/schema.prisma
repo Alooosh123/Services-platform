@@ -89,6 +89,22 @@ enum DepositStatus {
   CREDITED
 }
 
+enum DepositVerificationStatus {
+  PENDING
+  AGENT_SUBMITTED
+  NEEDS_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum DepositSettlementStatus {
+  NOT_STARTED
+  PENDING_LEDGER
+  POSTED
+  FAILED
+  REVERSED
+}
+
 enum CurrencyCode {
   YER
   USD
@@ -513,6 +529,8 @@ model DepositRequest {
   senderName        String? // Sender account/payer name
   senderPhone       String? // Sender phone number
   status            DepositStatus      @default(PENDING)
+  verificationStatus DepositVerificationStatus @default(PENDING)
+  settlementStatus DepositSettlementStatus @default(NOT_STARTED)
   reviewedByUserId  String?
   reviewNotes       String?
   rejectionReason   String?
