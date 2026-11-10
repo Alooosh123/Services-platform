@@ -8,20 +8,33 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
-import { UserRole } from '@digital-topup/shared';
+import {
+  UserRole,
+  DepositStatus,
+  CurrencyCode,
+  PaymentChannelMode,
+  ChannelVerificationStatus,
+} from '@digital-topup/shared';
+import { LedgerService } from '../ledger/ledger.service';
+import { EncryptionService } from '../../security/encryption.service';
 
 export interface SubmitWalletAgentOperationDto {
   observedAmount: number;
   observedCurrency: string;
   observedReferenceNumber: string;
   observedAccountLastFour: string;
+  observedSenderIdentifier?: string;
   evidenceReference: string;
   agentNotes?: string;
 }
 
 @Injectable()
 export class WalletAgentOperationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledgerService: LedgerService,
+    private readonly encryptionService: EncryptionService,
+  ) {}
 
   private get tenantId(): string | null {
     return getCurrentTenantId() || null;
@@ -57,6 +70,16 @@ export class WalletAgentOperationsService {
             currency: true,
             senderName: true,
             senderPhone: true,
+            senderAccount: {
+              select: {
+                id: true,
+                identifierType: true,
+                identifierCiphertext: true,
+                maskedIdentifier: true,
+                identifierLastFour: true,
+                status: true,
+              },
+            },
           },
         },
         payoutRequest: {
@@ -90,7 +113,22 @@ export class WalletAgentOperationsService {
           }
         : null,
       depositRequest: row.depositRequest
-        ? { ...row.depositRequest, amount: Number(row.depositRequest.amount) }
+        ? {
+            ...row.depositRequest,
+            amount: Number(row.depositRequest.amount),
+            senderAccount: row.depositRequest.senderAccount
+              ? {
+                  id: row.depositRequest.senderAccount.id,
+                  identifierType: row.depositRequest.senderAccount.identifierType,
+                  maskedIdentifier: row.depositRequest.senderAccount.maskedIdentifier,
+                  status: row.depositRequest.senderAccount.status,
+                  identifier:
+                    row.agentUserId === agentUserId && row.status === 'CLAIMED'
+                      ? this.encryptionService.decrypt(row.depositRequest.senderAccount.identifierCiphertext)
+                      : null,
+                }
+              : null,
+          }
         : null,
     }));
   }
@@ -102,6 +140,10 @@ export class WalletAgentOperationsService {
         where: { id: operationId, tenantId: this.tenantId, status: 'PENDING', agentUserId: null },
       });
       if (!current) throw new ConflictException('المهمة ليست متاحة أو سبق أن استلمها وكيل آخر.');
+
+      if (current.direction === 'INBOUND_DEPOSIT' && current.customerUserId === agentUserId) {
+        throw new ForbiddenException('لا يجوز للعميل تنفيذ التحقق من إيداعه بصفته وكيلاً.');
+      }
 
       if (current.direction === 'OUTBOUND_PAYOUT') {
         const payout = current.payoutRequestId
@@ -151,27 +193,116 @@ export class WalletAgentOperationsService {
       throw new BadRequestException('رقم الحركة الظاهر في سجل المحفظة مطلوب.');
     }
     if (!/^[0-9]{4}$/.test(dto.observedAccountLastFour || '')) {
-      throw new BadRequestException('أدخل آخر أربعة أرقام من حساب الطرف المقابل بعد التحقق منه.');
+      throw new BadRequestException('أدخل آخر أربعة أرقام من حساب الاستقبال كما تظهر في سجل الحركة.');
     }
     if (!dto.evidenceReference?.trim() || dto.evidenceReference.trim().length < 5) {
-      throw new BadRequestException('مرجع إثبات الحركة من كشف/سجل المحفظة مطلوب.');
+      throw new BadRequestException('مرجع إثبات الحركة من كشف/سجل المحفظة الرسمي مطلوب.');
     }
 
     return this.prisma.$transaction(async (tx) => {
       const operation = await tx.walletAgentOperation.findFirst({
-        where: { id: operationId, agentUserId, status: 'CLAIMED' },
+        where: { id: operationId, agentUserId, status: 'CLAIMED', tenantId: this.tenantId },
       });
       if (!operation) throw new NotFoundException('المهمة غير مسندة إليك أو تمت معالجتها مسبقاً.');
 
+      if (operation.direction === 'INBOUND_DEPOSIT' && operation.customerUserId === agentUserId) {
+        throw new ForbiddenException('لا يمكن للوكيل مطابقة إيداع يخص حسابه الشخصي.');
+      }
+
+      const deposit = operation.direction === 'INBOUND_DEPOSIT' && operation.depositRequestId
+        ? await tx.depositRequest.findUnique({
+            where: { id: operation.depositRequestId },
+            include: { senderAccount: true },
+          })
+        : null;
+
+      const channelConfig = deposit
+        ? await tx.paymentChannelConfig.findFirst({
+            where: {
+              tenantId: this.tenantId,
+              code: operation.channelCode,
+              isActive: true,
+              mode: PaymentChannelMode.MANUAL,
+              verificationStatus: ChannelVerificationStatus.VERIFIED,
+            },
+          })
+        : null;
+
       const amountMatches = new Prisma.Decimal(dto.observedAmount).equals(operation.expectedAmount);
       const currencyMatches = dto.observedCurrency === operation.expectedCurrency;
-      const accountMatches = dto.observedAccountLastFour === operation.expectedAccountLastFour;
+      const receiverAccountMatches = dto.observedAccountLastFour === operation.expectedAccountLastFour;
       const referenceMatches =
-        operation.direction !== 'INBOUND_DEPOSIT' ||
+        !operation.expectedReferenceNumber ||
         dto.observedReferenceNumber.trim() === operation.expectedReferenceNumber;
-      const isMatch = amountMatches && currencyMatches && accountMatches && referenceMatches;
 
-      const updated = await tx.walletAgentOperation.update({
+      let senderIdentityMatches = false;
+      let senderLastFour: string | null = null;
+      if (deposit?.senderAccount && dto.observedSenderIdentifier) {
+        const expectedIdentifier = this.encryptionService.decrypt(
+          deposit.senderAccount.identifierCiphertext,
+        );
+        const normalize = (value: string, type: string) => {
+          if (type === 'PHONE') return value.replace(/[^0-9]/g, '');
+          return value.trim().replace(/\\s+/g, '').toUpperCase();
+        };
+        const expectedNormalized = normalize(
+          expectedIdentifier,
+          deposit.senderAccount.identifierType,
+        );
+        const observedNormalized = normalize(
+          dto.observedSenderIdentifier,
+          deposit.senderAccount.identifierType,
+        );
+        senderIdentityMatches =
+          !!expectedNormalized && observedNormalized === expectedNormalized;
+        senderLastFour = observedNormalized.slice(-4);
+      }
+
+      const channelReady = !!channelConfig &&
+        !!channelConfig.accountNumber &&
+        channelConfig.accountNumber !== 'NOT_CONFIGURED' &&
+        !!channelConfig.regulatoryApprovalReference &&
+        !!channelConfig.regulatoryApprovalDocumentUrl &&
+        !!channelConfig.providerAgreementReference &&
+        !!channelConfig.providerAgreementDocumentUrl;
+      const duplicateExternalReference = deposit
+        ? await tx.depositRequest.findFirst({
+            where: {
+              paymentMethodCode: operation.channelCode,
+              referenceNumber: dto.observedReferenceNumber.trim(),
+              id: { not: deposit.id },
+            },
+            select: { id: true },
+          })
+        : null;
+      const referenceUnique = !duplicateExternalReference;
+      const isMatch = operation.direction === 'INBOUND_DEPOSIT'
+        ? !!deposit &&
+          !!deposit.senderAccountId &&
+          ['PENDING_VERIFICATION', 'VERIFIED'].includes(deposit.senderAccount.status) &&
+          !!operation.expectedSenderAccountLastFour &&
+          senderIdentityMatches &&
+          senderLastFour === operation.expectedSenderAccountLastFour &&
+          channelReady &&
+          amountMatches &&
+          currencyMatches &&
+          receiverAccountMatches &&
+          referenceMatches &&
+          referenceUnique &&
+          !!dto.evidenceReference.trim()
+        : amountMatches && currencyMatches && receiverAccountMatches && referenceMatches;
+
+      const autoCreditLimitYER = Number(process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER || 0);
+      const autoCreditEnabled =
+        process.env.ENABLE_AGENT_AUTO_CREDIT === 'true' &&
+        operation.direction === 'INBOUND_DEPOSIT' &&
+        deposit?.currency === CurrencyCode.YER &&
+        Number.isFinite(autoCreditLimitYER) &&
+        autoCreditLimitYER > 0 &&
+        dto.observedAmount <= autoCreditLimitYER &&
+        isMatch;
+
+      await tx.walletAgentOperation.update({
         where: { id: operationId },
         data: {
           status: isMatch ? 'AGENT_SUBMITTED' : 'NEEDS_REVIEW',
@@ -179,31 +310,141 @@ export class WalletAgentOperationsService {
           observedCurrency: dto.observedCurrency as any,
           observedReferenceNumber: dto.observedReferenceNumber.trim(),
           observedAccountLastFour: dto.observedAccountLastFour,
+          observedSenderAccountLastFour: senderLastFour,
           evidenceReference: dto.evidenceReference.trim(),
           agentNotes: dto.agentNotes?.trim() || null,
           submittedAt: new Date(),
         },
       });
-      if (operation.direction === 'INBOUND_DEPOSIT' && operation.depositRequestId) {
-        const deposit = await tx.depositRequest.findUnique({
-          where: { id: operation.depositRequestId },
-          select: { id: true, status: true },
-        });
-        if (!deposit) throw new NotFoundException('طلب الإيداع المرتبط بمهمة الوكيل غير موجود.');
+
+      if (deposit) {
+        if (autoCreditEnabled) {
+          if (
+            deposit.status !== DepositStatus.PENDING &&
+            deposit.status !== DepositStatus.UNDER_REVIEW
+          ) {
+            throw new ConflictException('حالة الإيداع لا تسمح بالقيد الآلي أو سبق ترحيله.');
+          }
+
+          const claimed = await tx.depositRequest.updateMany({
+            where: {
+              id: deposit.id,
+              status: deposit.status,
+              settlementStatus: { not: 'POSTED' },
+            },
+            data: {
+              status: DepositStatus.APPROVED,
+              verificationStatus: 'VERIFIED',
+              settlementStatus: 'PENDING_LEDGER',
+              referenceNumber: dto.observedReferenceNumber.trim(),
+              reviewNotes: 'مطابقة الوكيل للحركة الواردة في سجل الحساب الرسمي؛ القيد الآلي مفعل وفق سياسة القناة.',
+            },
+          });
+          if (claimed.count !== 1) {
+            throw new ConflictException('تمت معالجة الإيداع بالتزامن؛ لم يتم إنشاء قيد جديد.');
+          }
+
+          await tx.depositStatusHistory.create({
+            data: {
+              depositRequestId: deposit.id,
+              fromStatus: deposit.status,
+              toStatus: DepositStatus.APPROVED,
+              changedByUserId: agentUserId,
+              notes: 'مطابقة مكتملة من الوكيل: هوية المرسل وحساب الاستقبال والمبلغ والعملة والمرجع الفريد.',
+            },
+          });
+
+          const ledgerResult = await this.ledgerService.recordTopup({
+            userId: deposit.userId,
+            walletId: deposit.walletId,
+            currency: deposit.currency as CurrencyCode,
+            amount: Number(deposit.amount),
+            paymentChannel: deposit.paymentMethodCode,
+            referenceId: deposit.id,
+            performedByUserId: agentUserId,
+            notes: `Agent auto-credit; evidence ${dto.evidenceReference.trim()}; external ref ${dto.observedReferenceNumber.trim()}`,
+          }, tx);
+
+          await tx.depositRequest.update({
+            where: { id: deposit.id },
+            data: {
+              status: DepositStatus.CREDITED,
+              verificationStatus: 'VERIFIED',
+              settlementStatus: 'POSTED',
+              ledgerTxId: ledgerResult.transaction.id,
+              reviewNotes: 'تمت المطابقة والقيد المزدوج بواسطة وكيل المحافظ وفق سياسة القيد الآلي.',
+              statusHistory: {
+                create: {
+                  fromStatus: DepositStatus.APPROVED,
+                  toStatus: DepositStatus.CREDITED,
+                  changedByUserId: agentUserId,
+                  notes: `تم ترحيل القيد ${ledgerResult.transaction.txNumber || ledgerResult.transaction.id}`,
+                },
+              },
+            },
+          });
+
+          await tx.paymentSenderAccount.update({
+            where: { id: deposit.senderAccountId! },
+            data: { status: 'VERIFIED', verifiedAt: new Date() },
+          });
+
+          await tx.walletAgentOperation.update({
+            where: { id: operationId },
+            data: {
+              status: 'POSTED',
+              ledgerTxId: ledgerResult.transaction.id,
+              postedAt: new Date(),
+            },
+          });
+
+          await tx.auditLog.create({
+            data: {
+              userId: agentUserId,
+              action: 'WALLET_AGENT_AUTOCREDIT_POSTED',
+              entityName: 'DepositRequest',
+              entityId: deposit.id,
+              newValues: {
+                channelCode: operation.channelCode,
+                amount: dto.observedAmount,
+                currency: dto.observedCurrency,
+                externalReference: dto.observedReferenceNumber.trim(),
+                senderAccountLastFour: senderLastFour,
+                receiverAccountLastFour: dto.observedAccountLastFour,
+                evidenceReference: dto.evidenceReference.trim(),
+                ledgerTxId: ledgerResult.transaction.id,
+              },
+            },
+          });
+
+          return {
+            success: true,
+            status: 'POSTED',
+            exactMatch: true,
+            autoCredited: true,
+            requiresFinanceReview: false,
+            ledgerTransaction: ledgerResult.transaction,
+            message: 'اكتملت المطابقة مع سجل الحساب الرسمي، ورُحّل القيد المزدوج وأضيف الرصيد إلى محفظة العميل تلقائياً.',
+          };
+        }
+
         await tx.depositRequest.update({
           where: { id: deposit.id },
           data: {
+            referenceNumber: referenceUnique && isMatch
+              ? dto.observedReferenceNumber.trim()
+              : deposit.referenceNumber,
             verificationStatus: isMatch ? 'AGENT_SUBMITTED' : 'NEEDS_REVIEW',
-            ...(deposit.status === 'PENDING' ? { status: 'UNDER_REVIEW' } : {}),
-            ...(deposit.status === 'PENDING' ? {
+            ...(deposit.status === DepositStatus.PENDING ? { status: DepositStatus.UNDER_REVIEW } : {}),
+            ...(deposit.status === DepositStatus.PENDING ? {
               statusHistory: {
                 create: {
-                  fromStatus: 'PENDING',
-                  toStatus: 'UNDER_REVIEW',
+                  fromStatus: DepositStatus.PENDING,
+                  toStatus: DepositStatus.UNDER_REVIEW,
                   changedByUserId: agentUserId,
                   notes: isMatch
-                    ? 'سجل وكيل المحفظة تفاصيل الحركة؛ تنتظر مراجعة المالية المستقلة.'
-                    : 'رصد وكيل المحفظة اختلافاً؛ عُزل الإيداع للمراجعة المالية.',
+                    ? 'سجل الوكيل الحركة؛ تنتظر المراجعة المالية لأن القيد الآلي غير مفعل أو تجاوزت الحركة السقف.'
+                    : 'رصد الوكيل اختلافاً أو تعذر التحقق من هوية المرسل؛ عُزل الإيداع للمراجعة.',
                 },
               },
             } : {}),
@@ -224,22 +465,29 @@ export class WalletAgentOperationsService {
             observedCurrency: dto.observedCurrency,
             observedReferenceNumber: dto.observedReferenceNumber.trim(),
             observedAccountLastFour: dto.observedAccountLastFour,
+            observedSenderAccountLastFour: senderLastFour,
             amountMatches,
             currencyMatches,
-            accountMatches,
+            receiverAccountMatches,
+            senderIdentityMatches,
             referenceMatches,
+            referenceUnique,
+            channelReady,
             evidenceReference: dto.evidenceReference.trim(),
+            autoCreditEligible: autoCreditEnabled,
           },
         },
       });
+
       return {
         success: true,
-        status: updated.status,
-        requiresFinanceReview: true,
+        status: isMatch ? 'AGENT_SUBMITTED' : 'NEEDS_REVIEW',
         exactMatch: isMatch,
+        autoCredited: false,
+        requiresFinanceReview: true,
         message: isMatch
-          ? 'سُجل تحقق الوكيل. لم يتغير أي رصيد بعد؛ ينتظر القيد اعتماد موظف المالية.'
-          : 'يوجد اختلاف في المبلغ أو العملة أو الحساب أو المرجع؛ عُزلت الحركة للمراجعة ولا يمكن قيدها.',
+          ? 'المطابقة صحيحة، لكن القيد الآلي متوقف أو تجاوزت الحركة سقف التشغيل؛ تنتظر اعتماد المالية.'
+          : 'لم تتطابق عناصر التحويل أو تعذر التحقق من المصدر؛ عُزلت الحركة للمراجعة ولا يضاف أي رصيد.',
       };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
