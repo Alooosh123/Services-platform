@@ -312,6 +312,27 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     expect(ledger.recordTopup).not.toHaveBeenCalled();
   });
 
+  it('routes the deposit to finance when the agent daily currency amount cap would be exceeded', async () => {
+    tx.walletAgentOperation.aggregate.mockResolvedValue({
+      _count: { _all: 2 },
+      _sum: { observedAmount: new Prisma.Decimal(48000) },
+    });
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+    expect(result.autoCredited).toBe(false);
+    expect(result.requiresFinanceReview).toBe(true);
+    expect(redisStore.acquire).not.toHaveBeenCalled();
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without writing deposit or ledger state when Redis anti-replay is unavailable', async () => {
+    redisStore.acquire.mockRejectedValue(new Error('Redis unavailable'));
+    await expect(
+      service.submitVerification('operation-1', 'agent-1', verification()),
+    ).rejects.toThrow('Redis unavailable');
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+    expect(tx.depositRequest.updateMany).not.toHaveBeenCalled();
+  });
+
   it('does not auto-credit a channel that is not explicitly allowlisted', async () => {
     process.env.WALLET_AGENT_AUTO_CREDIT_CHANNELS = 'JAWALI';
     const result = await service.submitVerification('operation-1', 'agent-1', verification());
