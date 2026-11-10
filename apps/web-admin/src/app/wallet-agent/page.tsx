@@ -20,6 +20,7 @@ type AgentOperation = {
     currency: string;
     senderName?: string | null;
     senderPhone?: string | null;
+    senderAccount?: { id: string; identifierType: string; maskedIdentifier: string; status: string; identifier?: string | null } | null;
   } | null;
   payoutRequest?: {
     payoutNumber: string;
@@ -34,6 +35,7 @@ type VerificationForm = {
   observedCurrency: string;
   observedReferenceNumber: string;
   observedAccountLastFour: string;
+  observedSenderIdentifier: string;
   evidenceReference: string;
   agentNotes: string;
 };
@@ -43,6 +45,7 @@ const emptyForm: VerificationForm = {
   observedCurrency: 'YER',
   observedReferenceNumber: '',
   observedAccountLastFour: '',
+  observedSenderIdentifier: '',
   evidenceReference: '',
   agentNotes: '',
 };
@@ -130,7 +133,11 @@ export default function WalletAgentPage() {
       return;
     }
     if (!/^[0-9]{4}$/.test(form.observedAccountLastFour)) {
-      setError('أدخل آخر أربعة أرقام من الحساب المقابل كما تظهر في سجل الحركة.');
+      setError('أدخل آخر أربعة أرقام من حساب الاستقبال كما تظهر في سجل الحركة.');
+      return;
+    }
+    if (!form.observedSenderIdentifier.trim()) {
+      setError('أدخل معرّف حساب المرسل كما يظهر في سجل/كشف المحفظة الرسمي.');
       return;
     }
     if (form.observedReferenceNumber.trim().length < 5 || form.evidenceReference.trim().length < 5) {
@@ -140,18 +147,21 @@ export default function WalletAgentPage() {
 
     setBusyId(operation.id);
     try {
-      await requestApi(`/wallet-agent/operations/${encodeURIComponent(operation.id)}/submit`, {
+      const result = await requestApi(`/wallet-agent/operations/${encodeURIComponent(operation.id)}/submit`, {
         method: 'POST',
         body: JSON.stringify({
           observedAmount: amount,
           observedCurrency: form.observedCurrency,
           observedReferenceNumber: form.observedReferenceNumber.trim(),
           observedAccountLastFour: form.observedAccountLastFour,
+          observedSenderIdentifier: form.observedSenderIdentifier.trim(),
           evidenceReference: form.evidenceReference.trim(),
           agentNotes: form.agentNotes.trim() || undefined,
         }),
       });
-      setNotice('تم إرسال نتيجة الوكيل. لا يُضاف الرصيد الآن؛ تنتظر العملية مراجعة واعتماد موظف مالية مستقل.');
+      setNotice(result?.autoCredited === true
+        ? 'تمت مطابقة الحركة مع الحساب المرسل وحساب الاستقبال وسجل العملية؛ أضيف الرصيد تلقائياً ورُحّل القيد المحاسبي.'
+        : 'تم إرسال نتيجة المطابقة. لم يُضف الرصيد آلياً؛ هذه الحركة تنتظر المراجعة المالية.');
       setError(null);
       await loadQueue();
     } catch (e) {
@@ -166,6 +176,7 @@ export default function WalletAgentPage() {
     CLAIMED: 'قيد تحقق الوكيل',
     AGENT_SUBMITTED: 'بانتظار المالية',
     NEEDS_REVIEW: 'اختلاف - مراجعة مطلوبة',
+    POSTED: 'تم القيد الآلي',
   };
 
   return (
@@ -174,7 +185,7 @@ export default function WalletAgentPage() {
         <div>
           <h1 className="text-2xl font-black text-white">مهام وكيل المحافظ</h1>
           <p className="mt-1 text-sm text-slate-400">
-            التحقق اليدوي من إيداعات جيب وغيرها من القنوات المصرح بها، دون تنفيذ قيد مالي من حساب الوكيل.
+            التحقق من سجل التحويل الرسمي. عند التطابق الدقيق وتفعيل سياسة القيد الآلي، يرحّل النظام القيد المزدوج؛ وإلا تُحال الحركة للمالية.
           </p>
         </div>
         <button
@@ -247,8 +258,13 @@ export default function WalletAgentPage() {
                       <input required value={form.observedReferenceNumber} onChange={(e) => updateForm(operation.id, 'observedReferenceNumber', e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white" />
                     </label>
                     <label className="space-y-1 text-xs text-slate-300">
-                      <span>آخر أربعة أرقام من الحساب المستفيد</span>
+                      <span>آخر أربعة أرقام من حساب الاستقبال الرسمي</span>
                       <input required maxLength={4} inputMode="numeric" pattern="[0-9]{4}" value={form.observedAccountLastFour} onChange={(e) => updateForm(operation.id, 'observedAccountLastFour', e.target.value.replace(/\D/g, '').slice(0, 4))} className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white" />
+                    </label>
+                    <label className="space-y-1 text-xs text-slate-300 sm:col-span-2">
+                      <span>معرّف حساب المرسل كما يظهر في سجل المحفظة الرسمي</span>
+                      <p className="text-[11px] text-slate-500">المعرّف المحفوظ للعميل: {deposit?.senderAccount?.maskedIdentifier || 'غير متوفر'} · نوعه: {deposit?.senderAccount?.identifierType || '—'}</p>
+                      <input required maxLength={80} value={form.observedSenderIdentifier} onChange={(e) => updateForm(operation.id, 'observedSenderIdentifier', e.target.value)} placeholder="أدخل الرقم البديل أو الهاتف كما ظهر في الحركة الواردة" className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white" />
                     </label>
                     <label className="space-y-1 text-xs text-slate-300 sm:col-span-2">
                       <span>مرجع الإثبات من كشف/سجل المحفظة الرسمي</span>
