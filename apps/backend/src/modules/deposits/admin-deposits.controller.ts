@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { DepositsService } from './deposits.service';
+import { PaymentSenderAccountsService } from './payment-sender-accounts.service';
+import { ReviewPaymentSenderAccountDto, RejectPaymentSenderAccountDto } from './dto/review-payment-sender-account.dto';
 import { ReviewDepositDto, RejectDepositDto } from './dto/review-deposit.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -31,7 +33,10 @@ import { DepositStatus, UserRole, PaymentChannelCode, PaymentChannelMode, Paymen
 )
 @ApiBearerAuth()
 export class AdminDepositsController {
-  constructor(private readonly depositsService: DepositsService) {}
+  constructor(
+    private readonly depositsService: DepositsService,
+    private readonly senderAccountsService: PaymentSenderAccountsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Admin/Finance: List all deposit requests with filters' })
@@ -42,6 +47,40 @@ export class AdminDepositsController {
     @Query('search') search?: string,
   ): Promise<any> {
     return this.depositsService.getAllDepositsForAdmin({ status, search });
+  }
+
+
+  // Only the application owner (or platform super-admin) can verify customer wallet identities.
+  // This queue returns the decrypted identifier, so it must never be exposed to finance/support roles.
+  @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER)
+  @Get('sender-accounts/pending')
+  @ApiOperation({ summary: 'Owner only: list pending customer wallet sender-account verification requests' })
+  async listPendingSenderAccounts() {
+    return this.senderAccountsService.listPendingForOwner();
+  }
+
+  @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER)
+  @Post('sender-accounts/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Owner only: verify and permanently link a customer sender identifier to a wallet channel' })
+  async approveSenderAccount(
+    @CurrentUser('id') ownerUserId: string,
+    @Param('id') accountId: string,
+    @Body() dto: ReviewPaymentSenderAccountDto,
+  ) {
+    return this.senderAccountsService.approveForOwner(accountId, ownerUserId, dto.reviewNotes);
+  }
+
+  @Roles(UserRole.SUPER_ADMIN, UserRole.OWNER)
+  @Post('sender-accounts/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Owner only: reject a customer wallet sender-account verification request' })
+  async rejectSenderAccount(
+    @CurrentUser('id') ownerUserId: string,
+    @Param('id') accountId: string,
+    @Body() dto: RejectPaymentSenderAccountDto,
+  ) {
+    return this.senderAccountsService.rejectForOwner(accountId, ownerUserId, dto.rejectionReason);
   }
 
   @Get(':id')
