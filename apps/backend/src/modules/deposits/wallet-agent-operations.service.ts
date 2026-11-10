@@ -303,14 +303,19 @@ export class WalletAgentOperationsService {
           !!dto.evidenceReference.trim()
         : amountMatches && currencyMatches && receiverAccountMatches && referenceMatches;
 
-      const autoCreditLimitYER = Number(process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER || 0);
+      const currencyLimitKey = deposit
+        ? `WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_${deposit.currency}`
+        : '';
+      const autoCreditLimit = currencyLimitKey
+        ? Number(process.env[currencyLimitKey] || 0)
+        : 0;
       const autoCreditEnabled =
         process.env.ENABLE_AGENT_AUTO_CREDIT === 'true' &&
         operation.direction === 'INBOUND_DEPOSIT' &&
-        deposit?.currency === CurrencyCode.YER &&
-        Number.isFinite(autoCreditLimitYER) &&
-        autoCreditLimitYER > 0 &&
-        dto.observedAmount <= autoCreditLimitYER &&
+        !!deposit &&
+        Number.isFinite(autoCreditLimit) &&
+        autoCreditLimit > 0 &&
+        dto.observedAmount <= autoCreditLimit &&
         isMatch &&
         agent.isTwoFactorEnabled === true &&
         !!agent.twoFactorSecret;
