@@ -336,7 +336,7 @@ class _DepositPageState extends State<DepositPage> {
 
   Map<String, dynamic>? get savedSenderAccount {
     for (final item in senderAccounts) {
-      if (item['channelCode']?.toString() == channelCode) return item;
+      if (item['channelCode']?.toString() == channelCode && item['identifierType']?.toString() == (selectedChannel?['senderIdentifierType']?.toString() ?? 'PHONE')) return item;
     }
     return null;
   }
