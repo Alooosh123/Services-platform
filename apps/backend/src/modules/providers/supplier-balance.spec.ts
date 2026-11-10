@@ -201,7 +201,9 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         },
       };
 
-      mockPrisma.order.findUnique.mockResolvedValueOnce(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockPrisma.order.update.mockResolvedValue({});
 
       const beforeBalance = (await supplierBalanceService.getSupplierBalance('MOCK', CurrencyCode.USD)).balance;
