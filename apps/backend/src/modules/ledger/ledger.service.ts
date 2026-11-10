@@ -14,7 +14,7 @@ import {
   DoubleEntryItem,
   DoubleEntryTransactionPayload,
 } from '@digital-topup/shared';
-import { Prisma } from '@prisma/client';
+import { Prisma, SupplierAccountType } from '@prisma/client';
 import { AdminBalanceAdjustmentDto } from './dto/ledger-adjustment.dto';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 
