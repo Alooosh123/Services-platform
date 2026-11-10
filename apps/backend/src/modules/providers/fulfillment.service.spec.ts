@@ -3,6 +3,7 @@ import { FulfillmentService } from './fulfillment.service';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { ProvidersService } from './providers.service';
+import { SupplierBalanceService } from './supplier-balance.service';
 import { OrderStatus, CurrencyCode, SupplierAccountType } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
@@ -88,7 +89,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: LedgerService, useValue: mockLedgerService },
         { provide: ProvidersService, useValue: mockProvidersService },
-        { provide: (await import('./supplier-balance.service')).SupplierBalanceService, useValue: mockSupplierBalanceService },
+        { provide: SupplierBalanceService, useValue: mockSupplierBalanceService },
       ],
     }).compile();
 
@@ -129,7 +130,9 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
     });
 
     it('2. should mark order failed and release balance hold on provider rejection', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockAdapter.submitOrder.mockResolvedValue({
         status: 'FAILED',
         success: false,
