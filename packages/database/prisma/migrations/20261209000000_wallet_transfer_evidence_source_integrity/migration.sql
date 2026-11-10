@@ -45,3 +45,8 @@ CREATE INDEX "wallet_transfer_evidence_tenant_status_channel_created_idx"
 
 CREATE INDEX "wallet_transfer_evidence_sender_receiver_hash_idx"
   ON "wallet_transfer_evidence"("senderIdentifierLookupHash", "receiverAccountLookupHash");
+
+ALTER TABLE "wallet_transfer_evidence"
+  ADD CONSTRAINT "wallet_transfer_evidence_verifiedByUserId_fkey"
+  FOREIGN KEY ("verifiedByUserId") REFERENCES "users"("id")
+  ON DELETE SET NULL ON UPDATE CASCADE;
