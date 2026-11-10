@@ -454,7 +454,7 @@ class _DepositPageState extends State<DepositPage> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: currency,
+                  initialValue: currency,
                   decoration: const InputDecoration(labelText: 'عملة الإيداع'),
                   items: const [
                     DropdownMenuItem(value: 'YER', child: Text('ريال يمني (YER)')),
@@ -477,7 +477,7 @@ class _DepositPageState extends State<DepositPage> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: channelCode,
+                  initialValue: channelCode,
                   decoration: const InputDecoration(labelText: 'محفظة التحويل'),
                   items: [
                     for (final item in availableChannels)
