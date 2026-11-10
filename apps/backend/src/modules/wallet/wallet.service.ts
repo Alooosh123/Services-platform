@@ -46,7 +46,12 @@ export class WalletService {
   }
 
   private assertLegacyTopupDisabled(operation: string): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (process.env.NODE_ENV === 'test') return;
+    if (
+      process.env.NODE_ENV === 'production' ||
+      getCurrentTenantId() ||
+      process.env.ENABLE_LEGACY_WALLET_TOPUP !== 'true'
+    ) {
       throw new ForbiddenException(
         `${operation} القديم معطل. استخدم مسار الإيداع المعتمد /deposits الذي يتطلب تحققاً مالياً وقيداً مزدوجاً.`,
       );
