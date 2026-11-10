@@ -1857,6 +1857,34 @@ model ReconciliationAdjustment {
 // ----------------------------------------------------
 // Controlled manual-wallet agent operations
 // ----------------------------------------------------
+// Trusted, independently ingested evidence for incoming wallet transfers.
+// Agent-entered values alone never create a VERIFIED evidence record.
+model WalletTransferEvidence {
+  id                          String             @id @default(uuid())
+  tenantId                    String?
+  channelCode                 PaymentChannelCode
+  externalReference            String
+  amount                      Decimal            @db.Decimal(18, 4)
+  currency                    CurrencyCode
+  senderIdentifierLookupHash  String
+  receiverAccountLookupHash   String
+  evidenceSource              String // SIGNED_PROVIDER_WEBHOOK | AUTHENTICATED_STATEMENT_IMPORT
+  evidenceSha256              String
+  providerEventId             String?
+  status                      String             @default("PENDING_VERIFICATION") // PENDING_VERIFICATION | VERIFIED | REJECTED
+  verifiedByUserId            String?
+  verifiedAt                  DateTime?
+  receivedAt                  DateTime?
+  createdAt                   DateTime           @default(now())
+  updatedAt                   DateTime           @updatedAt
+
+  @@unique([tenantId, channelCode, externalReference])
+  @@unique([tenantId, channelCode, providerEventId])
+  @@index([tenantId, status, channelCode, createdAt])
+  @@index([senderIdentifierLookupHash, receiverAccountLookupHash])
+  @@map("wallet_transfer_evidence")
+}
+
 model WalletAgentOperation {
   id                         String   @id @default(uuid())
   tenantId                   String?
