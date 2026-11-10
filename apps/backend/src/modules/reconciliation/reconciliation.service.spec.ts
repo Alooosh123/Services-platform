@@ -9,7 +9,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 describe('Reconciliation persistence and financial controls', () => {
   let service: ReconciliationService;
   const mockPrisma: any = {
-    reconciliationBatch: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    reconciliationBatch: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
     reconciliationItem: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
   };
