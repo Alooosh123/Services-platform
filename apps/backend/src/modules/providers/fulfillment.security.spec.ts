@@ -89,7 +89,7 @@ describe('SecurityGate (SG-03, SG-04, SG-05)', () => {
       mockPrisma.order.findUnique.mockResolvedValueOnce({
         id: 'ord-prod-99',
         orderNumber: 'ORD-PROD-99',
-        status: OrderStatus.Paid,
+        status: OrderStatus.Queued,
         snapshotRetailPrice: 10,
         snapshotCostPrice: 8,
         snapshotCurrency: CurrencyCode.USD,
