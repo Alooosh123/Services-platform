@@ -8,7 +8,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
@@ -303,11 +303,52 @@ export class WalletAgentOperationsService {
           })
         : null;
       const referenceUnique = !duplicateExternalReference;
-      const isMatch = operation.direction === 'INBOUND_DEPOSIT'
+
+      // The evidenceReference submitted by an agent is only a lookup key.
+      // It is NOT proof. Auto-credit requires a separate, trusted record that
+      // was ingested from a signed provider webhook or an authenticated official
+      // statement and independently marked VERIFIED.
+      const encryptionKey = process.env.ENCRYPTION_KEY || '';
+      const normalizedReceiverAccount = String(channelConfig?.accountNumber || '')
+        .trim()
+        .replace(/\\s+/g, '')
+        .toUpperCase();
+      const receiverAccountLookupHash =
+        /^[0-9a-f]{64}$/i.test(encryptionKey) && normalizedReceiverAccount
+          ? createHmac('sha256', Buffer.from(encryptionKey, 'hex'))
+              .update(`wallet-receiver-account:v1:${operation.channelCode}:${normalizedReceiverAccount}`, 'utf8')
+              .digest('hex')
+          : '';
+      const transferEvidence = deposit?.senderAccount && receiverAccountLookupHash
+        ? await tx.walletTransferEvidence.findFirst({
+            where: {
+              id: dto.evidenceReference.trim(),
+              tenantId: this.tenantId,
+              channelCode: operation.channelCode,
+              externalReference: dto.observedReferenceNumber.trim(),
+              amount: new Prisma.Decimal(dto.observedAmount),
+              currency: dto.observedCurrency as any,
+              senderIdentifierLookupHash: deposit.senderAccount.identifierLookupHash,
+              receiverAccountLookupHash,
+              evidenceSource: { in: ['SIGNED_PROVIDER_WEBHOOK', 'AUTHENTICATED_STATEMENT_IMPORT'] },
+              status: 'VERIFIED',
+              verifiedAt: { not: null },
+            },
+          })
+        : null;
+      const trustedEvidenceMatches = !!transferEvidence &&
+        /^[a-f0-9]{64}$/i.test(transferEvidence.evidenceSha256 || '') &&
+        (transferEvidence.evidenceSource === 'SIGNED_PROVIDER_WEBHOOK'
+          ? !!transferEvidence.providerEventId
+          : transferEvidence.evidenceSource === 'AUTHENTICATED_STATEMENT_IMPORT' &&
+            !!transferEvidence.verifiedByUserId &&
+            transferEvidence.verifiedByUserId !== agentUserId);
+
+      const observationsMatch = operation.direction === 'INBOUND_DEPOSIT'
         ? !!deposit &&
           !!deposit.senderAccountId &&
           !!deposit.senderAccount &&
-          ['PENDING_VERIFICATION', 'VERIFIED'].includes(deposit.senderAccount.status) &&
+          deposit.senderAccount.status === 'VERIFIED' &&
           deposit.senderAccount.identifierType === channelConfig?.senderIdentifierType &&
           !!operation.expectedSenderAccountLastFour &&
           senderIdentityMatches &&
@@ -320,6 +361,8 @@ export class WalletAgentOperationsService {
           referenceUnique &&
           !!dto.evidenceReference.trim()
         : amountMatches && currencyMatches && receiverAccountMatches && referenceMatches;
+      const evidenceSatisfied = operation.direction !== 'INBOUND_DEPOSIT' || trustedEvidenceMatches;
+      const isMatch = observationsMatch && evidenceSatisfied;
 
       const currencyLimitKey = deposit
         ? `WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_${deposit.currency}`
@@ -340,6 +383,7 @@ export class WalletAgentOperationsService {
         autoCreditLimit > 0 &&
         dto.observedAmount <= autoCreditLimit &&
         isMatch &&
+        trustedEvidenceMatches &&
         agent.isTwoFactorEnabled === true &&
         !!agent.twoFactorSecret;
 
@@ -489,11 +533,6 @@ export class WalletAgentOperationsService {
             },
           });
 
-          await tx.paymentSenderAccount.update({
-            where: { id: deposit.senderAccountId! },
-            data: { status: 'VERIFIED', verifiedAt: new Date() },
-          });
-
           await tx.walletAgentOperation.update({
             where: { id: operationId },
             data: {
@@ -575,6 +614,8 @@ export class WalletAgentOperationsService {
             currencyMatches,
             receiverAccountMatches,
             senderIdentityMatches,
+            trustedEvidenceMatches,
+            trustedEvidenceSource: transferEvidence?.evidenceSource || null,
             referenceMatches,
             referenceUnique,
             channelReady,
@@ -588,11 +629,14 @@ export class WalletAgentOperationsService {
         success: true,
         status: isMatch ? 'AGENT_SUBMITTED' : 'NEEDS_REVIEW',
         exactMatch: isMatch,
+        trustedEvidenceMatches,
         autoCredited: false,
         requiresFinanceReview: true,
-        message: isMatch
-          ? 'المطابقة صحيحة، لكن القيد الآلي متوقف أو تجاوزت الحركة سقف التشغيل؛ تنتظر اعتماد المالية.'
-          : 'لم تتطابق عناصر التحويل أو تعذر التحقق من المصدر؛ عُزلت الحركة للمراجعة ولا يضاف أي رصيد.',
+        message: !observationsMatch
+          ? 'لم تتطابق بيانات التحويل المرصودة؛ عُزلت الحركة للمراجعة ولا يضاف أي رصيد.'
+          : operation.direction === 'INBOUND_DEPOSIT' && !trustedEvidenceMatches
+            ? 'البيانات التي أدخلها الوكيل لا تكفي لإثبات وصول الأموال. لم يُعثر على دليل مستقل موثق من كشف رسمي أو Webhook موقع؛ أُحيل الإيداع للمالية دون قيد الرصيد.'
+            : 'الدليل الموثق والبيانات متطابقة، لكن القيد الآلي متوقف أو تجاوزت الحركة سقف التشغيل؛ تنتظر اعتماد المالية.',
       };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
