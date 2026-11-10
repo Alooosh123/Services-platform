@@ -35,6 +35,7 @@ const TENANT_DIRECT_MODELS = new Set([
   'LinkedServiceAccountReview',
   'ReconciliationAdjustment',
   'WalletAgentOperation',
+  'WalletTransferEvidence',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
@@ -65,6 +66,7 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   ReconciliationItem: { batch: { is: { tenantId: '__TENANT_ID__' } } },
   ReconciliationAdjustment: { item: { is: { batch: { is: { tenantId: '__TENANT_ID__' } } } } },
   WalletAgentOperation: { tenantId: '__TENANT_ID__' },
+  WalletTransferEvidence: { tenantId: '__TENANT_ID__' },
   DailyCloseAdjustment: { report: { is: { tenantId: '__TENANT_ID__' } } },
   OwnerPayoutTransaction: {
     beneficiary: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } },
