@@ -40,7 +40,7 @@ describe('PaymentSenderAccountsService security', () => {
     };
     const prisma: any = {
       paymentChannelConfig: {
-        findFirst: jest.fn().mockResolvedValue({
+        findFirst: jest.fn(async () => ({
           id: 'channel-1',
           senderIdentifierType: configuredIdentifierType,
           accountNumber: '7700001234',
@@ -48,7 +48,7 @@ describe('PaymentSenderAccountsService security', () => {
           regulatoryApprovalDocumentUrl: 'https://example.test/regulatory.pdf',
           providerAgreementReference: 'AGR-001',
           providerAgreementDocumentUrl: 'https://example.test/agreement.pdf',
-        }),
+        })),
       },
       paymentSenderAccount: tx.paymentSenderAccount,
       $transaction: jest.fn(async (callback: any) => callback(tx)),
