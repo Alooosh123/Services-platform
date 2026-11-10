@@ -191,7 +191,7 @@ export class PayoutsService {
               !config.providerAgreementReference || !config.providerAgreementDocumentUrl) {
             throw new ServiceUnavailableException('قناة السحب غير مفعلة بوثائق اعتماد تنظيمي واتفاقية تاجر موثقتين.');
           }
-          if (![PaymentChannelMode.MANUAL, PaymentChannelMode.API].includes(config.mode)) {
+          if (config.mode !== PaymentChannelMode.MANUAL && config.mode !== PaymentChannelMode.API) {
             throw new ServiceUnavailableException('وضع قناة السحب غير معتمد للتشغيل الفعلي.');
           }
           if (config.mode === PaymentChannelMode.API && !channel.capabilities?.payout) {
