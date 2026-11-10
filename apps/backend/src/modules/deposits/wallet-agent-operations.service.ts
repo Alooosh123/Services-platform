@@ -5,7 +5,8 @@ import {
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
-  TooManyRequestsException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
@@ -382,7 +383,7 @@ export class WalletAgentOperationsService {
         const rateLimitKey = `wallet-agent:totp-rate:${createHash('sha256').update(agentUserId).digest('hex')}`;
         const rateLimitAcquired = await this.idempotencyStore.acquire(rateLimitKey, 'checking', 1000);
         if (!rateLimitAcquired) {
-          throw new TooManyRequestsException('محاولات رمز الوكيل متقاربة جداً؛ انتظر ثانية ثم أعد المحاولة.');
+          throw new HttpException('محاولات رمز الوكيل متقاربة جداً؛ انتظر ثانية ثم أعد المحاولة.', HttpStatus.TOO_MANY_REQUESTS);
         }
 
         const totpSecret = this.decryptAgentTotpSecret(agent.twoFactorSecret);
