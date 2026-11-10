@@ -237,9 +237,9 @@ export class DepositsService {
           !!config.providerAgreementReference &&
           !!config.providerAgreementDocumentUrl;
 
-        const sandboxOnly = process.env.NODE_ENV !== 'production' &&
-          !getCurrentTenantId() &&
-          dto.paymentMethodCode === PaymentChannelCode.WALLET;
+        const sandboxOnly = !getCurrentTenantId() &&
+          (process.env.NODE_ENV === 'test' ||
+            (process.env.NODE_ENV !== 'production' && dto.paymentMethodCode === PaymentChannelCode.WALLET));
 
         if (!manualConfigReady && !sandboxOnly) {
           throw new BadRequestException(
