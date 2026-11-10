@@ -194,9 +194,13 @@ databaseDescribe('Wallet sender identity approval database workflow (PostgreSQL)
     } as any);
 
     expect(request.success).toBe(true);
-    expect(request.deposit.senderAccountId).toBe(saved.id);
-    expect(request.deposit.userId).toBe(customer);
-    expect(request.deposit.status).toBe('PENDING');
+    const persistedDeposit = await prisma.depositRequest.findUnique({
+      where: { id: request.deposit.id },
+      select: { senderAccountId: true, userId: true, status: true },
+    });
+    expect(persistedDeposit.senderAccountId).toBe(saved.id);
+    expect(persistedDeposit.userId).toBe(customer);
+    expect(persistedDeposit.status).toBe('PENDING');
     const persistedWallet = await prisma.wallet.findUnique({ where: { id: walletId! } });
     expect(Number(persistedWallet?.balance)).toBe(0);
   });
