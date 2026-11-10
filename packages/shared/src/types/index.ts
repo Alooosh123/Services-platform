@@ -11,6 +11,7 @@ import {
   ReconciliationStatus,
   DiscrepancyType,
   PaymentChannelMode,
+  PaymentSenderIdentifierType,
   SupplierAccountType,
   SupplierTransactionType,
   ServiceRequestStatus,
@@ -214,6 +215,7 @@ export interface PaymentChannelInfo {
   feePercentage?: number;
   feeFixed?: number;
   isVerifiedLegal?: boolean;
+  senderIdentifierType?: PaymentSenderIdentifierType;
 }
 
 export interface CreateCheckoutDto {
