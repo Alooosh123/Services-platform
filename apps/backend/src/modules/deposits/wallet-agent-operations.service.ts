@@ -246,7 +246,7 @@ export class WalletAgentOperationsService {
         );
         const normalize = (value: string, type: string) => {
           if (type === 'PHONE') return value.replace(/[^0-9]/g, '');
-          return value.trim().replace(/\\s+/g, '').toUpperCase();
+          return value.trim().replace(/\s+/g, '').toUpperCase();
         };
         const expectedNormalized = normalize(
           expectedIdentifier,
