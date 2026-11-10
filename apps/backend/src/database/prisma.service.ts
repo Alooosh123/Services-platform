@@ -152,7 +152,9 @@ const TENANT_WRITE_REFERENCES: Record<
     { field: 'approvedByUserId', delegate: 'user' },
   ],
   WalletAgentOperation: [
-    { field: 'depositRequestId', relation: 'depositRequest', delegate: 'depositRequest' },
+    // Inbound operations are inserted in the same transaction immediately after
+    // their DepositRequest. A separate root-client lookup cannot see that
+    // uncommitted row; tenantId plus customerUserId still enforce tenant scope.
     { field: 'payoutRequestId', relation: 'payoutRequest', delegate: 'payoutRequest' },
     { field: 'customerUserId', relation: 'customerUser', delegate: 'user' },
     { field: 'agentUserId', relation: 'agentUser', delegate: 'user' },
