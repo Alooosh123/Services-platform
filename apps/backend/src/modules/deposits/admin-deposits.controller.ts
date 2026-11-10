@@ -139,17 +139,23 @@ export class AdminDepositsController {
   @ApiOperation({ summary: 'Admin: Propose new receiver account (requires finance approval)' })
   async proposeAccount(
     @Param('channel') channel: string,
-    @Body('accountNumber') accountNumber: string,
-    @Body('feePercentage') feePercentage: number | undefined,
+    @Body() dto: {
+      accountNumber: string;
+      accountHolderName?: string;
+      instructionsAr?: string;
+      feePercentage?: number;
+    },
     @CurrentUser('id') actorUserId: string,
     @CurrentUser('role') actorUserRole: string,
   ) {
     return this.depositsService.proposeChannelAccountChange(
       channel.toUpperCase() as PaymentChannelCode,
-      accountNumber,
-      feePercentage,
+      dto.accountNumber,
+      dto.feePercentage,
       actorUserId,
       actorUserRole,
+      dto.accountHolderName,
+      dto.instructionsAr,
     );
   }
 
