@@ -20,6 +20,7 @@ import {
   Activity,
   Rocket,
   FileCheck2,
+  ClipboardCheck,
 } from 'lucide-react';
 
 const navItems = [
@@ -32,6 +33,7 @@ const navItems = [
   { name: 'خدمة العملاء والتذاكر', href: '/support', icon: LifeBuoy },
   { name: 'تقارير الأرباح والمبيعات', href: '/reports', icon: TrendingUp },
   { name: 'إيداعات العملاء والتحقق', href: '/deposits', icon: DollarSign },
+  { name: 'مهام وكيل المحافظ', href: '/wallet-agent', icon: ClipboardCheck },
   { name: 'محافظ العملاء والرقابة', href: '/wallets', icon: Wallet },
   { name: 'دفتر الأستاذ العام', href: '/ledger', icon: WalletCards },
   { name: 'التسوية والمطابقة المالية', href: '/reconciliation', icon: Scale },
