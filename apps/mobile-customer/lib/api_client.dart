@@ -8,11 +8,21 @@ class ApiException implements Exception {
   @override String toString() => message;
 }
 class ApiClient {
-  ApiClient._();
-  static final instance=ApiClient._();
-  static const baseUrl=String.fromEnvironment('API_BASE_URL',defaultValue:'http://10.0.2.2:4000/api');
-  static const storage=FlutterSecureStorage();
-  final client=http.Client();
+  ApiClient._({http.Client? httpClient, String? baseUrl})
+      : client = httpClient ?? http.Client(),
+        baseUrl = baseUrl ?? const String.fromEnvironment(
+          'API_BASE_URL',
+          defaultValue: 'http://10.0.2.2:4000/api',
+        );
+
+  /// Injectable HTTP client for integration/contract tests.
+  ApiClient.withClient({required http.Client httpClient, required String baseUrl})
+      : this._(httpClient: httpClient, baseUrl: baseUrl);
+
+  static final instance = ApiClient._();
+  static const storage = FlutterSecureStorage();
+  final http.Client client;
+  final String baseUrl;
   String? accessToken,refreshToken;
   bool get authenticated=>accessToken?.isNotEmpty==true;
   Future<void> restore() async {accessToken=await storage.read(key:'access_token');refreshToken=await storage.read(key:'refresh_token');}
@@ -32,8 +42,23 @@ class ApiClient {
     await _send('POST','/auth/register',body:{'fullName':name.trim(),if(id.contains('@'))'email':id.trim() else 'phone':id.trim(),'password':password},auth:false);
     return login(id,password);
   }
-  Future<dynamic> get(String path)=>_send('GET',path);
-  Future<dynamic> post(String path,{Object? body,Map<String,String>? headers})=>_send('POST',path,body:body,headers:headers);
+  Future<dynamic> get(String path) => _send('GET', path);
+
+  Future<dynamic> post(String path, {Object? body, Map<String, String>? headers}) =>
+      _send('POST', path, body: body, headers: headers);
+
+  Future<dynamic> getWalletTransactions({
+    String? currency,
+    int page = 1,
+    int limit = 20,
+  }) {
+    final query = <String, String>{
+      'page': page.toString(),
+      'limit': limit.toString(),
+      if (currency != null && currency.isNotEmpty) 'currency': currency,
+    };
+    return _send('GET', '/wallet/transactions?${Uri(queryParameters: query).query}');
+  }
   Future<void> _clearSession() async {
     accessToken=null;refreshToken=null;
     await storage.delete(key:'access_token');
@@ -49,14 +74,20 @@ class ApiClient {
       final r=await client.post(Uri.parse(baseUrl+'/auth/refresh'),headers:{'Content-Type':'application/json'},body:jsonEncode({'refreshToken':refreshToken}));
       if(r.statusCode!=200){await _clearSession();return false;}
       final d=jsonDecode(r.body);await save(d is Map&&d['tokens'] is Map?d['tokens'] as Map:d as Map);return true;
-    }catch(_){return false;}
+    } catch (_) {
+      await _clearSession();
+      return false;
+    }
   }
   Future<dynamic> _send(String method,String path,{Object? body,Map<String,String>? headers,bool auth=true,bool retry=true}) async {
     http.Response r;
     try{
       final h=<String,String>{'Accept':'application/json','Content-Type':'application/json',if(auth&&authenticated)'Authorization':'Bearer '+accessToken!,...?headers};
       final uri=Uri.parse(baseUrl+path);
-      r=method=='POST'?await client.post(uri,headers:h,body:body==null?null:jsonEncode(body)):await client.get(uri,headers:h);
+      final request = method == 'POST'
+          ? client.post(uri, headers: h, body: body == null ? null : jsonEncode(body))
+          : client.get(uri, headers: h);
+      r = await request.timeout(const Duration(seconds: 25));
     }catch(_){throw const ApiException('تعذر الاتصال بالخادم. تحقق من عنوان API وتشغيل Backend.');}
     if(r.statusCode==401&&auth&&retry&&refreshToken!=null&&await _refresh())return _send(method,path,body:body,headers:headers,auth:auth,retry:false);
     dynamic d;try{d=r.body.isEmpty?{}:jsonDecode(r.body);}catch(_){d={};}
