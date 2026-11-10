@@ -622,6 +622,8 @@ export default function CustomerWalletPage() {
                       channel.supportedCurrencies.includes(nextCurrency),
                     );
                     setDepositChannel(available[0]?.code || '');
+                    setSenderIdentifier('');
+                    setSenderIdentifierConsent(false);
                   }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right font-bold"
                 >
