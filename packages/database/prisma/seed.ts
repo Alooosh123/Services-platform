@@ -711,7 +711,7 @@ async function main() {
             fromStatus: DepositStatus.PENDING,
             toStatus: DepositStatus.UNDER_REVIEW,
             changedByUserId: financeOfficer.id,
-            notes: 'قيد مراجعة إشعار بنك CAC',
+            notes: 'قيد مراجعة إشعار تحويل جيب (بيانات اختبار غير إنتاجية)',
           },
           {
             fromStatus: DepositStatus.UNDER_REVIEW,
