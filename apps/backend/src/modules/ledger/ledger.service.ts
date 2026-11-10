@@ -313,14 +313,7 @@ export class LedgerService {
     performedByUserId?: string;
     notes?: string;
   }, existingTx?: Prisma.TransactionClient) {
-    let clearingAccountCode = '1001-CASH-JAIB';
-    if (params.paymentChannel === PaymentChannelCode.JAIB) clearingAccountCode = '1001-CASH-JAIB';
-    else if (params.paymentChannel === PaymentChannelCode.JAWALI) clearingAccountCode = '1002-CASH-JAWALI';
-    else if (params.paymentChannel === PaymentChannelCode.CASH) clearingAccountCode = '1003-CASH-SABA';
-    else if (params.paymentChannel === PaymentChannelCode.ONE_CASH) clearingAccountCode = '1004-CASH-ONECASH';
-    else if (params.paymentChannel === PaymentChannelCode.EASY) clearingAccountCode = '1005-CASH-EASY';
-    else if (params.currency === CurrencyCode.USD) clearingAccountCode = '1010-CLEARING-USD';
-    else if (params.currency === CurrencyCode.SAR) clearingAccountCode = '1011-CLEARING-SAR';
+    const clearingAccountCode = this.getChannelAccountCode(params.paymentChannel, params.currency);
 
     const customerAccountCode =
       params.currency === CurrencyCode.YER
@@ -443,13 +436,15 @@ export class LedgerService {
   }
 
   getChannelAccountCode(channel: PaymentChannelCode, currency: CurrencyCode): string {
+    // Currency clearing accounts take precedence so a foreign-currency deposit
+    // never posts to a YER wallet-channel cash account.
+    if (currency === CurrencyCode.USD) return '1010-CLEARING-USD';
+    if (currency === CurrencyCode.SAR) return '1011-CLEARING-SAR';
     if (channel === PaymentChannelCode.JAIB) return '1001-CASH-JAIB';
     if (channel === PaymentChannelCode.JAWALI) return '1002-CASH-JAWALI';
     if (channel === PaymentChannelCode.CASH) return '1003-CASH-SABA';
     if (channel === PaymentChannelCode.ONE_CASH) return '1004-CASH-ONECASH';
     if (channel === PaymentChannelCode.EASY) return '1005-CASH-EASY';
-    if (currency === CurrencyCode.USD) return '1010-CLEARING-USD';
-    if (currency === CurrencyCode.SAR) return '1011-CLEARING-SAR';
     return '1001-CASH-JAIB';
   }
 
