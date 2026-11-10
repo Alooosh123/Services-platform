@@ -105,13 +105,12 @@ export default function WalletAgentPage() {
       await requestApi(`/wallet-agent/operations/${encodeURIComponent(operation.id)}/claim`, {
         method: 'POST',
       });
-      setForms((current) => ({ ...current, [operation.id]: {
-        ...emptyForm,
-        observedAmount: String(operation.expectedAmount),
-        observedCurrency: operation.expectedCurrency,
-        observedReferenceNumber: operation.expectedReferenceNumber || operation.depositRequest?.referenceNumber || '',
-        observedAccountLastFour: operation.expectedAccountLastFour || '',
-      }}));
+      // Keep all observed fields blank: the agent must independently read the provider's
+      // official transaction history rather than simply resubmit the customer's expected values.
+      setForms((current) => ({
+        ...current,
+        [operation.id]: { ...emptyForm, observedCurrency: '' },
+      }));
       setNotice('تم استلام المهمة باسم حسابك. افحص سجل/كشف المحفظة الرسمي قبل إدخال بيانات المطابقة.');
       setError(null);
       await loadQueue();
@@ -236,7 +235,8 @@ export default function WalletAgentPage() {
                     </label>
                     <label className="space-y-1 text-xs text-slate-300">
                       <span>العملة المرصودة</span>
-                      <select value={form.observedCurrency} onChange={(e) => updateForm(operation.id, 'observedCurrency', e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white">
+                      <select required value={form.observedCurrency} onChange={(e) => updateForm(operation.id, 'observedCurrency', e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white">
+                        <option value="" disabled>اختر العملة كما ظهرت في كشف الحركة</option>
                         <option value="YER">YER</option>
                         <option value="USD">USD</option>
                         <option value="SAR">SAR</option>
