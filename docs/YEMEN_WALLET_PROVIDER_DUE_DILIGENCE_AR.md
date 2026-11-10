@@ -17,6 +17,17 @@
 - https://cby-ye.com/files/667c32dabd223.pdf
 - https://cby-ye.com/pages/14
 
+### 1.1 تحديد مشغل جيب من المصدر الرسمي
+
+موقع شركة عهد الرسمي يذكر أن محفظة جيب إحدى خدمات شركة عهد للخدمات المالية: https://ahdfinancial.com/. كما تعرض صفحة التطبيق في Google Play المطور AHD FINANCIAL والاسم **AHD FOR FINANCIAL SERVICES AND ELECTRONIC PAYMENT SYSTEMS COMPANY** وبريد دعم التطبيق `developer@ahdfinancial.com`.
+
+هذا يحدد الجهة التي يجب مخاطبتها أولاً بخصوص منتج جيب، لكنه لا يثبت بذاته الترخيص الحالي أو أن للشركة صلاحية تقديم خدمة تحصيل تجاري للمنصة. يجب أن يطابق العقد والترخيص اسم الكيان القانوني ذاته، وأن يوضح صراحة صلاحية نشاط المنصة.
+
+روابط:
+- https://ahdfinancial.com/
+- https://e-jaib.com/ar
+- https://play.google.com/store/apps/details?id=com.ahd.jaib&hl=ar
+
 ## 2. مصفوفة المحافظ اليمنية
 
 | القناة | ما أمكن إثباته من المصدر العام | API / Sandbox عام | الحالة التشغيلية المقترحة |
