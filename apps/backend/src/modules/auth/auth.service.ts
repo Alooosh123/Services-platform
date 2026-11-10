@@ -263,7 +263,7 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (tenantId || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Persistent account creation failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Account registration failed because the account database is unavailable.');
       }
@@ -383,14 +383,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Admin login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Administrative login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development admin login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -833,7 +833,7 @@ export class AuthService {
       if (dbUser) return dbUser;
       if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') return null;
     } catch (error: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Persistent user lookup failed: ${error?.message || error}`);
         throw new ServiceUnavailableException('The authenticated account database is unavailable.');
       }
