@@ -6,6 +6,7 @@ import { ManualProviderAdapter } from './adapters/manual-provider.adapter';
 import { ExternalApiAdapter } from './adapters/external-api.adapter';
 import { EncryptionService } from '../../security/encryption.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
+import { isIP } from 'net';
 import {
   PlayerValidationRequest,
   PlayerValidationResponse,
@@ -227,15 +228,18 @@ export class ProvidersService {
       throw new BadRequestException('يجب أن يكون عنوان API رابط HTTPS عاماً دون بيانات دخول أو query أو fragment.');
     }
     const hostname = url.hostname.toLowerCase();
+    const unbracketedHost = hostname.replace(/^\[|\]$/g, '');
+    const ipVersion = isIP(unbracketedHost);
     const isLocalHost =
       hostname === 'localhost' ||
       hostname.endsWith('.localhost') ||
       hostname.endsWith('.local') ||
-      hostname === '::1' ||
-      hostname === '0.0.0.0';
-    const octets = hostname.split('.').map(Number);
-    const isIpv4 = octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255);
-    const isPrivateIpv4 = isIpv4 && (
+      hostname.endsWith('.internal') ||
+      unbracketedHost === '::1' ||
+      unbracketedHost === '::' ||
+      unbracketedHost === '0.0.0.0';
+    const octets = unbracketedHost.split('.').map(Number);
+    const isPrivateIpv4 = ipVersion === 4 && (
       octets[0] === 10 ||
       octets[0] === 127 ||
       (octets[0] === 192 && octets[1] === 168) ||
@@ -243,8 +247,25 @@ export class ProvidersService {
       (octets[0] === 169 && octets[1] === 254) ||
       octets[0] === 0
     );
-    if (isLocalHost || isPrivateIpv4 || (process.env.NODE_ENV === 'production' && isIpv4)) {
-      throw new BadRequestException('يمنع توجيه اتصالات المزود إلى عنوان محلي أو شبكة خاصة.');
+    const isPrivateIpv6 = ipVersion === 6 && (
+      unbracketedHost.startsWith('fc') ||
+      unbracketedHost.startsWith('fd') ||
+      unbracketedHost.startsWith('fe80:') ||
+      unbracketedHost.startsWith('::ffff:127.') ||
+      unbracketedHost.startsWith('::ffff:10.')
+    );
+    const allowedHosts = (process.env.PROVIDER_ALLOWED_HOSTS || '')
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+    if (
+      isLocalHost ||
+      isPrivateIpv4 ||
+      isPrivateIpv6 ||
+      (process.env.NODE_ENV === 'production' && ipVersion !== 0) ||
+      (process.env.NODE_ENV === 'production' && !allowedHosts.includes(hostname))
+    ) {
+      throw new BadRequestException('يمنع توجيه اتصالات المزود إلى عنوان محلي أو غير مدرج ضمن نطاقات المزود المعتمدة.');
     }
     return url.toString().replace(/\/$/, '');
   }
