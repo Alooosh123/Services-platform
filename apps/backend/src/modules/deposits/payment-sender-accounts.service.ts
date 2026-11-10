@@ -47,10 +47,28 @@ export class PaymentSenderAccountsService {
         mode: 'MANUAL',
         verificationStatus: 'VERIFIED',
       },
-      select: { id: true, senderIdentifierType: true },
+      select: {
+        id: true,
+        senderIdentifierType: true,
+        accountNumber: true,
+        regulatoryApprovalReference: true,
+        regulatoryApprovalDocumentUrl: true,
+        providerAgreementReference: true,
+        providerAgreementDocumentUrl: true,
+      },
     });
     if (!channel) {
       throw new BadRequestException('لا يمكن ربط حساب مرسل إلا بقناة تحويل يدوية نشطة ومعتمدة.');
+    }
+    if (
+      !channel.accountNumber ||
+      channel.accountNumber === 'NOT_CONFIGURED' ||
+      !channel.regulatoryApprovalReference ||
+      !channel.regulatoryApprovalDocumentUrl ||
+      !channel.providerAgreementReference ||
+      !channel.providerAgreementDocumentUrl
+    ) {
+      throw new BadRequestException('لا يمكن حفظ الحساب قبل اكتمال وثائق الاعتماد واتفاقية القناة وحساب الاستقبال.');
     }
     if (channel.senderIdentifierType !== dto.identifierType) {
       throw new BadRequestException('نوع المعرّف لا يطابق نوع الحساب المطلوب لهذه القناة.');
