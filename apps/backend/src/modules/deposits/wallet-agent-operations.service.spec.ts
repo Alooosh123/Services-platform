@@ -98,6 +98,8 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
           id: 'agent-1',
           role: UserRole.PAYMENT_AGENT,
           tenantId: null,
+          isTwoFactorEnabled: true,
+          twoFactorSecret: 'agent-enrolled-totp-secret',
         }),
       },
       walletAgentOperation: tx.walletAgentOperation,
@@ -204,4 +206,64 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     expect(result.requiresFinanceReview).toBe(true);
     expect(ledger.recordTopup).not.toHaveBeenCalled();
   });
+  it('does not auto-credit when the assigned agent has not enrolled MFA', async () => {
+    prisma.user.findFirst.mockResolvedValue({
+      id: 'agent-1',
+      role: UserRole.PAYMENT_AGENT,
+      tenantId: null,
+      isTwoFactorEnabled: false,
+      twoFactorSecret: null,
+    });
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+
+    expect(result.autoCredited).toBe(false);
+    expect(result.requiresFinanceReview).toBe(true);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('rejects use of an agent session from a different tenant', async () => {
+    prisma.user.findFirst.mockResolvedValue({
+      id: 'agent-1',
+      role: UserRole.PAYMENT_AGENT,
+      tenantId: 'tenant-other',
+      isTwoFactorEnabled: true,
+      twoFactorSecret: 'agent-enrolled-totp-secret',
+    });
+
+    await expect(service.submitVerification('operation-1', 'agent-1', verification()))
+      .rejects.toThrow('سياق المتجر لا يطابق متجر الوكيل');
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-credit an amount mismatch even when the sender account matches', async () => {
+    const result = await service.submitVerification(
+      'operation-1',
+      'agent-1',
+      verification({ observedAmount: 4999 }),
+    );
+
+    expect(result.autoCredited).toBe(false);
+    expect(result.status).toBe('NEEDS_REVIEW');
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-credit a receiver account mismatch', async () => {
+    const result = await service.submitVerification(
+      'operation-1',
+      'agent-1',
+      verification({ observedAccountLastFour: '9999' }),
+    );
+
+    expect(result.autoCredited).toBe(false);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-credit if the provider agreement evidence is missing', async () => {
+    config.providerAgreementDocumentUrl = null;
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+
+    expect(result.autoCredited).toBe(false);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+  });
+
 });
