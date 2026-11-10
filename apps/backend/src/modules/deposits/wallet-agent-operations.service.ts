@@ -62,6 +62,7 @@ export class WalletAgentOperationsService {
         payoutRequest: {
           select: {
             payoutNumber: true,
+            status: true,
             destinationAccount: true,
             beneficiaryName: true,
             amount: true,
