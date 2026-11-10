@@ -414,8 +414,8 @@ export class OwnerEarningsService {
     if (payout.approvedByUserId === financeUserId) throw new ForbiddenException('يجب أن يكون منفذ/مؤكد التحويل مختلفاً عن صاحب الموافقة.');
     const beneficiaryChannel = payout.beneficiary.channelCode as PaymentChannelCode;
     const cashAccountCode = payout.currency === CurrencyCode.YER
-      ? this.ledgerService.getChannelAccountCode(beneficiaryChannel, payout.currency)
-      : this.ledgerService.getBankCashAccountCode(payout.currency);
+      ? this.ledgerService.getChannelAccountCode(beneficiaryChannel, payout.currency as CurrencyCode)
+      : this.ledgerService.getBankCashAccountCode(payout.currency as CurrencyCode);
 
     const scopedCashAccountCode = this.ledgerService.scopeAccountCode(cashAccountCode);
     const updated = await this.prisma.$transaction(async (tx) => {
