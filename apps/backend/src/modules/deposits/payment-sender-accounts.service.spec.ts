@@ -11,12 +11,14 @@ describe('PaymentSenderAccountsService security', () => {
   let linkedToAnotherUser = false;
   let existing: any = null;
   let persisted: any = null;
+  let configuredIdentifierType: PaymentSenderIdentifierType;
 
   beforeEach(() => {
     process.env.ENCRYPTION_KEY = 'a'.repeat(64);
     linkedToAnotherUser = false;
     existing = null;
     persisted = null;
+    configuredIdentifierType = PaymentSenderIdentifierType.PHONE;
     tx = {
       paymentSenderAccount: {
         findFirst: jest.fn(async ({ where }: any) => {
@@ -40,7 +42,7 @@ describe('PaymentSenderAccountsService security', () => {
       paymentChannelConfig: {
         findFirst: jest.fn().mockResolvedValue({
           id: 'channel-1',
-          senderIdentifierType: PaymentSenderIdentifierType.PHONE,
+          senderIdentifierType: configuredIdentifierType,
           accountNumber: '7700001234',
           regulatoryApprovalReference: 'REG-001',
           regulatoryApprovalDocumentUrl: 'https://example.test/regulatory.pdf',
@@ -84,6 +86,47 @@ describe('PaymentSenderAccountsService security', () => {
     linkedToAnotherUser = true;
     await expect(service.saveForCustomer('customer-2', request()))
       .rejects.toBeInstanceOf(ConflictException);
+    expect(tx.paymentSenderAccount.create).not.toHaveBeenCalled();
+  });
+
+  it('stores a configured alias encrypted and returns only a masked value', async () => {
+    configuredIdentifierType = PaymentSenderIdentifierType.ALIAS;
+    const result = await service.saveForCustomer('customer-1', request({
+      identifierType: PaymentSenderIdentifierType.ALIAS,
+      identifier: 'JAIB-ALT-1234',
+    }));
+    expect(result.maskedIdentifier).toBe('•••• 1234');
+    expect(persisted.identifierCiphertext).not.toContain('JAIB-ALT-1234');
+    expect(encryption.decrypt(persisted.identifierCiphertext)).toBe('JAIB-ALT-1234');
+  });
+
+  it('stores a wallet ID encrypted and bound to the configured channel type', async () => {
+    configuredIdentifierType = PaymentSenderIdentifierType.WALLET_ID;
+    const result = await service.saveForCustomer('customer-1', request({
+      identifierType: PaymentSenderIdentifierType.WALLET_ID,
+      identifier: 'WID-ABC_123',
+    }));
+    expect(result.identifierType).toBe(PaymentSenderIdentifierType.WALLET_ID);
+    expect(result.maskedIdentifier).toBe('•••• _123');
+    expect(encryption.decrypt(persisted.identifierCiphertext)).toBe('WID-ABC_123');
+  });
+
+  it('stores an account number encrypted and normalized', async () => {
+    configuredIdentifierType = PaymentSenderIdentifierType.ACCOUNT_NUMBER;
+    const result = await service.saveForCustomer('customer-1', request({
+      identifierType: PaymentSenderIdentifierType.ACCOUNT_NUMBER,
+      identifier: 'ab-123456',
+    }));
+    expect(result.maskedIdentifier).toBe('•••• 3456');
+    expect(encryption.decrypt(persisted.identifierCiphertext)).toBe('AB-123456');
+  });
+
+  it('rejects unsupported characters in a non-phone wallet identifier', async () => {
+    configuredIdentifierType = PaymentSenderIdentifierType.ALIAS;
+    await expect(service.saveForCustomer('customer-1', request({
+      identifierType: PaymentSenderIdentifierType.ALIAS,
+      identifier: '<script>alert(1)</script>',
+    }))).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.paymentSenderAccount.create).not.toHaveBeenCalled();
   });
 
