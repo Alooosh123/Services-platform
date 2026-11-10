@@ -82,7 +82,10 @@ jobs:
       - name: Monorepo Type Check
         run: npm run build --workspace=packages/shared && npm run build --workspace=packages/database
 
-      - name: Security Vulnerability Audit
+      - name: Production Runtime Dependency Audit (zero known findings required)
+        run: npm audit --omit=dev --audit-level=low
+
+      - name: Full Dependency Audit (block high and critical findings)
         run: npm audit --audit-level=high
 
   # -------------------------------------------------------------
