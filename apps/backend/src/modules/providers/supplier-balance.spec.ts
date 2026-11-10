@@ -53,6 +53,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
     order: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     wallet: {
       findUnique: jest.fn(),
