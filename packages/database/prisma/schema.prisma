@@ -345,6 +345,7 @@ model User {
   depositRequests          DepositRequest[]       @relation("UserDeposits")
   paymentSenderAccounts    PaymentSenderAccount[]
   reviewedPaymentSenderAccounts PaymentSenderAccount[] @relation("PaymentSenderAccountReviewedBy")
+  verifiedWalletTransferEvidence WalletTransferEvidence[] @relation("WalletTransferEvidenceVerifier")
   reviewedDeposits         DepositRequest[]       @relation("DepositReviewedBy")
   depositHistories         DepositStatusHistory[] @relation("DepositHistoryChangedBy")
   currencyExchanges        CurrencyExchange[]
@@ -1873,6 +1874,7 @@ model WalletTransferEvidence {
   providerEventId             String?
   status                      String             @default("PENDING_VERIFICATION") // PENDING_VERIFICATION | VERIFIED | REJECTED
   verifiedByUserId            String?
+  verifiedBy                  User?              @relation("WalletTransferEvidenceVerifier", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
   verifiedAt                  DateTime?
   receivedAt                  DateTime?
   createdAt                   DateTime           @default(now())
