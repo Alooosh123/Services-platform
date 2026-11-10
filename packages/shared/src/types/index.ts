@@ -240,7 +240,10 @@ export interface OrderRefundDto {
 export interface UpdateProviderDto {
   name?: string;
   baseUrl?: string;
+  /** Legacy single-key field; encrypted at rest and never returned in clear text. */
   apiKey?: string;
+  /** Multi-field credentials such as merchantId, clientId, apiSecret and webhookSecret. Encrypted at rest. */
+  credentials?: Record<string, string>;
   isActive?: boolean;
   type?: string;
 }
