@@ -221,6 +221,11 @@ export default function WalletAgentPage() {
                       المبلغ المتوقع: {Number(operation.expectedAmount).toLocaleString('en-US')} {operation.expectedCurrency}
                       {deposit?.senderName ? ` · المحول: ${deposit.senderName}` : ''}
                     </p>
+                    {operation.status === 'CLAIMED' && deposit?.senderAccount?.identifier && (
+                      <p className="mt-2 rounded-lg border border-indigo-500/20 bg-indigo-950/30 p-2 text-xs text-indigo-200">
+                        معرّف الإرسال المحفوظ لدى العميل: <strong dir="ltr">{deposit.senderAccount.identifier}</strong>
+                      </p>
+                    )}
                   </div>
                   <span className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-bold text-slate-300">
                     {statusLabel[operation.status] || operation.status}
