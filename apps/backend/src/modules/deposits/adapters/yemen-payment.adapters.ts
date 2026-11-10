@@ -191,8 +191,8 @@ export class JaibPaymentAdapter extends BasePaymentChannelAdapter {
   getBaseInfo(): Omit<PaymentChannelInfo, 'mode' | 'capabilities'> {
     return {
       code: PaymentChannelCode.JAIB,
-      name: 'Jaib Wallet (CAC Bank)',
-      nameAr: 'محفظة جيب - بنك التسليف التعاوني الزراعي CAC',
+      name: 'Jaib Wallet (AHD Financial Services)',
+      nameAr: 'محفظة جيب - شركة عهد للخدمات المالية (AHD Financial)',
       accountNumber: '',
       accountHolderName: 'لم يتم اعتماد حساب استقبال لهذه القناة بعد',
       instructionsAr: 'قناة جيب غير مفعلة حتى إدخال حساب استقبال رسمي موثق واعتماده مالياً. لا تحول أموالاً بناءً على بيانات تجريبية.',
