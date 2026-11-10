@@ -670,6 +670,39 @@ export default function AdminDepositsPage() {
                       id={`sender-id-type-${channel.code}`}
                       value={channel.senderIdentifierType || 'PHONE'}
                       disabled={loadingAction}
+                      onChange={async (event) => {
+                        setLoadingAction(true);
+                        try {
+                          const identifierType = event.target.value;
+                          await requestApi(`/admin/deposits/channels/${encodeURIComponent(channel.code)}/sender-identifier-type`, {
+                            method: 'POST',
+                            body: JSON.stringify({ identifierType }),
+                          });
+                          await fetchChannels();
+                          setActionSuccess(`تم تغيير نوع معرّف الإرسال لقناة ${channel.code}. سيحتاج العملاء إلى حفظ معرّفهم بالنوع الجديد.`);
+                          setDataError(null);
+                        } catch (error) {
+                          setDataError(error instanceof Error ? error.message : 'تعذر تغيير نوع معرّف الإرسال.');
+                        } finally {
+                          setLoadingAction(false);
+                        }
+                      }}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
+                    >
+                      <option value="ALIAS">رقم بديل (ALIAS)</option>
+                      <option value="PHONE">رقم الهاتف المرتبط (PHONE)</option>
+                      <option value="WALLET_ID">معرّف المحفظة (WALLET_ID)</option>
+                      <option value="ACCOUNT_NUMBER">رقم الحساب (ACCOUNT_NUMBER)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                    <label htmlFor={`sender-id-type-${channel.code}`} className="text-slate-400 text-[11px]">
+                      معرّف حساب العميل المرسل:
+                    </label>
+                    <select
+                      id={`sender-id-type-${channel.code}`}
+                      value={channel.senderIdentifierType || 'PHONE'}
+                      disabled={loadingAction}
                       onChange={(event) => void handleUpdateSenderIdentifierType(channel.code, event.target.value)}
                       className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
                     >
