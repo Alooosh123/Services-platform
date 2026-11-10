@@ -34,6 +34,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     operation = {
       id: 'operation-1',
       tenantId: null,
+      channelCode: 'JAIB',
       direction: 'INBOUND_DEPOSIT',
       status: 'CLAIMED',
       depositRequestId: 'deposit-1',
