@@ -83,6 +83,10 @@ export default function CustomerWalletPage() {
   const [senderPhone, setSenderPhone] = useState('');
   const [senderIdentifier, setSenderIdentifier] = useState('');
   const [senderIdentifierConsent, setSenderIdentifierConsent] = useState(false);
+  const [showSenderAccountEditor, setShowSenderAccountEditor] = useState(false);
+  const [isSavingSenderAccount, setIsSavingSenderAccount] = useState(false);
+  const [senderAccountMessage, setSenderAccountMessage] = useState<string | null>(null);
+  const [senderAccountError, setSenderAccountError] = useState<string | null>(null);
   const [proofUrl, setProofUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -171,6 +175,57 @@ export default function CustomerWalletPage() {
     }
   };
 
+  const handleSaveSenderAccount = async () => {
+    if (!selectedChannelInfo || selectedChannelInfo.mode !== 'MANUAL') {
+      setSenderAccountError('تسجيل رقم المرسل متاح للقنوات اليدوية فقط.');
+      return;
+    }
+    if (!senderIdentifier.trim()) {
+      setSenderAccountError('أدخل رقم الهاتف أو المعرّف البديل لهذه المحفظة.');
+      return;
+    }
+    if (!senderIdentifierConsent) {
+      setSenderAccountError('يجب الموافقة على حفظ الرقم مشفّراً لغرض التحقق ومطابقة التحويلات.');
+      return;
+    }
+
+    setIsSavingSenderAccount(true);
+    setSenderAccountError(null);
+    setSenderAccountMessage(null);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('customer_token') : null;
+      if (!token) throw new Error('انتهت جلسة الدخول. سجّل الدخول ثم أعد المحاولة.');
+      const response = await fetch(apiUrl('/deposits/sender-accounts'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          channelCode: depositChannel,
+          identifierType: selectedChannelInfo.senderIdentifierType || 'PHONE',
+          identifier: senderIdentifier.trim(),
+          consentAccepted: true,
+        }),
+      });
+      const saved = await response.json();
+      if (!response.ok) throw new Error(saved.message || 'تعذر إرسال رقم المحفظة للمراجعة.');
+      setSenderAccounts((current) => [
+        ...current.filter((account) => account.channelCode !== depositChannel),
+        saved,
+      ]);
+      setSenderIdentifier('');
+      setSenderIdentifierConsent(false);
+      setShowSenderAccountEditor(false);
+      setSenderAccountMessage('تم حفظ الرقم وإرساله إلى صاحب التطبيق للمراجعة. ستتمكن من الشحن بهذه المحفظة بعد اعتماد الرقم.');
+    } catch (error) {
+      setSenderAccountError(error instanceof Error ? error.message : 'تعذر حفظ رقم المحفظة.');
+    } finally {
+      setIsSavingSenderAccount(false);
+    }
+  };
+
+
   const handleCopy = (acc: string) => {
     navigator.clipboard.writeText(acc);
     setCopiedAccount(acc);
@@ -201,40 +256,17 @@ export default function CustomerWalletPage() {
       const token = typeof window !== 'undefined' ? localStorage.getItem('customer_token') : null;
       let senderAccountId: string | undefined;
       if (isManualChannel) {
-        const existingSender = senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'));
-        if (senderIdentifier.trim()) {
-          if (!senderIdentifierConsent) {
-            throw new Error('وافق على حفظ معرّف حساب الإرسال مشفّراً حتى يستخدمه الوكيل في المطابقة.');
-          }
-          const saveResponse = await fetch(apiUrl('/deposits/sender-accounts'), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({
-              channelCode: depositChannel,
-              identifierType: selectedChannelInfo.senderIdentifierType || 'PHONE',
-              identifier: senderIdentifier.trim(),
-              consentAccepted: true,
-            }),
-          });
-          const saved = await saveResponse.json();
-          if (!saveResponse.ok) {
-            throw new Error(saved.message || 'تعذر حفظ معرّف حساب الإرسال.');
-          }
-          senderAccountId = saved.id;
-          setSenderAccounts((current) => [
-            ...current.filter((account) => account.channelCode !== depositChannel),
-            saved,
-          ]);
-          setSenderIdentifier('');
-          setSenderIdentifierConsent(false);
-        } else if (existingSender) {
-          senderAccountId = existingSender.id;
-        } else {
-          throw new Error('أدخل رقم البديل أو رقم الهاتف المرتبط بمحفظتك واحفظه أولاً.');
+        const existingSender = senderAccounts.find(
+          (account) => account.channelCode === depositChannel &&
+            account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'),
+        );
+        if (!existingSender) {
+          throw new Error('سجّل رقم هذه المحفظة مرة واحدة وانتظر مراجعة صاحب التطبيق قبل الشحن.');
         }
+        if (existingSender.status !== 'VERIFIED' || showSenderAccountEditor) {
+          throw new Error('رقم هذه المحفظة لا يزال بانتظار موافقة صاحب التطبيق. لا يمكن إنشاء طلب شحن قبل اعتماده.');
+        }
+        senderAccountId = existingSender.id;
       }
 
       const res = await fetch(apiUrl('/deposits/request'), {
@@ -289,6 +321,13 @@ export default function CustomerWalletPage() {
   );
   const selectedChannelInfo =
     currencyChannels.find((channel) => channel.code === depositChannel) || currencyChannels[0];
+  const selectedSenderAccount = senderAccounts.find(
+    (account) => account.channelCode === depositChannel &&
+      account.identifierType === (selectedChannelInfo?.senderIdentifierType || 'PHONE'),
+  );
+  const canCreateDeposit = !!selectedChannelInfo &&
+    (selectedChannelInfo.mode !== 'MANUAL' ||
+      (selectedSenderAccount?.status === 'VERIFIED' && !showSenderAccountEditor));
 
   const getStatusBadge = (status: DepositRequest['status']) => {
     switch (status) {
@@ -597,7 +636,7 @@ export default function CustomerWalletPage() {
                 </label>
                 <select
                   value={depositChannel}
-                  onChange={(e) => { setDepositChannel(e.target.value); setSenderIdentifier(''); setSenderIdentifierConsent(false); }}
+                  onChange={(e) => { setDepositChannel(e.target.value); setSenderIdentifier(''); setSenderIdentifierConsent(false); setShowSenderAccountEditor(false); setSenderAccountMessage(null); setSenderAccountError(null); }}
                   disabled={currencyChannels.length === 0}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right disabled:opacity-50"
                 >
@@ -624,6 +663,9 @@ export default function CustomerWalletPage() {
                     setDepositChannel(available[0]?.code || '');
                     setSenderIdentifier('');
                     setSenderIdentifierConsent(false);
+                    setShowSenderAccountEditor(false);
+                    setSenderAccountMessage(null);
+                    setSenderAccountError(null);
                   }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 text-right font-bold"
                 >
@@ -652,47 +694,77 @@ export default function CustomerWalletPage() {
             {selectedChannelInfo?.mode === 'MANUAL' && (
               <div className="space-y-3 rounded-2xl border border-indigo-500/30 bg-indigo-950/20 p-4">
                 <div>
-                  <h4 className="text-sm font-black text-indigo-200">حساب الإرسال الخاص بك على هذه المحفظة</h4>
+                  <h4 className="text-sm font-black text-indigo-200">توثيق حسابك على هذه المحفظة</h4>
                   <p className="mt-1 text-xs leading-6 text-slate-400">
-                    احفظه مرة واحدة فقط. سيستخدمه الوكيل لمطابقة اسم/معرّف المرسل مع الحركة الواردة في سجل المحفظة الرسمي.
+                    أدخل رقم الهاتف أو الرقم البديل مرة واحدة فقط. سيصل طلب التوثيق إلى صاحب التطبيق، ولن يُستخدم الرقم في الشحن حتى تتم الموافقة عليه.
                   </p>
                 </div>
-                {senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE')) && !senderIdentifier.trim() && (
-                  <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-200">
-                    الحساب المحفوظ: <strong>{senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'))?.maskedIdentifier}</strong>
-                    {' · '}الحالة: {senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'))?.status === 'VERIFIED' ? 'تم التحقق' : 'بانتظار أول مطابقة'}
-                    . اترك الحقل فارغاً لاستخدام الحساب المحفوظ، أو أدخل معرّفاً جديداً لتحديثه.
+
+                {selectedSenderAccount?.status === 'VERIFIED' && !showSenderAccountEditor && (
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200 space-y-2">
+                    <p><CheckCircle className="inline w-4 h-4 ml-1" /> تم اعتماد الحساب: <strong>{selectedSenderAccount.maskedIdentifier}</strong></p>
+                    <p>هذا الرقم محفوظ ومربوط بمحفظة {selectedChannelInfo.nameAr}، وسيُستخدم تلقائياً في جميع طلبات الشحن القادمة. لن تحتاج إلى إدخاله مرة أخرى.</p>
+                    <button type="button" onClick={() => { setShowSenderAccountEditor(true); setSenderAccountMessage(null); }} className="text-indigo-200 underline underline-offset-4">تغيير رقم المحفظة</button>
+                  </div>
+                )}
+
+                {selectedSenderAccount?.status === 'PENDING_VERIFICATION' && (
+                  <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-6 text-amber-200">
+                    رقم المحفظة المحفوظ: <strong>{selectedSenderAccount.maskedIdentifier}</strong>. طلب التوثيق لدى صاحب التطبيق وبانتظار الموافقة. لن تتمكن من الشحن بهذه المحفظة حتى اعتماد الرقم.
                   </p>
                 )}
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-bold text-slate-300">
-                    {selectedChannelInfo.senderIdentifierType === 'ALIAS'
-                      ? 'رقم البديل لمحفظتك'
-                      : selectedChannelInfo.senderIdentifierType === 'WALLET_ID'
-                        ? 'معرّف محفظتك'
-                        : selectedChannelInfo.senderIdentifierType === 'ACCOUNT_NUMBER'
-                          ? 'رقم حساب الإرسال'
-                          : 'رقم الهاتف المرتبط بمحفظتك'}
-                  </span>
-                  <input
-                    value={senderIdentifier}
-                    onChange={(e) => setSenderIdentifier(e.target.value)}
-                    maxLength={80}
-                    placeholder="اكتبه كما يظهر في تطبيق المحفظة"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono text-right focus:outline-none focus:border-indigo-500"
-                  />
-                </label>
-                {senderIdentifier.trim() && (
-                  <label className="flex items-start gap-2 text-xs leading-6 text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={senderIdentifierConsent}
-                      onChange={(e) => setSenderIdentifierConsent(e.target.checked)}
-                      className="mt-1"
-                    />
-                    <span>أوافق على حفظ هذا المعرّف مشفّراً وربطه بحسابي لهذه المحفظة لغرض مطابقة الإيداعات. لن يظهر كاملاً في واجهتي أو في السجل العام.</span>
-                  </label>
+
+                {selectedSenderAccount?.status === 'REJECTED' && (
+                  <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs leading-6 text-rose-200">
+                    تعذر اعتماد الرقم السابق ({selectedSenderAccount.maskedIdentifier}). السبب: {selectedSenderAccount.reviewNotes || 'يرجى مراجعة بيانات الرقم وإعادة إرساله.'}
+                  </p>
                 )}
+
+                {(!selectedSenderAccount || selectedSenderAccount.status === 'REJECTED' || showSenderAccountEditor) && (
+                  <div className="space-y-3">
+                    {showSenderAccountEditor && selectedSenderAccount?.status === 'VERIFIED' && (
+                      <p className="text-xs text-amber-200">تغيير الرقم سيوقف استخدام الرقم الحالي مؤقتاً، وسيحتاج الرقم الجديد إلى موافقة صاحب التطبيق من جديد.</p>
+                    )}
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-bold text-slate-300">
+                        {selectedChannelInfo.senderIdentifierType === 'ALIAS'
+                          ? 'رقم البديل لمحفظتك'
+                          : selectedChannelInfo.senderIdentifierType === 'WALLET_ID'
+                            ? 'معرّف محفظتك'
+                            : selectedChannelInfo.senderIdentifierType === 'ACCOUNT_NUMBER'
+                              ? 'رقم حساب الإرسال'
+                              : 'رقم الهاتف المرتبط بمحفظتك'}
+                      </span>
+                      <input
+                        value={senderIdentifier}
+                        onChange={(e) => setSenderIdentifier(e.target.value)}
+                        maxLength={80}
+                        placeholder="اكتبه كما يظهر في تطبيق المحفظة"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono text-right focus:outline-none focus:border-indigo-500"
+                      />
+                    </label>
+                    <label className="flex items-start gap-2 text-xs leading-6 text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={senderIdentifierConsent}
+                        onChange={(e) => setSenderIdentifierConsent(e.target.checked)}
+                        className="mt-1"
+                      />
+                      <span>أوافق على حفظ هذا المعرّف مشفّراً وربطه بحسابي لهذه المحفظة لغرض التحقق ومطابقة الإيداعات.</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={isSavingSenderAccount || !senderIdentifier.trim() || !senderIdentifierConsent} onClick={() => void handleSaveSenderAccount()} className="rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white">
+                        {isSavingSenderAccount ? 'جارٍ الإرسال للمراجعة...' : 'حفظ الرقم وإرساله للموافقة'}
+                      </button>
+                      {showSenderAccountEditor && selectedSenderAccount?.status === 'VERIFIED' && (
+                        <button type="button" disabled={isSavingSenderAccount} onClick={() => { setShowSenderAccountEditor(false); setSenderIdentifier(''); setSenderIdentifierConsent(false); }} className="rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-slate-300">إلغاء التغيير</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {senderAccountMessage && <p role="status" className="text-xs text-emerald-300">{senderAccountMessage}</p>}
+                {senderAccountError && <p role="alert" className="text-xs text-rose-300">{senderAccountError}</p>}
               </div>
             )}
             <div>
@@ -756,10 +828,10 @@ export default function CustomerWalletPage() {
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={isSubmitting || !selectedChannelInfo}
+                disabled={isSubmitting || !canCreateDeposit}
                 className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-sm transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
               >
-                {isSubmitting ? 'جاري إرسال الطلب...' : 'إرسال طلب الإيداع للتحقق'}
+                {isSubmitting ? 'جاري إرسال الطلب...' : selectedChannelInfo?.mode === 'MANUAL' && !canCreateDeposit ? 'انتظر اعتماد رقم المحفظة أولاً' : 'إرسال طلب الإيداع للتحقق'}
               </button>
             </div>
           </form>
