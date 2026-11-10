@@ -43,6 +43,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
       }),
     },
     supplierTransaction: {
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'supplier-tx-1' }),
     },
     provider: {
