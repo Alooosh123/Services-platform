@@ -288,7 +288,7 @@ export default function WalletAgentPage() {
                     </label>
                     <label className="space-y-1 text-xs text-slate-300 sm:col-span-2">
                       <span>رمز المصادقة الحديث للوكيل (TOTP) — مطلوب للقيد الآلي عند تفعيل السياسة</span>
-                      <input type="password" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" value={form.agentTotpCode} onChange={(e) => updateForm(operation.id, 'agentTotpCode', e.target.value.replace(/\\D/g, '').slice(0, 6))} placeholder="6 أرقام من تطبيق المصادقة" className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm font-mono tracking-widest text-white" />
+                      <input type="password" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" value={form.agentTotpCode} onChange={(e) => updateForm(operation.id, 'agentTotpCode', e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6 أرقام من تطبيق المصادقة" className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm font-mono tracking-widest text-white" />
                     </label>
                     <label className="space-y-1 text-xs text-slate-300 sm:col-span-2">
                       <span>ملاحظات الوكيل (اختياري)</span>
