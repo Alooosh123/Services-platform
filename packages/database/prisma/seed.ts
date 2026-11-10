@@ -261,8 +261,8 @@ async function main() {
   const paymentMethodsData = [
     {
       code: PaymentChannelCode.JAIB,
-      name: 'Jaib Wallet (CAC Bank)',
-      nameAr: 'محفظة جيب (بنك التسليف التعاوني الزراعي CAC)',
+      name: 'Jaib Wallet (AHD Financial Services)',
+      nameAr: 'محفظة جيب (شركة عهد للخدمات المالية AHD)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
       instructionsAr: 'قناة جيب تجريبية غير مفعلة. لا تستخدمها لاستقبال أموال فعلية حتى إدخال حساب رسمي موثق.',
@@ -330,7 +330,7 @@ async function main() {
     {
       code: PaymentChannelCode.JAIB,
       name: 'Jaib Wallet (CAC Bank)',
-      nameAr: 'محفظة جيب - بنك التسليف التعاوني الزراعي',
+      nameAr: 'محفظة جيب - شركة عهد للخدمات المالية',
       accountNumber: 'NOT_CONFIGURED',
       accountHolderName: 'يُحدد بعد التحقق من حساب الاستقبال الرسمي',
       instructionsAr: 'قناة غير مفعلة. يجب إدخال بيانات حساب الاستقبال الرسمية والتحقق منها قبل إتاحتها للعملاء.',
