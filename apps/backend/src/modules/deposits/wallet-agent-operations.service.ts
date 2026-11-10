@@ -319,7 +319,8 @@ export class WalletAgentOperationsService {
               .update(`wallet-receiver-account:v1:${operation.channelCode}:${normalizedReceiverAccount}`, 'utf8')
               .digest('hex')
           : '';
-      const transferEvidence = deposit?.senderAccount && receiverAccountLookupHash
+      const evidenceIngestionEnabled = process.env.ENABLE_WALLET_TRANSFER_EVIDENCE_INGESTION === 'true';
+      const transferEvidence = evidenceIngestionEnabled && deposit?.senderAccount && receiverAccountLookupHash
         ? await tx.walletTransferEvidence.findFirst({
             where: {
               id: dto.evidenceReference.trim(),
@@ -336,7 +337,7 @@ export class WalletAgentOperationsService {
             },
           })
         : null;
-      const trustedEvidenceMatches = !!transferEvidence &&
+      const trustedEvidenceMatches = evidenceIngestionEnabled && !!transferEvidence &&
         /^[a-f0-9]{64}$/i.test(transferEvidence.evidenceSha256 || '') &&
         (transferEvidence.evidenceSource === 'SIGNED_PROVIDER_WEBHOOK'
           ? !!transferEvidence.providerEventId
