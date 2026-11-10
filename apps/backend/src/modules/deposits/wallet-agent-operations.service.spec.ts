@@ -62,7 +62,8 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
         identifierType: 'PHONE',
         identifierCiphertext: encryption.encrypt('967771234567'),
         identifierLastFour: '4567',
-        status: 'PENDING_VERIFICATION',
+        identifierLookupHash: 'c'.repeat(64),
+        status: 'VERIFIED',
       },
     };
     config = {
@@ -72,6 +73,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
       providerAgreementReference: 'AGR-001',
       providerAgreementDocumentUrl: 'https://example.test/agreement.pdf',
       senderIdentifierType: 'PHONE',
+      accountNumber: '7700001234',
     };
     duplicateReference = null;
 
@@ -96,6 +98,22 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
       },
       depositStatusHistory: {
         create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+      },
+      walletTransferEvidence: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'evidence-verified-1',
+          channelCode: 'JAIB',
+          externalReference: 'JAIB-TXN-00001',
+          amount: new Prisma.Decimal(5000),
+          currency: 'YER',
+          senderIdentifierLookupHash: 'c'.repeat(64),
+          receiverAccountLookupHash: 'receiver-hash-placeholder',
+          evidenceSource: 'AUTHENTICATED_STATEMENT_IMPORT',
+          evidenceSha256: 'a'.repeat(64),
+          status: 'VERIFIED',
+          verifiedByUserId: 'finance-1',
+          verifiedAt: new Date('2026-11-10T10:00:00.000Z'),
+        }),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
@@ -149,7 +167,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     observedReferenceNumber: 'JAIB-TXN-00001',
     observedAccountLastFour: '1234',
     observedSenderIdentifier: '+967 771 234 567',
-    evidenceReference: 'STATEMENT-LINE-001',
+    evidenceReference: 'evidence-verified-1',
     agentTotpCode: TotpUtil.generateCode(agentTotpSecret),
     ...overrides,
   });
@@ -172,10 +190,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
       tx,
     );
     expect(tx.depositRequest.updateMany).toHaveBeenCalledTimes(1);
-    expect(tx.paymentSenderAccount.update).toHaveBeenCalledWith({
-      where: { id: 'sender-1' },
-      data: expect.objectContaining({ status: 'VERIFIED' }),
-    });
+    expect(tx.paymentSenderAccount.update).not.toHaveBeenCalled();
     expect(tx.walletAgentOperation.update).toHaveBeenCalledWith({
       where: { id: 'operation-1' },
       data: expect.objectContaining({ status: 'POSTED', ledgerTxId: 'ledger-1' }),
@@ -185,6 +200,36 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
         data: expect.objectContaining({ action: 'WALLET_AGENT_AUTOCREDIT_POSTED' }),
       }),
     );
+  });
+
+  it('does not auto-credit from agent-entered text without a separately verified official evidence record', async () => {
+    tx.walletTransferEvidence.findFirst.mockResolvedValue(null);
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+
+    expect(result.autoCredited).toBe(false);
+    expect(result.requiresFinanceReview).toBe(true);
+    expect(result.trustedEvidenceMatches).toBe(false);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
+    expect(tx.depositRequest.updateMany).not.toHaveBeenCalled();
+    expect(tx.walletTransferEvidence.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'evidence-verified-1',
+          channelCode: 'JAIB',
+          externalReference: 'JAIB-TXN-00001',
+          status: 'VERIFIED',
+          evidenceSource: { in: ['SIGNED_PROVIDER_WEBHOOK', 'AUTHENTICATED_STATEMENT_IMPORT'] },
+        }),
+      }),
+    );
+  });
+
+  it('does not auto-credit an observation attached to an unverified sender identity', async () => {
+    deposit.senderAccount.status = 'PENDING_VERIFICATION';
+    const result = await service.submitVerification('operation-1', 'agent-1', verification());
+    expect(result.autoCredited).toBe(false);
+    expect(result.requiresFinanceReview).toBe(true);
+    expect(ledger.recordTopup).not.toHaveBeenCalled();
   });
 
   it('does not credit when the observed sender identity does not match the saved customer account', async () => {
