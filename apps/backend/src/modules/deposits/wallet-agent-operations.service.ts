@@ -43,11 +43,17 @@ export class WalletAgentOperationsService {
   private async assertAgent(agentUserId: string) {
     const agent = await this.prisma.user.findFirst({
       where: { id: agentUserId, role: UserRole.PAYMENT_AGENT, isActive: true },
-      select: { id: true, role: true, tenantId: true },
+      select: {
+        id: true,
+        role: true,
+        tenantId: true,
+        isTwoFactorEnabled: true,
+        twoFactorSecret: true,
+      },
     });
     if (!agent) throw new ForbiddenException('حساب الوكيل غير مفعل أو لا يحمل دور وكيل المحافظ.');
-    if (this.tenantId && agent.tenantId !== this.tenantId) {
-      throw new ForbiddenException('لا يمكن لوكيل العمل على مهام متجر آخر.');
+    if (agent.tenantId !== this.tenantId) {
+      throw new ForbiddenException('سياق المتجر لا يطابق متجر الوكيل؛ تم رفض الوصول إلى مهام المحافظ.');
     }
     return agent;
   }
@@ -56,6 +62,7 @@ export class WalletAgentOperationsService {
     await this.assertAgent(agentUserId);
     const rows = await this.prisma.walletAgentOperation.findMany({
       where: {
+        tenantId: this.tenantId,
         OR: [
           { status: 'PENDING' },
           { agentUserId, status: { in: ['CLAIMED', 'AGENT_SUBMITTED', 'NEEDS_REVIEW'] } },
@@ -304,7 +311,9 @@ export class WalletAgentOperationsService {
         Number.isFinite(autoCreditLimitYER) &&
         autoCreditLimitYER > 0 &&
         dto.observedAmount <= autoCreditLimitYER &&
-        isMatch;
+        isMatch &&
+        agent.isTwoFactorEnabled === true &&
+        !!agent.twoFactorSecret;
 
       await tx.walletAgentOperation.update({
         where: { id: operationId },
