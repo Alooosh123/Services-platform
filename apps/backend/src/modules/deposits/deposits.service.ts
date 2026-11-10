@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   Injectable,
   NotFoundException,
@@ -132,6 +133,7 @@ export class DepositsService {
           isActive: c.isActive,
           mode: c.mode as PaymentChannelMode,
           isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
+          senderIdentifierType: c.senderIdentifierType,
         }));
       }
     } catch (err: any) {
@@ -157,14 +159,17 @@ export class DepositsService {
    */
   async createDepositRequest(userId: string, dto: CreateDepositDto) {
     this.assertCustomerWalletOperationsEnabled();
+    const suppliedReferenceNumber = dto.referenceNumber?.trim() || null;
+    const requestReferenceNumber = suppliedReferenceNumber || `PENDING-${randomUUID()}`;
     if (
       process.env.NODE_ENV === 'test' &&
+      suppliedReferenceNumber &&
       Array.from(this.memoryDeposits.values()).some((deposit) =>
         deposit.paymentMethodCode === dto.paymentMethodCode &&
-        deposit.referenceNumber.trim().toLowerCase() === dto.referenceNumber.trim().toLowerCase()
+        deposit.referenceNumber.trim().toLowerCase() === suppliedReferenceNumber.toLowerCase()
       )
     ) {
-      throw new ConflictException(`الرقم المرجعي "${dto.referenceNumber}" مسجل مسبقاً في النظام.`);
+      throw new ConflictException(`الرقم المرجعي "${suppliedReferenceNumber}" مسجل مسبقاً في النظام.`);
     }
     const activeChannel = (await this.getPaymentChannels()).find(
       (channel) => channel.code === dto.paymentMethodCode && channel.isActive,
@@ -183,6 +188,10 @@ export class DepositsService {
       }
     }
 
+    if (activeChannel?.mode === PaymentChannelMode.API && !suppliedReferenceNumber) {
+      throw new BadRequestException('قناة API تتطلب مرجع العملية الذي يصدره المزود بعد بدء الدفع.');
+    }
+
     const adapter = this.adapterRegistry.getAdapter(dto.paymentMethodCode);
     if (!adapter) {
       throw new BadRequestException(`قناة الدفع ${dto.paymentMethodCode} غير مدعومة`);
@@ -190,7 +199,7 @@ export class DepositsService {
 
     const validation = adapter.validateTransfer({
       amount: dto.amount,
-      referenceNumber: dto.referenceNumber,
+      referenceNumber: requestReferenceNumber,
       senderPhone: dto.senderPhone,
     });
 
@@ -207,15 +216,17 @@ export class DepositsService {
     const depositNumber = `DEP-${dateStr}-${randomSuffix}`;
 
     try {
-      // Check duplicate reference number
-      const existingRef = await this.prisma.depositRequest.findFirst({
-        where: {
-          paymentMethodCode: dto.paymentMethodCode,
-          referenceNumber: dto.referenceNumber,
-        },
-      });
-      if (existingRef) {
-        throw new ConflictException(`الرقم المرجعي "${dto.referenceNumber}" مسجل مسبقاً في النظام.`);
+      // Check only customer-supplied references; generated pending tokens are unique.
+      if (suppliedReferenceNumber) {
+        const existingRef = await this.prisma.depositRequest.findFirst({
+          where: {
+            paymentMethodCode: dto.paymentMethodCode,
+            referenceNumber: suppliedReferenceNumber,
+          },
+        });
+        if (existingRef) {
+          throw new ConflictException(`الرقم المرجعي "${suppliedReferenceNumber}" مسجل مسبقاً في النظام.`);
+        }
       }
 
       const deposit = await this.prisma.$transaction(async (tx) => {
@@ -247,6 +258,28 @@ export class DepositsService {
           );
         }
 
+        let senderAccount: any = null;
+        if (manualConfigReady) {
+          if (!dto.senderAccountId) {
+            throw new BadRequestException('احفظ رقم البديل أو رقم الهاتف المرتبط بمحفظتك أولاً حتى يتمكن الوكيل من مطابقة التحويل.');
+          }
+          senderAccount = await tx.paymentSenderAccount.findFirst({
+            where: {
+              id: dto.senderAccountId,
+              tenantId: getCurrentTenantId() || null,
+              userId,
+              channelCode: dto.paymentMethodCode,
+              status: { in: ['PENDING_VERIFICATION', 'VERIFIED'] },
+            },
+          });
+          if (!senderAccount) {
+            throw new BadRequestException('حساب الإرسال المحفوظ غير موجود أو لا يخص هذا العميل أو هذه القناة.');
+          }
+          if (senderAccount.identifierType !== config!.senderIdentifierType) {
+            throw new BadRequestException('نوع حساب الإرسال المحفوظ لا يطابق نوع المعرّف المعتمد للقناة.');
+          }
+        }
+
         const created = await tx.depositRequest.create({
           data: {
             depositNumber,
@@ -255,7 +288,8 @@ export class DepositsService {
             currency: dto.currency,
             amount: dto.amount,
             paymentMethodCode: dto.paymentMethodCode,
-            referenceNumber: dto.referenceNumber.trim(),
+            referenceNumber: suppliedReferenceNumber || requestReferenceNumber,
+            senderAccountId: senderAccount?.id || null,
             proofImageUrl: dto.proofImageUrl || null,
             senderName: dto.senderName || null,
             senderPhone: dto.senderPhone || null,
@@ -266,7 +300,7 @@ export class DepositsService {
                 toStatus: DepositStatus.PENDING,
                 changedByUserId: userId,
                 notes: manualConfigReady
-                  ? 'تم استلام طلب الإيداع، وبانتظار تحقق وكيل المحافظ ثم اعتماد المالية.'
+                  ? 'تم استلام طلب الإيداع؛ سيطابق الوكيل الحساب المرسل والحركة الواردة، ثم يضاف الرصيد آلياً عند اكتمال المطابقة وتفعيل السياسة.'
                   : 'Sandbox test deposit request.',
               },
             },
@@ -287,8 +321,9 @@ export class DepositsService {
               customerUserId: userId,
               expectedAmount: new Prisma.Decimal(dto.amount),
               expectedCurrency: dto.currency,
-              expectedReferenceNumber: dto.referenceNumber.trim(),
+              expectedReferenceNumber: suppliedReferenceNumber,
               expectedAccountLastFour: config!.accountNumber.slice(-4),
+              expectedSenderAccountLastFour: senderAccount!.identifierLastFour,
             },
           });
         }
@@ -297,7 +332,7 @@ export class DepositsService {
 
       return {
         success: true,
-        message: 'تم استلام طلب الإيداع بنجاح وهو قيد المراجعة المالية والتدقيق.',
+        message: 'تم استلام طلب الإيداع. سيطابق الوكيل الحركة الواردة؛ وعند اكتمال المطابقة وتفعيل سياسة القيد الآلي قد يضاف الرصيد دون مراجعة مالية لكل عملية.',
         deposit,
       };
     } catch (err: any) {
@@ -323,7 +358,7 @@ export class DepositsService {
           currency: dto.currency,
           amount: dto.amount,
           paymentMethodCode: dto.paymentMethodCode,
-          referenceNumber: dto.referenceNumber,
+          referenceNumber: requestReferenceNumber,
           proofImageUrl: dto.proofImageUrl || null,
           senderName: dto.senderName || null,
           senderPhone: dto.senderPhone || null,
@@ -667,6 +702,13 @@ export class DepositsService {
         notes,
       }, tx);
       const ledgerTxId = ledgerResult.transaction.id;
+
+      if (deposit.senderAccountId) {
+        await tx.paymentSenderAccount.update({
+          where: { id: deposit.senderAccountId },
+          data: { status: 'VERIFIED', verifiedAt: new Date() },
+        });
+      }
 
       if (verifiedAgentOperation) {
         await tx.walletAgentOperation.update({
