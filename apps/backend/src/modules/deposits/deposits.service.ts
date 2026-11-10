@@ -107,11 +107,19 @@ export class DepositsService {
       const dbConfigs = await this.prisma.paymentChannelConfig.findMany({
         where: { tenantId: getCurrentTenantId() || null },
       });
+      // The current release supports manual wallet inspection only.
+      // API channels stay hidden until a channel-specific official adapter is installed
+      // and production webhook/lookup processing has been enabled and security-tested.
       const verifiedConfigs = dbConfigs.filter((config) =>
         config.isActive &&
         config.verificationStatus === ChannelVerificationStatus.VERIFIED &&
-        config.mode !== PaymentChannelMode.DISABLED &&
-        config.mode !== PaymentChannelMode.BLOCKED_EXTERNAL,
+        config.mode === PaymentChannelMode.MANUAL &&
+        !!config.accountNumber &&
+        config.accountNumber !== 'NOT_CONFIGURED' &&
+        !!config.regulatoryApprovalReference &&
+        !!config.regulatoryApprovalDocumentUrl &&
+        !!config.providerAgreementReference &&
+        !!config.providerAgreementDocumentUrl,
       );
 
       // A configured database is authoritative, including the case where every
@@ -156,7 +164,8 @@ export class DepositsService {
 
   /**
    * Customer initiates a deposit request
-   * Strictly creates request in PENDING state; NEVER credits customer wallet automatically.
+   * Creates a pending request. Manual channels are credited only by the guarded assigned-agent workflow;
+   * API channels remain hidden until an official production adapter is installed.
    */
   async createDepositRequest(userId: string, dto: CreateDepositDto) {
     this.assertCustomerWalletOperationsEnabled();
