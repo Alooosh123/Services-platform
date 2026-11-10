@@ -201,7 +201,7 @@ export default function CustomerWalletPage() {
       const token = typeof window !== 'undefined' ? localStorage.getItem('customer_token') : null;
       let senderAccountId: string | undefined;
       if (isManualChannel) {
-        const existingSender = senderAccounts.find((account) => account.channelCode === depositChannel);
+        const existingSender = senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'));
         if (senderIdentifier.trim()) {
           if (!senderIdentifierConsent) {
             throw new Error('وافق على حفظ معرّف حساب الإرسال مشفّراً حتى يستخدمه الوكيل في المطابقة.');
@@ -657,10 +657,10 @@ export default function CustomerWalletPage() {
                     احفظه مرة واحدة فقط. سيستخدمه الوكيل لمطابقة اسم/معرّف المرسل مع الحركة الواردة في سجل المحفظة الرسمي.
                   </p>
                 </div>
-                {senderAccounts.find((account) => account.channelCode === depositChannel) && !senderIdentifier.trim() && (
+                {senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE')) && !senderIdentifier.trim() && (
                   <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-200">
-                    الحساب المحفوظ: <strong>{senderAccounts.find((account) => account.channelCode === depositChannel)?.maskedIdentifier}</strong>
-                    {' · '}الحالة: {senderAccounts.find((account) => account.channelCode === depositChannel)?.status === 'VERIFIED' ? 'تم التحقق' : 'بانتظار أول مطابقة'}
+                    الحساب المحفوظ: <strong>{senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'))?.maskedIdentifier}</strong>
+                    {' · '}الحالة: {senderAccounts.find((account) => account.channelCode === depositChannel && account.identifierType === (selectedChannelInfo.senderIdentifierType || 'PHONE'))?.status === 'VERIFIED' ? 'تم التحقق' : 'بانتظار أول مطابقة'}
                     . اترك الحقل فارغاً لاستخدام الحساب المحفوظ، أو أدخل معرّفاً جديداً لتحديثه.
                   </p>
                 )}
