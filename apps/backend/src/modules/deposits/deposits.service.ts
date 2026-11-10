@@ -356,7 +356,7 @@ export class DepositsService {
         uniqueTarget.includes('paymentMethodCode') &&
         uniqueTarget.includes('referenceNumber')
       ) {
-        throw new ConflictException(`الرقم المرجعي "${dto.referenceNumber}" مسجل مسبقاً في النظام.`);
+        throw new ConflictException(`الرقم المرجعي "${suppliedReferenceNumber || requestReferenceNumber}" مسجل مسبقاً في النظام.`);
       }
       this.assertMemoryFallbackAllowed('create deposit request', err);
       if (process.env.NODE_ENV === 'test') {
