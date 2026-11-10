@@ -25,6 +25,7 @@ const TENANT_DIRECT_MODELS = new Set([
   'PinVault',
   'ProviderApiLog',
   'PaymentChannelConfig',
+  'PaymentSenderAccount',
   'ProductPrice',
   'ProductTierPrice',
   'PilotRunAudit',
@@ -103,6 +104,13 @@ const TENANT_WRITE_REFERENCES: Record<
     { field: 'verifiedByUserId', relation: 'verifiedBy', delegate: 'user' },
   ],
   PaymentWebhookEvent: [{ field: 'paymentId', relation: 'payment', delegate: 'payment' }],
+  PaymentSenderAccount: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'reviewedByUserId', relation: 'reviewedBy', delegate: 'user' },
+  ],
+  WalletTransferEvidence: [
+    { field: 'verifiedByUserId', relation: 'verifiedBy', delegate: 'user' },
+  ],
   Order: [
     { field: 'userId', relation: 'user', delegate: 'user' },
     { field: 'agentParentUserId', relation: 'agentCommissionRecipient', delegate: 'user' },
