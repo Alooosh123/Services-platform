@@ -37,6 +37,7 @@ type VerificationForm = {
   observedAccountLastFour: string;
   observedSenderIdentifier: string;
   evidenceReference: string;
+  agentTotpCode: string;
   agentNotes: string;
 };
 
@@ -47,6 +48,7 @@ const emptyForm: VerificationForm = {
   observedAccountLastFour: '',
   observedSenderIdentifier: '',
   evidenceReference: '',
+  agentTotpCode: '',
   agentNotes: '',
 };
 
@@ -144,6 +146,10 @@ export default function WalletAgentPage() {
       setError('رقم الحركة ومرجع مستند/كشف المطابقة مطلوبان.');
       return;
     }
+    if (form.agentTotpCode.trim() && !/^[0-9]{6}$/.test(form.agentTotpCode.trim())) {
+      setError('رمز المصادقة يجب أن يتكون من 6 أرقام.');
+      return;
+    }
 
     setBusyId(operation.id);
     try {
@@ -156,12 +162,17 @@ export default function WalletAgentPage() {
           observedAccountLastFour: form.observedAccountLastFour,
           observedSenderIdentifier: form.observedSenderIdentifier.trim(),
           evidenceReference: form.evidenceReference.trim(),
+          ...(form.agentTotpCode.trim() ? { agentTotpCode: form.agentTotpCode.trim() } : {}),
           agentNotes: form.agentNotes.trim() || undefined,
         }),
       });
       setNotice(result?.autoCredited === true
-        ? 'تمت مطابقة الحركة مع الحساب المرسل وحساب الاستقبال وسجل العملية؛ أضيف الرصيد تلقائياً ورُحّل القيد المحاسبي.'
+        ? 'تمت مطابقة الحركة مع سجل الحساب؛ رُحّل القيد المزدوج وأضيف الرصيد تلقائياً.'
         : 'تم إرسال نتيجة المطابقة. لم يُضف الرصيد آلياً؛ هذه الحركة تنتظر المراجعة المالية.');
+      setForms((current) => ({
+        ...current,
+        [operation.id]: { ...(current[operation.id] || emptyForm), agentTotpCode: '' },
+      }));
       setError(null);
       await loadQueue();
     } catch (e) {
@@ -185,7 +196,7 @@ export default function WalletAgentPage() {
         <div>
           <h1 className="text-2xl font-black text-white">مهام وكيل المحافظ</h1>
           <p className="mt-1 text-sm text-slate-400">
-            التحقق من سجل التحويل الرسمي. عند التطابق الدقيق وتفعيل سياسة القيد الآلي، يرحّل النظام القيد المزدوج؛ وإلا تُحال الحركة للمالية.
+            افحص سجل التحويل الرسمي. عند اكتمال المطابقة وتفعيل سياسة القيد الآلي، يلزم رمز مصادقة حديث من تطبيقك؛ وإلا تُحال الحركة للمالية.
           </p>
         </div>
         <button
@@ -276,6 +287,10 @@ export default function WalletAgentPage() {
                       <input required value={form.evidenceReference} onChange={(e) => updateForm(operation.id, 'evidenceReference', e.target.value)} placeholder="مثال: رقم سطر كشف الحساب أو رقم مستند داخلي" className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white" />
                     </label>
                     <label className="space-y-1 text-xs text-slate-300 sm:col-span-2">
+                      <span>رمز المصادقة الحديث للوكيل (TOTP) — مطلوب للقيد الآلي عند تفعيل السياسة</span>
+                      <input type="password" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" value={form.agentTotpCode} onChange={(e) => updateForm(operation.id, 'agentTotpCode', e.target.value.replace(/\\D/g, '').slice(0, 6))} placeholder="6 أرقام من تطبيق المصادقة" className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm font-mono tracking-widest text-white" />
+                    </label>
+                    <label className="space-y-1 text-xs text-slate-300 sm:col-span-2">
                       <span>ملاحظات الوكيل (اختياري)</span>
                       <textarea rows={2} value={form.agentNotes} onChange={(e) => updateForm(operation.id, 'agentNotes', e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white" />
                     </label>
@@ -284,7 +299,7 @@ export default function WalletAgentPage() {
                     </p>
                     <div className="sm:col-span-2">
                       <button type="submit" disabled={busyId === operation.id} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">
-                        إرسال المطابقة إلى المالية
+                        إرسال المطابقة والتحقق
                       </button>
                     </div>
                   </form>
