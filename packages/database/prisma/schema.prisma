@@ -344,6 +344,7 @@ model User {
   walletTopups             WalletTopup[]
   depositRequests          DepositRequest[]       @relation("UserDeposits")
   paymentSenderAccounts    PaymentSenderAccount[]
+  reviewedPaymentSenderAccounts PaymentSenderAccount[] @relation("PaymentSenderAccountReviewedBy")
   reviewedDeposits         DepositRequest[]       @relation("DepositReviewedBy")
   depositHistories         DepositStatusHistory[] @relation("DepositHistoryChangedBy")
   currencyExchanges        CurrencyExchange[]
@@ -591,15 +592,20 @@ model PaymentSenderAccount {
   consentGrantedAt      DateTime @default(now())
   consentTextVersion    String   @default("payment-sender-account-v1")
   verifiedAt            DateTime?
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  reviewNotes           String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deposits DepositRequest[]
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User?           @relation("PaymentSenderAccountReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  deposits   DepositRequest[]
 
   @@unique([userId, channelCode])
   @@index([tenantId, userId, channelCode, status])
   @@index([tenantId, channelCode, identifierLookupHash])
+  @@index([tenantId, status, createdAt])
   @@map("payment_sender_accounts")
 }
 
