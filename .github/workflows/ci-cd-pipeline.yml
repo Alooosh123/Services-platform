@@ -36,7 +36,7 @@ jobs:
           cache: npm
 
       - name: Resolve compatible lockfile without force upgrades
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        run: npm update --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Commit lockfile when dependency tree changed
         env:
