@@ -7,6 +7,7 @@ import { WalletAgentOperationsService } from './wallet-agent-operations.service'
 describe('WalletAgentOperationsService manual auto-credit security', () => {
   const originalEnabled = process.env.ENABLE_AGENT_AUTO_CREDIT;
   const originalLimit = process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER;
+  const originalEncryptionKey = process.env.ENCRYPTION_KEY;
   const encryption = new EncryptionService();
   let service: WalletAgentOperationsService;
   let prisma: any;
@@ -18,6 +19,7 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
   let duplicateReference: any;
 
   beforeEach(() => {
+    process.env.ENCRYPTION_KEY = 'b'.repeat(64);
     process.env.ENABLE_AGENT_AUTO_CREDIT = 'true';
     process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER = '10000';
     operation = {
@@ -117,6 +119,8 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
     else process.env.ENABLE_AGENT_AUTO_CREDIT = originalEnabled;
     if (originalLimit === undefined) delete process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER;
     else process.env.WALLET_AGENT_AUTO_CREDIT_MAX_AMOUNT_YER = originalLimit;
+    if (originalEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY;
+    else process.env.ENCRYPTION_KEY = originalEncryptionKey;
   });
 
   const verification = (overrides: Partial<any> = {}) => ({
