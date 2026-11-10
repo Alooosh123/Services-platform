@@ -139,6 +139,18 @@ class _WalletPageState extends State<WalletPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const DepositPage()),
+                      );
+                      if (mounted) await reload();
+                    },
+                    icon: const Icon(Icons.add_card),
+                    label: const Text('إيداع في المحفظة'),
+                  ),
+                  const SizedBox(height: 12),
                   const Text(
                     'أرصدة منفصلة حسب العملة',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
@@ -249,6 +261,328 @@ class _WalletPageState extends State<WalletPage> {
         ),
       );
 }
+
+class DepositPage extends StatefulWidget {
+  const DepositPage({super.key});
+  @override
+  State<DepositPage> createState() => _DepositPageState();
+}
+
+class _DepositPageState extends State<DepositPage> {
+  final amount = TextEditingController(text: '25000');
+  final reference = TextEditingController();
+  final senderIdentifier = TextEditingController();
+  final senderName = TextEditingController();
+  String currency = 'YER';
+  String? channelCode;
+  bool consentAccepted = false;
+  bool loading = true;
+  bool submitting = false;
+  List<Map<String, dynamic>> channels = [];
+  List<Map<String, dynamic>> senderAccounts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  @override
+  void dispose() {
+    amount.dispose();
+    reference.dispose();
+    senderIdentifier.dispose();
+    senderName.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    setState(() => loading = true);
+    try {
+      final c = rows(await ApiClient.instance.get('/deposits/channels'));
+      final a = rows(await ApiClient.instance.get('/deposits/sender-accounts'));
+      if (!mounted) return;
+      setState(() {
+        channels = c;
+        senderAccounts = a;
+        final usable = c.where((item) =>
+          (item['supportedCurrencies'] as List? ?? const []).contains(currency) &&
+          item['mode'] == 'MANUAL'
+        ).toList();
+        channelCode = usable.isNotEmpty ? usable.first['code']?.toString() : null;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحميل قنوات الإيداع: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  List<Map<String, dynamic>> get availableChannels => channels.where((item) =>
+    item['mode'] == 'MANUAL' &&
+    (item['supportedCurrencies'] as List? ?? const []).contains(currency)
+  ).toList();
+
+  Map<String, dynamic>? get selectedChannel {
+    for (final item in availableChannels) {
+      if (item['code']?.toString() == channelCode) return item;
+    }
+    return availableChannels.isEmpty ? null : availableChannels.first;
+  }
+
+  Map<String, dynamic>? get savedSenderAccount {
+    for (final item in senderAccounts) {
+      if (item['channelCode']?.toString() == channelCode) return item;
+    }
+    return null;
+  }
+
+  String get identifierLabel {
+    switch (selectedChannel?['senderIdentifierType']?.toString()) {
+      case 'ALIAS':
+        return 'رقم البديل لمحفظتك';
+      case 'WALLET_ID':
+        return 'معرّف محفظتك';
+      case 'ACCOUNT_NUMBER':
+        return 'رقم حساب الإرسال';
+      default:
+        return 'رقم الهاتف المرتبط بمحفظتك';
+    }
+  }
+
+  Future<void> submit() async {
+    final channel = selectedChannel;
+    if (channel == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد قناة يدوية متاحة لهذه العملة حالياً.')),
+      );
+      return;
+    }
+    final value = double.tryParse(amount.text.trim());
+    if (value == null || value <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أدخل مبلغاً صالحاً.')),
+      );
+      return;
+    }
+
+    setState(() => submitting = true);
+    try {
+      String? senderAccountId;
+      final saved = savedSenderAccount;
+      if (senderIdentifier.text.trim().isNotEmpty) {
+        if (!consentAccepted) {
+          throw const ApiException('وافق على حفظ معرّف حساب الإرسال مشفّراً حتى يستخدمه الوكيل في المطابقة.');
+        }
+        final savedResult = await ApiClient.instance.post(
+          '/deposits/sender-accounts',
+          body: {
+            'channelCode': channelCode,
+            'identifierType': channel['senderIdentifierType'] ?? 'PHONE',
+            'identifier': senderIdentifier.text.trim(),
+            'consentAccepted': true,
+          },
+        );
+        if (savedResult is! Map || savedResult['id'] == null) {
+          throw const ApiException('تعذر حفظ حساب الإرسال.');
+        }
+        senderAccountId = savedResult['id'].toString();
+        senderAccounts = [
+          ...senderAccounts.where((a) => a['channelCode'] != channelCode),
+          Map<String, dynamic>.from(savedResult),
+        ];
+        senderIdentifier.clear();
+        consentAccepted = false;
+      } else if (saved != null) {
+        senderAccountId = saved['id']?.toString();
+      } else {
+        throw const ApiException('أدخل رقم البديل أو رقم الهاتف المرتبط بمحفظتك واحفظه أولاً.');
+      }
+
+      final payload = <String, dynamic>{
+        'currency': currency,
+        'amount': value,
+        'paymentMethodCode': channelCode,
+        'senderAccountId': senderAccountId,
+        'senderName': senderName.text.trim(),
+        if (reference.text.trim().isNotEmpty)
+          'referenceNumber': reference.text.trim(),
+      };
+      final result = await ApiClient.instance.post('/deposits/request', body: payload);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result is Map
+              ? (result['message']?.toString() ?? 'تم تسجيل طلب الإيداع.')
+              : 'تم تسجيل طلب الإيداع.',
+          ),
+        ),
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final channel = selectedChannel;
+    final saved = savedSenderAccount;
+    return Scaffold(
+      appBar: AppBar(title: const Text('إيداع في المحفظة')),
+      body: loading
+        ? const Center(child: CircularProgressIndicator())
+        : RefreshIndicator(
+            onRefresh: load,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                const Text(
+                  'حوّل المبلغ إلى حساب الاستقبال الرسمي ثم أرسل الطلب. سيطابق الوكيل سجل الحركة الواردة.',
+                  style: TextStyle(color: Colors.white70, height: 1.6),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: currency,
+                  decoration: const InputDecoration(labelText: 'عملة الإيداع'),
+                  items: const [
+                    DropdownMenuItem(value: 'YER', child: Text('ريال يمني (YER)')),
+                    DropdownMenuItem(value: 'USD', child: Text('دولار أمريكي (USD)')),
+                    DropdownMenuItem(value: 'SAR', child: Text('ريال سعودي (SAR)')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      currency = value;
+                      final next = channels.where((item) =>
+                        item['mode'] == 'MANUAL' &&
+                        (item['supportedCurrencies'] as List? ?? const []).contains(currency)
+                      ).toList();
+                      channelCode = next.isEmpty ? null : next.first['code']?.toString();
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: channelCode,
+                  decoration: const InputDecoration(labelText: 'محفظة التحويل'),
+                  items: [
+                    for (final item in availableChannels)
+                      DropdownMenuItem(
+                        value: item['code']?.toString(),
+                        child: Text(item['nameAr']?.toString() ?? item['code'].toString()),
+                      ),
+                  ],
+                  onChanged: (value) => setState(() => channelCode = value),
+                ),
+                if (channel != null) ...[
+                  const SizedBox(height: 12),
+                  Card(
+                    color: panel,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('حساب الاستقبال: ${channel['accountNumber'] ?? '—'}'),
+                          Text('الاسم: ${channel['accountHolderName'] ?? '—'}'),
+                          const SizedBox(height: 8),
+                          Text(
+                            channel['instructionsAr']?.toString() ?? '',
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amount,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(labelText: 'المبلغ ($currency)'),
+                  ),
+                  const SizedBox(height: 12),
+                  if (saved != null) ...[
+                    Card(
+                      color: panel,
+                      child: ListTile(
+                        title: Text('الحساب المحفوظ: ${saved['maskedIdentifier'] ?? '—'}'),
+                        subtitle: Text(saved['status'] == 'VERIFIED'
+                          ? 'تم التحقق من الحساب'
+                          : 'بانتظار أول مطابقة من الوكيل'),
+                        leading: const Icon(Icons.verified_user_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  TextField(
+                    controller: senderIdentifier,
+                    maxLength: 80,
+                    decoration: InputDecoration(
+                      labelText: identifierLabel,
+                      hintText: saved == null
+                        ? 'أدخل المعرّف كما يظهر في تطبيق المحفظة'
+                        : 'اتركه فارغاً لاستخدام الحساب المحفوظ أو أدخل الجديد لتحديثه',
+                    ),
+                  ),
+                  if (senderIdentifier.text.trim().isNotEmpty)
+                    CheckboxListTile(
+                      value: consentAccepted,
+                      onChanged: (value) => setState(() => consentAccepted = value == true),
+                      title: const Text(
+                        'أوافق على حفظ المعرّف مشفّراً واستخدامه لمطابقة الإيداعات.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: reference,
+                    decoration: const InputDecoration(
+                      labelText: 'رقم الحوالة المرجعي (اختياري إذا لم يظهر)',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: senderName,
+                    decoration: const InputDecoration(labelText: 'اسم صاحب الحساب (اختياري)'),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: submitting ? null : submit,
+                    icon: submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send),
+                    label: Text(submitting ? 'جاري الإرسال...' : 'إرسال طلب الإيداع'),
+                  ),
+                ] else
+                  const Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text('لا توجد قناة تحويل يدوية نشطة ومعتمدة لهذه العملة.'),
+                  ),
+              ],
+            ),
+          ),
+    );
+  }
+}
+
 class ProfilePage extends StatefulWidget{const ProfilePage({super.key});@override State<ProfilePage> createState()=>_ProfilePageState();}
 class _ProfilePageState extends State<ProfilePage>{
  late Future<dynamic> profile;@override void initState(){super.initState();profile=ApiClient.instance.get('/auth/profile');}
