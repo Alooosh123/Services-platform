@@ -22,6 +22,26 @@ import {
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
 
+interface SenderAccountReview {
+  id: string;
+  channelCode: string;
+  identifierType: string;
+  identifier: string;
+  maskedIdentifier: string;
+  status: string;
+  createdAt: string;
+  consentGrantedAt: string;
+  user: {
+    id: string;
+    fullName: string;
+    fullNameAr?: string;
+    email?: string;
+    phone?: string;
+    isVerified: boolean;
+    phoneVerifiedAt?: string | null;
+  };
+}
+
 interface DepositItem {
   id: string;
   depositNumber: string;
@@ -57,7 +77,8 @@ interface DepositItem {
 
 export default function AdminDepositsPage() {
   const [deposits, setDeposits] = useState<DepositItem[]>([]);
-  const [activeView, setActiveView] = useState<'deposits' | 'channels'>('deposits');
+  const [activeView, setActiveView] = useState<'deposits' | 'channels' | 'sender-accounts'>('deposits');
+  const [senderAccountRequests, setSenderAccountRequests] = useState<SenderAccountReview[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -112,6 +133,19 @@ export default function AdminDepositsPage() {
     }
   };
 
+  const fetchSenderAccountRequests = async () => {
+    try {
+      const data = await requestApi('/admin/deposits/sender-accounts/pending');
+      if (!Array.isArray(data)) throw new Error('استجابة طلبات توثيق أرقام المحافظ غير صالحة.');
+      setSenderAccountRequests(data);
+      setDataError(null);
+    } catch (error) {
+      setSenderAccountRequests([]);
+      setDataError(error instanceof Error ? error.message : 'تعذر تحميل طلبات توثيق أرقام المحافظ.');
+    }
+  };
+
+
   useEffect(() => {
     void fetchDeposits();
   }, [filterStatus]);
@@ -119,6 +153,53 @@ export default function AdminDepositsPage() {
   useEffect(() => {
     void fetchChannels();
   }, []);
+
+  useEffect(() => {
+    if (activeView === 'sender-accounts') void fetchSenderAccountRequests();
+  }, [activeView]);
+
+  const handleApproveSenderAccount = async (account: SenderAccountReview) => {
+    if (!confirm('هل راجعت بيانات العميل وتأكدت من صحة رقم ' + account.identifier + ' لمحفظة ' + account.channelCode + '؟')) return;
+    const reviewNotes = prompt('ملاحظات المراجعة (اختياري):', 'تمت مراجعة بيانات العميل واعتماد رقم المحفظة.');
+    if (reviewNotes === null) return;
+    setLoadingAction(true);
+    try {
+      await requestApi('/admin/deposits/sender-accounts/' + encodeURIComponent(account.id) + '/approve', {
+        method: 'POST',
+        body: JSON.stringify({ reviewNotes }),
+      });
+      await fetchSenderAccountRequests();
+      setActionSuccess('تم اعتماد رقم ' + account.maskedIdentifier + ' للعميل ' + account.user.fullName + '. سيُستخدم تلقائياً في طلبات الشحن القادمة.');
+      setDataError(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر اعتماد رقم المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleRejectSenderAccount = async (account: SenderAccountReview) => {
+    const rejectionReason = prompt('اكتب سبب رفض الرقم ليظهر للعميل ويتمكن من تصحيحه:');
+    if (rejectionReason === null) return;
+    if (!rejectionReason.trim()) {
+      alert('سبب الرفض إجباري.');
+      return;
+    }
+    setLoadingAction(true);
+    try {
+      await requestApi('/admin/deposits/sender-accounts/' + encodeURIComponent(account.id) + '/reject', {
+        method: 'POST',
+        body: JSON.stringify({ rejectionReason: rejectionReason.trim() }),
+      });
+      await fetchSenderAccountRequests();
+      setActionSuccess('تم رفض رقم المحفظة للعميل ' + account.user.fullName + ' وتسجيل السبب.');
+      setDataError(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر رفض رقم المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
 
   const handleUpdateSenderIdentifierType = async (code: string, identifierType: string) => {
     const selected = channels.find((item) => item.code === code);
@@ -440,6 +521,21 @@ export default function AdminDepositsPage() {
             </span>
           )}
         </button>
+        <button
+          onClick={() => setActiveView('sender-accounts')}
+          className={`pb-3 px-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+            activeView === 'sender-accounts'
+              ? 'border-indigo-500 text-indigo-400'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <User className="w-4 h-4" /> توثيق أرقام المحافظ (لصاحب التطبيق)
+          {senderAccountRequests.length > 0 && (
+            <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+              {senderAccountRequests.length} طلب جديد
+            </span>
+          )}
+        </button>
       </div>
 
       {activeView === 'deposits' && (
@@ -577,6 +673,74 @@ export default function AdminDepositsPage() {
             </div>
           </div>
         </>
+      )}
+
+      {activeView === 'sender-accounts' && (
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs leading-6 text-amber-100">
+            هذه الشاشة مخصصة لصاحب التطبيق أو مدير المنصة الأعلى فقط. اعرض الرقم الكامل هنا لغرض مطابقته يدوياً مع بيانات المحفظة أو مستند العميل، ولا تطلب من العميل مطلقاً رقم PIN أو رمز OTP الخاص بالمحفظة.
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-white">طلبات توثيق أرقام المحافظ</h2>
+              <p className="text-xs text-slate-400 mt-1">لا يصبح الرقم صالحاً للشحن إلا بعد موافقتك. قرارك ووقته يُحفظان في سجل التدقيق.</p>
+            </div>
+            <button onClick={() => void fetchSenderAccountRequests()} disabled={loadingAction} className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200">
+              <RefreshCw className="inline w-3.5 h-3.5 ml-1" /> تحديث
+            </button>
+          </div>
+
+          {senderAccountRequests.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">
+              لا توجد طلبات توثيق معلقة حالياً.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {senderAccountRequests.map((account) => (
+                <article key={account.id} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-black text-white">{account.user.fullNameAr || account.user.fullName}</h3>
+                      <p className="text-xs text-slate-400 mt-1">{account.user.phone || account.user.email || 'لا توجد بيانات اتصال'}</p>
+                    </div>
+                    <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-200">بانتظار موافقتك</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-xl bg-slate-950 p-3">
+                      <span className="block text-slate-500 mb-1">المحفظة</span>
+                      <strong className="text-slate-200">{account.channelCode}</strong>
+                    </div>
+                    <div className="rounded-xl bg-slate-950 p-3">
+                      <span className="block text-slate-500 mb-1">نوع المعرّف</span>
+                      <strong className="text-slate-200">{account.identifierType}</strong>
+                    </div>
+                    <div className="col-span-2 rounded-xl border border-indigo-500/30 bg-indigo-950/30 p-3">
+                      <span className="block text-indigo-200 mb-1">الرقم الذي أدخله العميل - للمراجعة فقط</span>
+                      <strong dir="ltr" className="block break-all font-mono text-lg text-white">{account.identifier}</strong>
+                      <span className="block text-[10px] text-slate-500 mt-1">المخزن في قاعدة البيانات مشفر؛ الرقم الكامل يظهر هنا للمالك فقط.</span>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-400 space-y-1">
+                    <p>حالة حساب العميل: {account.user.isVerified ? 'الحساب موثق' : 'لم يكتمل توثيق الحساب'}</p>
+                    <p>توثيق هاتف تسجيل الدخول: {account.user.phoneVerifiedAt ? 'تم التحقق' : 'غير متحقق'}</p>
+                    <p>تاريخ طلب الرقم: {new Date(account.createdAt).toLocaleString('ar')}</p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 border-t border-slate-800 pt-3">
+                    <button type="button" disabled={loadingAction} onClick={() => void handleApproveSenderAccount(account)} className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white">
+                      <CheckCircle className="inline w-4 h-4 ml-1" /> اعتماد الرقم وربطه بالعميل
+                    </button>
+                    <button type="button" disabled={loadingAction} onClick={() => void handleRejectSenderAccount(account)} className="rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white">
+                      <XCircle className="inline w-4 h-4 ml-1" /> رفض وإرجاعه للعميل
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {activeView === 'channels' && (
