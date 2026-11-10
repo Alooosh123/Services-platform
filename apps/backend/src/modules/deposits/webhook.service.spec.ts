@@ -107,7 +107,8 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
         transactionReference: 'REF-IDEMP-JAIB-99',
         amount: 50000,
         currency: CurrencyCode.YER,
-          senderPhone: '+967770000003',
+        beneficiaryAccount: '',
+        senderPhone: '+967770000003',
       });
 
       expect(firstWebhook.success).toBe(true);
