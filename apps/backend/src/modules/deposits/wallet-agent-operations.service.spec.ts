@@ -75,7 +75,6 @@ describe('WalletAgentOperationsService manual auto-credit security', () => {
       providerAgreementReference: 'AGR-001',
       providerAgreementDocumentUrl: 'https://example.test/agreement.pdf',
       senderIdentifierType: 'PHONE',
-      accountNumber: '7700001234',
     };
     duplicateReference = null;
 
