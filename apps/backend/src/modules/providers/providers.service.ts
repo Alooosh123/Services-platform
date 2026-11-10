@@ -153,8 +153,18 @@ export class ProvidersService {
 
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
-    if (dto.baseUrl !== undefined) data.baseUrl = dto.baseUrl;
-    if (dto.apiKey !== undefined && dto.apiKey && !dto.apiKey.includes('****')) {
+    if (dto.baseUrl !== undefined) {
+      const parsed = this.validateProviderBaseUrl(dto.baseUrl);
+      data.baseUrl = parsed;
+    }
+    if (dto.apiKey && dto.credentials) {
+      throw new BadRequestException('أرسل apiKey القديم أو كائن credentials متعدد الحقول، وليس الاثنين معاً.');
+    }
+    if (dto.credentials !== undefined) {
+      const credentials = this.validateProviderCredentials(dto.credentials);
+      data.credentialsCiphertext = this.encryptionService.encryptJson(credentials);
+      data.apiKey = null;
+    } else if (dto.apiKey !== undefined && dto.apiKey && !dto.apiKey.includes('****')) {
       data.credentialsCiphertext = this.encryptionService.encryptJson({ apiKey: dto.apiKey });
       data.apiKey = null;
     }
@@ -171,6 +181,72 @@ export class ProvidersService {
       apiKey: updated.apiKey || updated.credentialsCiphertext ? '********' : null,
       credentialsCiphertext: undefined,
     };
+  }
+
+  private validateProviderCredentials(input: Record<string, string>): Record<string, string> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new BadRequestException('بيانات اعتماد المزود يجب أن تكون كائناً منظماً.');
+    }
+    const entries = Object.entries(input);
+    if (!entries.length || entries.length > 40) {
+      throw new BadRequestException('يجب إدخال حقل اعتماد واحد على الأقل وبحد أقصى 40 حقلاً.');
+    }
+    const result: Record<string, string> = {};
+    let totalBytes = 0;
+    for (const [key, value] of entries) {
+      const normalizedKey = key.trim();
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(normalizedKey)) {
+        throw new BadRequestException('اسم حقل اعتماد المزود غير صالح.');
+      }
+      if (typeof value !== 'string' || !value.trim() || value.length > 4096) {
+        throw new BadRequestException(`قيمة الاعتماد للحقل ${normalizedKey} غير صالحة.`);
+      }
+      totalBytes += Buffer.byteLength(normalizedKey + value, 'utf8');
+      result[normalizedKey] = value.trim();
+    }
+    if (totalBytes > 16384) {
+      throw new BadRequestException('حجم بيانات اعتماد المزود يتجاوز الحد المسموح.');
+    }
+    return result;
+  }
+
+  private validateProviderBaseUrl(raw: string): string {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new BadRequestException('عنوان API للمزود غير صالح.');
+    }
+    if (
+      !['https:', ...(process.env.NODE_ENV === 'test' ? ['http:'] : [])].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      throw new BadRequestException('يجب أن يكون عنوان API رابط HTTPS عاماً دون بيانات دخول أو query أو fragment.');
+    }
+    const hostname = url.hostname.toLowerCase();
+    const isLocalHost =
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') ||
+      hostname === '::1' ||
+      hostname === '0.0.0.0';
+    const octets = hostname.split('.').map(Number);
+    const isIpv4 = octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255);
+    const isPrivateIpv4 = isIpv4 && (
+      octets[0] === 10 ||
+      octets[0] === 127 ||
+      (octets[0] === 192 && octets[1] === 168) ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 169 && octets[1] === 254) ||
+      octets[0] === 0
+    );
+    if (isLocalHost || isPrivateIpv4 || (process.env.NODE_ENV === 'production' && isIpv4)) {
+      throw new BadRequestException('يمنع توجيه اتصالات المزود إلى عنوان محلي أو شبكة خاصة.');
+    }
+    return url.toString().replace(/\/$/, '');
   }
 
   async getProviderCredentials(providerId: string): Promise<Record<string, unknown>> {
