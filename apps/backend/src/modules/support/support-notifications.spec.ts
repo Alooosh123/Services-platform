@@ -16,6 +16,7 @@ import { ForbiddenException, BadRequestException, NotFoundException } from '@nes
 describe('Phase 08 — Mobile UX, In-App Notifications, Customer Support & Dispute Resolution', () => {
   let supportService: SupportService;
   let notificationsService: NotificationsService;
+  const storedNotifications = new Map<string, any>();
 
   const mockPrismaService = {
     supportTicket: {
@@ -29,11 +30,50 @@ describe('Phase 08 — Mobile UX, In-App Notifications, Customer Support & Dispu
       findMany: jest.fn().mockResolvedValue([]),
     },
     notification: {
-      create: jest.fn().mockImplementation((args) => Promise.resolve(args.data)),
-      findUnique: jest.fn().mockResolvedValue(null),
-      findMany: jest.fn().mockResolvedValue([]),
-      update: jest.fn().mockImplementation((args) => Promise.resolve(args.data)),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      create: jest.fn().mockImplementation((args) => {
+        const record = {
+          ...args.data,
+          createdAt: new Date(),
+          readAt: null,
+        };
+        storedNotifications.set(record.id, record);
+        return Promise.resolve(record);
+      }),
+      findUnique: jest.fn().mockImplementation(({ where }) =>
+        Promise.resolve(storedNotifications.get(where.id) || null),
+      ),
+      findMany: jest.fn().mockImplementation(({ where, orderBy, take }) => {
+        let records = Array.from(storedNotifications.values()).filter(
+          (record) => record.userId === where.userId,
+        );
+        if (where.status) {
+          records = records.filter((record) => record.status === where.status);
+        }
+        if (orderBy?.createdAt === 'desc') {
+          records.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
+        return Promise.resolve(records.slice(0, take || records.length));
+      }),
+      update: jest.fn().mockImplementation(({ where, data }) => {
+        const current = storedNotifications.get(where.id);
+        if (!current) return Promise.resolve(null);
+        const updated = { ...current, ...data };
+        storedNotifications.set(where.id, updated);
+        return Promise.resolve(updated);
+      }),
+      updateMany: jest.fn().mockImplementation(({ where, data }) => {
+        let count = 0;
+        for (const [id, current] of storedNotifications.entries()) {
+          if (
+            current.userId === where.userId &&
+            (!where.status || current.status === where.status)
+          ) {
+            storedNotifications.set(id, { ...current, ...data });
+            count++;
+          }
+        }
+        return Promise.resolve({ count });
+      }),
     },
     order: {
       findUnique: jest.fn().mockImplementation(({ where }) => {
@@ -71,6 +111,7 @@ describe('Phase 08 — Mobile UX, In-App Notifications, Customer Support & Dispu
   };
 
   beforeEach(async () => {
+    storedNotifications.clear();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SupportService,
