@@ -74,6 +74,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
 
   const mockAdapter = {
     submitOrder: jest.fn().mockResolvedValue({
+      success: true,
       status: 'SUCCESS',
       pinCode: 'PIN-123456',
       providerOrderId: 'PROV-TX-999',
