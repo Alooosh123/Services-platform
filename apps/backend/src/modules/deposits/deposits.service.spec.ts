@@ -24,7 +24,10 @@ describe('DepositsService (Phase 2)', () => {
   beforeEach(async () => {
     const testDeposits = new Map<string, any>();
     const mockPrismaService = {
-      paymentChannelConfig: { findMany: jest.fn().mockResolvedValue([]) },
+      paymentChannelConfig: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       depositRequest: {
         updateMany: jest.fn().mockImplementation(({ where, data }) => {
           const deposit = testDeposits.get(where.id);
