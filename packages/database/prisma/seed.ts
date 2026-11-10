@@ -9,6 +9,7 @@ import {
   DepositStatus,
   PaymentChannelMode,
   ChannelVerificationStatus,
+  PaymentSenderIdentifierType,
   SaaSBillingCycle,
 } from '@prisma/client';
 import * as dotenv from 'dotenv';
@@ -331,6 +332,7 @@ async function main() {
       code: PaymentChannelCode.JAIB,
       name: 'Jaib Wallet (CAC Bank)',
       nameAr: 'محفظة جيب - شركة عهد للخدمات المالية',
+      senderIdentifierType: PaymentSenderIdentifierType.ALIAS,
       accountNumber: 'NOT_CONFIGURED',
       accountHolderName: 'يُحدد بعد التحقق من حساب الاستقبال الرسمي',
       instructionsAr: 'قناة غير مفعلة. يجب إدخال بيانات حساب الاستقبال الرسمية والتحقق منها قبل إتاحتها للعملاء.',
