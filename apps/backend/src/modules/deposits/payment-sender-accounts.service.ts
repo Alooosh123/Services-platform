@@ -1,6 +1,6 @@
-import { createHmac } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { PaymentSenderIdentifierType } from '@digital-topup/shared';
+import { PaymentSenderIdentifierType, UserRole } from '@digital-topup/shared';
 import { PrismaService } from '../../database/prisma.service';
 import { EncryptionService } from '../../security/encryption.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
@@ -15,6 +15,67 @@ export class PaymentSenderAccountsService {
 
   private get tenantId(): string | null {
     return getCurrentTenantId() || null;
+  }
+
+  private async notifyOwnersOfPendingRequest(
+    tx: any,
+    account: { id: string; channelCode: string; maskedIdentifier: string; userId: string },
+  ) {
+    const owners = await tx.user.findMany({
+      where: {
+        tenantId: this.tenantId,
+        role: { in: [UserRole.OWNER, UserRole.SUPER_ADMIN] },
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    if (owners.length === 0) return;
+    await tx.notification.createMany({
+      data: owners.map((owner: { id: string }) => ({
+        id: randomUUID(),
+        userId: owner.id,
+        type: 'PAYMENT_SENDER_ACCOUNT_REVIEW',
+        title: 'طلب توثيق رقم محفظة جديد',
+        message: `طلب العميل تسجيل حساب مرسل لمحفظة ${account.channelCode}؛ المعرّف ${account.maskedIdentifier}. افتح قائمة توثيق أرقام المحافظ للمراجعة.`,
+        data: {
+          paymentSenderAccountId: account.id,
+          customerUserId: account.userId,
+          channelCode: account.channelCode,
+          maskedIdentifier: account.maskedIdentifier,
+          status: 'PENDING_VERIFICATION',
+        },
+        status: 'UNREAD',
+        channel: 'IN_APP',
+      })),
+    });
+  }
+
+  private async notifyCustomerOfDecision(
+    tx: any,
+    account: { id: string; userId: string; channelCode: string; maskedIdentifier: string },
+    approved: boolean,
+    reason?: string | null,
+  ) {
+    await tx.notification.create({
+      data: {
+        id: randomUUID(),
+        userId: account.userId,
+        type: approved ? 'PAYMENT_SENDER_ACCOUNT_APPROVED' : 'PAYMENT_SENDER_ACCOUNT_REJECTED',
+        title: approved ? 'تم اعتماد رقم محفظتك' : 'تعذر اعتماد رقم المحفظة',
+        message: approved
+          ? `تم اعتماد الحساب ${account.maskedIdentifier} لمحفظة ${account.channelCode}. يمكنك الآن استخدام المحفظة في طلبات الشحن دون إعادة إدخال الرقم.`
+          : `تم رفض الحساب ${account.maskedIdentifier} لمحفظة ${account.channelCode}. السبب: ${reason || 'يرجى مراجعة الرقم وإعادة إرساله.'}`,
+        data: {
+          paymentSenderAccountId: account.id,
+          channelCode: account.channelCode,
+          maskedIdentifier: account.maskedIdentifier,
+          status: approved ? 'VERIFIED' : 'REJECTED',
+          rejectionReason: approved ? null : reason || null,
+        },
+        status: 'UNREAD',
+        channel: 'IN_APP',
+      },
+    });
   }
 
   async listForCustomer(userId: string) {
@@ -130,6 +191,8 @@ export class PaymentSenderAccountsService {
         },
       });
 
+      if (account) await this.notifyCustomerOfDecision(tx, account, true);
+
       return account;
     });
   }
@@ -192,6 +255,8 @@ export class PaymentSenderAccountsService {
           },
         },
       });
+
+      if (account) await this.notifyCustomerOfDecision(tx, account, false, reason);
 
       return account;
     });
@@ -309,6 +374,15 @@ export class PaymentSenderAccountsService {
           },
         },
       });
+
+      if (!alreadyVerified) {
+        await this.notifyOwnersOfPendingRequest(tx, {
+          id: account.id,
+          userId: account.userId,
+          channelCode: account.channelCode,
+          maskedIdentifier: account.maskedIdentifier,
+        });
+      }
 
       return {
         id: account.id,
