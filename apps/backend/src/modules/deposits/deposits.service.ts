@@ -956,6 +956,17 @@ export class DepositsService {
       throw new UnauthorizedException('Webhook signature verification is not configured.');
     }
 
+    // A valid HMAC authenticates the sender; it does not create a provider integration.
+    // Yemen wallet adapters remain manual-only until an official provider contract/API exists.
+    if (!adapter.getCapabilities().depositConfirm) {
+      return {
+        success: false,
+        status: 'REJECTED',
+        message: 'لا يوجد محول Webhook رسمي ومفعّل لهذه القناة. يجب استخدام مسار التحقق اليدوي المعتمد.',
+        discrepancy: 'PROVIDER_ADAPTER_NOT_CONFIGURED',
+      };
+    }
+
     // 3. Payload Validation
     if (!payload.transactionReference || payload.transactionReference.trim().length === 0) {
       throw new BadRequestException('الرقم المرجعي للعملية مطلوب (transactionReference is required)');
