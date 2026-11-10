@@ -26,6 +26,7 @@ describe('SecurityGate (SG-03, SG-04, SG-05)', () => {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn().mockResolvedValue({ id: 'ord-1' }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     depositRequest: {
       findUnique: jest.fn(),
@@ -33,6 +34,7 @@ describe('SecurityGate (SG-03, SG-04, SG-05)', () => {
     auditLog: {
       create: jest.fn().mockResolvedValue({ id: 'aud-1' }),
     },
+    $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
   };
 
   const mockLedgerService = {
