@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { LedgerService } from './ledger.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BadRequestException } from '@nestjs/common';
-import { CurrencyCode, LedgerTransactionType } from '@digital-topup/shared';
+import { CurrencyCode, LedgerTransactionType, PaymentChannelCode } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
 describe('LedgerService (Strict Double-Entry)', () => {
@@ -234,4 +234,13 @@ describe('LedgerService (Strict Double-Entry)', () => {
       'does not have enough locked funds',
     );
   });
+  it('routes top-up clearing accounts by currency before channel', () => {
+    expect(service.getChannelAccountCode(PaymentChannelCode.JAIB, CurrencyCode.YER))
+      .toBe('1001-CASH-JAIB');
+    expect(service.getChannelAccountCode(PaymentChannelCode.JAIB, CurrencyCode.USD))
+      .toBe('1010-CLEARING-USD');
+    expect(service.getChannelAccountCode(PaymentChannelCode.JAWALI, CurrencyCode.SAR))
+      .toBe('1011-CLEARING-SAR');
+  });
+
 });
