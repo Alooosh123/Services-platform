@@ -16,6 +16,7 @@ import {
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 import { AdminBalanceAdjustmentDto } from './dto/ledger-adjustment.dto';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 
 @Injectable()
 export class LedgerService {
@@ -23,15 +24,27 @@ export class LedgerService {
 
   constructor(private prisma: PrismaService) {}
 
+  private scopeTenantKey(value: string): string {
+    const tenantId = getCurrentTenantId();
+    if (!tenantId) return value;
+    const prefix = `${tenantId}::`;
+    return value.startsWith(prefix) ? value : `${prefix}${value}`;
+  }
+
+  private scopeAccountCode(value: string): string {
+    return this.scopeTenantKey(value);
+  }
+
   /**
    * Helper to ensure core system accounts exist in the chart of accounts.
    */
   async ensureAccount(code: string, name: string, type: LedgerAccountType, currency: CurrencyCode, description?: string) {
+    const scopedCode = this.scopeAccountCode(code);
     return this.prisma.ledgerAccount.upsert({
-      where: { code },
+      where: { code: scopedCode },
       update: {},
       create: {
-        code,
+        code: scopedCode,
         name,
         type,
         currency,
@@ -82,10 +95,13 @@ export class LedgerService {
     }
 
     const execute = async (tx: Prisma.TransactionClient) => {
-      // Idempotency verification
-      if (payload.idempotencyKey) {
+      const scopedIdempotencyKey = payload.idempotencyKey
+        ? this.scopeTenantKey(payload.idempotencyKey)
+        : undefined;
+      // Idempotency verification is tenant-scoped by both key prefix and Prisma query scope.
+      if (scopedIdempotencyKey) {
         const existingTxn = await tx.ledgerTransaction.findUnique({
-          where: { idempotencyKey: payload.idempotencyKey },
+          where: { idempotencyKey: scopedIdempotencyKey },
           include: { entries: true },
         });
         if (existingTxn) {
@@ -94,7 +110,7 @@ export class LedgerService {
       }
 
       // Check unique txNumber
-      const txNumber = payload.txNumber || `LTX-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const txNumber = this.scopeTenantKey(payload.txNumber || `LTX-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`);
 
       // 1. Create LedgerTransaction
       const ledgerTx = await tx.ledgerTransaction.create({
@@ -104,7 +120,7 @@ export class LedgerService {
           status: 'POSTED',
           referenceType: payload.referenceType,
           referenceId: payload.referenceId,
-          idempotencyKey: payload.idempotencyKey || null,
+          idempotencyKey: scopedIdempotencyKey || null,
           notes: payload.notes || null,
           createdByUserId: payload.createdByUserId || null,
         },
@@ -113,8 +129,9 @@ export class LedgerService {
       // 2. Insert Entries and apply balance updates to customer wallets if linked
       for (const item of payload.entries) {
         // Resolve account
+        const scopedAccountCode = this.scopeAccountCode(item.accountCode);
         let account = await tx.ledgerAccount.findUnique({
-          where: { code: item.accountCode },
+          where: { code: scopedAccountCode },
         });
 
         if (!account) {
@@ -130,8 +147,8 @@ export class LedgerService {
 
           account = await tx.ledgerAccount.create({
             data: {
-              code: item.accountCode,
-              name: item.notes || item.accountCode,
+              code: scopedAccountCode,
+              name: item.notes || scopedAccountCode,
               type: accType,
               currency: item.currency,
               description: 'Auto-provisioned ledger account',
@@ -455,7 +472,7 @@ export class LedgerService {
     channelCode?: PaymentChannelCode;
     performedByUserId?: string;
     notes?: string;
-  }) {
+  }, existingTx?: Prisma.TransactionClient) {
     const prepaidAccountCode = this.getSupplierPrepaidAccountCode(params.currency);
     const channelAccountCode = params.channelCode
       ? this.getChannelAccountCode(params.channelCode, params.currency)
@@ -487,7 +504,7 @@ export class LedgerService {
           notes: `Credit cash/bank account for provider funding`,
         },
       ],
-    });
+    }, existingTx);
   }
 
   async recordAgentCommission(params: {

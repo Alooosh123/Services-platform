@@ -69,13 +69,8 @@ export class TiersService {
       throw new ConflictException('Cannot configure prices for an inactive tier.');
     }
 
-    const basePrice = await this.prisma.productPrice.findUnique({
-      where: {
-        productId_currency: {
-          productId: dto.productId,
-          currency: dto.currency,
-        },
-      },
+    const basePrice = await this.prisma.productPrice.findFirst({
+      where: { productId: dto.productId, currency: dto.currency },
       select: { costPrice: true, isAvailable: true },
     });
     if (!basePrice || !basePrice.isAvailable) {
@@ -85,25 +80,26 @@ export class TiersService {
       throw new ConflictException('Tier price cannot be below the product cost.');
     }
 
-    return this.prisma.productTierPrice.upsert({
-      where: {
-        productId_tierId_currency: {
-          productId: dto.productId,
-          tierId,
-          currency: dto.currency,
+    const existing = await this.prisma.productTierPrice.findFirst({
+      where: { productId: dto.productId, tierId, currency: dto.currency },
+    });
+    if (existing) {
+      return this.prisma.productTierPrice.update({
+        where: { id: existing.id },
+        data: {
+          retailPrice: dto.retailPrice,
+          agentCommissionPercent: dto.agentCommissionPercent ?? 0,
+          isActive: true,
         },
-      },
-      create: {
+      });
+    }
+    return this.prisma.productTierPrice.create({
+      data: {
         productId: dto.productId,
         tierId,
         currency: dto.currency,
         retailPrice: dto.retailPrice,
         agentCommissionPercent: dto.agentCommissionPercent ?? 0,
-      },
-      update: {
-        retailPrice: dto.retailPrice,
-        agentCommissionPercent: dto.agentCommissionPercent ?? 0,
-        isActive: true,
       },
     });
   }

@@ -8,12 +8,14 @@ import {
   Param,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SaasService } from './saas.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { SaaSInvoiceFinanceAccess } from './decorators/saas-invoice-finance.decorator';
 import {
   UserRole,
   SaaSTenantStatus,
@@ -26,9 +28,14 @@ import {
   RenewSubscriptionDto,
   UpdatePlanPriceDto,
   CreateInvoiceDto,
+  MarkSaasInvoicePaidDto,
+  AssignTenantOwnerDto,
 } from './dto/saas.dto';
 
 @ApiTags('SaaS Platform & Multi-Tenant Management (Super Admin Portal)')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN)
 @Controller('saas')
 export class SaasController {
   constructor(private readonly saasService: SaasService) {}
@@ -74,13 +81,28 @@ export class SaasController {
     return this.saasService.createTenant(dto);
   }
 
+  @Post('tenants/:id/owner')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Assign the verified tenant owner to an active store',
+    description: 'Requires exact owner email and phone match plus an auditable manual identity-verification reference.',
+  })
+  async assignTenantOwner(
+    @Param('id') id: string,
+    @Body() dto: AssignTenantOwnerDto,
+    @Req() request: any,
+  ) {
+    return this.saasService.assignTenantOwner(id, dto, request.user.id);
+  }
+
   @Patch('tenants/:id/status')
   @ApiOperation({ summary: 'Update tenant status (ACTIVE, SUSPENDED, TERMINATED)' })
   async updateTenantStatus(
     @Param('id') id: string,
     @Body() dto: UpdateTenantStatusDto,
+    @Req() request: any,
   ) {
-    return this.saasService.updateTenantStatus(id, dto);
+    return this.saasService.updateTenantStatus(id, dto, request.user.id);
   }
 
   @Post('tenants/:id/renew')
@@ -107,9 +129,24 @@ export class SaasController {
   }
 
   @Post('invoices')
-  @ApiOperation({ summary: 'Issue a new manual or recurring SaaS invoice' })
+  @ApiOperation({ summary: 'Issue a new unpaid SaaS invoice' })
   async createInvoice(@Body() dto: CreateInvoiceDto) {
     return this.saasService.createInvoice(dto);
+  }
+
+  @Post('invoices/:id/mark-paid')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER)
+  @SaaSInvoiceFinanceAccess()
+  @ApiOperation({
+    summary: 'Confirm a SaaS invoice payment after finance verification',
+    description: 'Requires a verified transfer reference. This action is audited and activates the linked subscription.',
+  })
+  async markInvoicePaid(
+    @Param('id') id: string,
+    @Body() dto: MarkSaasInvoicePaidDto,
+    @Req() request: any,
+  ) {
+    return this.saasService.markInvoicePaid(id, dto, request.user.id, request.user.role);
   }
 
   @Get('kpis')

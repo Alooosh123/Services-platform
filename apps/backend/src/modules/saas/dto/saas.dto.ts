@@ -5,13 +5,16 @@ import {
   IsOptional,
   IsString,
   Min,
+  Matches,
+  MaxLength,
+  IsFQDN,
+  MinLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   SaaSBillingCycle,
   SaaSSubscriptionStatus,
   SaaSTenantStatus,
-  SaaSInvoiceStatus,
   CurrencyCode,
 } from '@digital-topup/shared';
 
@@ -24,11 +27,17 @@ export class CreateTenantDto {
   @ApiProperty({ description: 'المعرف الفريد (Slug)', example: 'falcon-topup' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(48)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i, {
+    message: 'slug must contain only letters, numbers and single hyphen separators',
+  })
   slug: string;
 
   @ApiPropertyOptional({ description: 'النطاق المخصص أو الفرعي', example: 'topup.falcon.ye' })
   @IsString()
   @IsOptional()
+  @IsFQDN({ require_tld: true, allow_underscores: false })
+  @MaxLength(253)
   domain?: string;
 
   @ApiProperty({ description: 'اسم مالك المتجر / المسؤول', example: 'م. أحمد الحميري' })
@@ -45,6 +54,11 @@ export class CreateTenantDto {
   @IsString()
   @IsNotEmpty()
   ownerPhone: string;
+
+  @ApiPropertyOptional({ description: 'عملة الفاتورة والاشتراك (افتراضياً USD)', enum: CurrencyCode, default: CurrencyCode.USD })
+  @IsEnum(CurrencyCode)
+  @IsOptional()
+  currency?: CurrencyCode;
 
   @ApiProperty({
     description: 'دورة الاشتراك المختارة (WEEKLY: أسبوعي، MONTHLY: شهري، ANNUAL: سنوي)',
@@ -84,20 +98,10 @@ export class RenewSubscriptionDto {
   @IsEnum(SaaSBillingCycle)
   billingCycle: SaaSBillingCycle;
 
-  @ApiPropertyOptional({ description: 'العملة المسدد بها', enum: CurrencyCode, default: CurrencyCode.USD })
+  @ApiPropertyOptional({ description: 'عملة الفاتورة', enum: CurrencyCode, default: CurrencyCode.USD })
   @IsEnum(CurrencyCode)
   @IsOptional()
   currency?: CurrencyCode;
-
-  @ApiPropertyOptional({ description: 'طريقة الدفع (كريمي، جيب، تحويل بنكي، USDT، بطاقة)', example: 'JAIB' })
-  @IsString()
-  @IsOptional()
-  paymentMethod?: string;
-
-  @ApiPropertyOptional({ description: 'رقم إشعار أو مرجع الحوالة' })
-  @IsString()
-  @IsOptional()
-  referenceNumber?: string;
 }
 
 export class UpdatePlanPriceDto {
@@ -118,7 +122,7 @@ export class UpdatePlanPriceDto {
 }
 
 export class CreateInvoiceDto {
-  @ApiProperty({ description: 'معرف المشترك/المتجر' })
+  @ApiProperty({ description: 'معرف المتجر' })
   @IsString()
   @IsNotEmpty()
   tenantId: string;
@@ -136,18 +140,38 @@ export class CreateInvoiceDto {
   @IsEnum(SaaSBillingCycle)
   billingCycle: SaaSBillingCycle;
 
-  @ApiPropertyOptional({ enum: SaaSInvoiceStatus, default: SaaSInvoiceStatus.PAID })
-  @IsEnum(SaaSInvoiceStatus)
-  @IsOptional()
-  status?: SaaSInvoiceStatus;
-
-  @ApiPropertyOptional({ example: 'KURIMI' })
+  @ApiPropertyOptional({ description: 'معرف الاشتراك المرتبط بالفاتورة' })
   @IsString()
   @IsOptional()
-  paymentMethod?: string;
+  subscriptionId?: string;
+}
 
-  @ApiPropertyOptional({ example: 'TX-99887722' })
+export class MarkSaasInvoicePaidDto {
+  @ApiProperty({ description: 'قناة أو طريقة الدفع المستخدمة', example: 'JAIB_MANUAL' })
   @IsString()
-  @IsOptional()
-  referenceNumber?: string;
+  @IsNotEmpty()
+  paymentMethod: string;
+
+  @ApiProperty({ description: 'رقم مرجع الحوالة أو إيصال الدفع', example: 'TX-2026-000123' })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(4)
+  @MaxLength(128)
+  @Matches(/\S/, { message: 'referenceNumber cannot contain only whitespace' })
+  referenceNumber: string;
+}
+
+export class AssignTenantOwnerDto {
+  @ApiProperty({ description: 'معرف حساب المستخدم الذي تمت مراجعة هويته' })
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
+
+  @ApiProperty({
+    description: 'مرجع التحقق الإداري (رقم عقد/محضر مراجعة/تذكرة تحقق)',
+    example: 'OWNER-KYC-2026-0001',
+  })
+  @IsString()
+  @IsNotEmpty()
+  verificationReference: string;
 }

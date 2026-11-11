@@ -120,8 +120,8 @@ export class SubAgentsService {
 
   async setCustomPrice(parentAgentId: string, subAgentId: string, dto: SetAgentPriceDto) {
     const subAgent = await this.requireOwnedSubAgent(parentAgentId, subAgentId);
-    const basePrice = await this.prisma.productPrice.findUnique({
-      where: { productId_currency: { productId: dto.productId, currency: dto.currency } },
+    const basePrice = await this.prisma.productPrice.findFirst({
+      where: { productId: dto.productId, currency: dto.currency },
       select: { retailPrice: true, costPrice: true, isAvailable: true },
     });
     if (!basePrice || !basePrice.isAvailable) {

@@ -3,8 +3,10 @@ import {
   Logger,
   BadRequestException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import {
   CurrencyCode,
   PriceRuleScope,
@@ -294,7 +296,11 @@ export class PricingEngineService {
       this.memoryRules.set(created.id, memRule);
       return memRule;
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during createPriceRule: saving to memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        this.logger.error(`Price rule persistence failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Tenant pricing rules are unavailable from the database.');
+      }
+      this.logger.warn(`Local unscoped development pricing rule fallback (${err?.message})`);
 
       const newId = `prule-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const memRule: InMemoryPriceRule = {
@@ -330,7 +336,7 @@ export class PricingEngineService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (dbRules && dbRules.length > 0) {
+      if (dbRules.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
         return dbRules.map((r) => ({
           id: r.id,
           version: r.version,
@@ -350,8 +356,12 @@ export class PricingEngineService {
           createdAt: r.createdAt,
         }));
       }
-    } catch {
-      // memory fallback
+    } catch (error: any) {
+      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+        this.logger.error(`Tenant pricing rule query failed: ${error?.message || error}`);
+        throw new ServiceUnavailableException('Tenant pricing rules are unavailable from the database.');
+      }
+      this.logger.warn('Local unscoped development pricing rules fallback.');
     }
 
     return Array.from(this.memoryRules.values())

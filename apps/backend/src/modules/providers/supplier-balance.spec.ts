@@ -16,20 +16,39 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
   let fulfillmentService: FulfillmentService;
   let ledgerService: LedgerService;
 
-  const mockPrisma = {
+  const supplierAccountRecord: any = {
+    id: 'supplier-account-mock-usd',
+    providerId: 'provider-mock',
+    currency: CurrencyCode.USD,
+    balance: new Prisma.Decimal(10000),
+    creditLimit: new Prisma.Decimal(0),
+    accountType: SupplierAccountType.PREPAID,
+  };
+  const mockPrisma: any = {
+    $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
     supplierAccount: {
       findMany: jest.fn().mockResolvedValue([]),
-      upsert: jest.fn(),
+      findFirst: jest.fn().mockImplementation(async () => supplierAccountRecord),
       findUnique: jest.fn(),
-      update: jest.fn(),
+      create: jest.fn().mockResolvedValue(supplierAccountRecord),
+      update: jest.fn().mockImplementation(async ({ data }: any) => Object.assign(supplierAccountRecord, data)),
+      updateMany: jest.fn().mockImplementation(async ({ where, data }: any) => {
+        if (where?.id !== supplierAccountRecord.id) return { count: 0 };
+        if (data?.balance !== undefined) {
+          supplierAccountRecord.balance = new Prisma.Decimal(data.balance);
+        } else if (data?.balance?.decrement !== undefined) {
+          supplierAccountRecord.balance = new Prisma.Decimal(supplierAccountRecord.balance).minus(data.balance.decrement);
+        }
+        return { count: 1 };
+      }),
     },
     supplierTransaction: {
-      create: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'supplier-tx-1' }),
     },
     provider: {
-      findFirst: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue({ id: 'provider-mock', code: 'MOCK', currency: CurrencyCode.USD, balance: new Prisma.Decimal(10000) }),
+      findUnique: jest.fn().mockResolvedValue({ id: 'provider-mock', code: 'MOCK', currency: CurrencyCode.USD, balance: new Prisma.Decimal(10000) }),
+      update: jest.fn().mockResolvedValue({}),
     },
     order: {
       findUnique: jest.fn(),
@@ -65,6 +84,10 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    supplierAccountRecord.balance = new Prisma.Decimal(10000);
+    mockPrisma.supplierAccount.findFirst.mockImplementation(async () => supplierAccountRecord);
+    mockPrisma.provider.findFirst.mockResolvedValue({ id: 'provider-mock', code: 'MOCK', currency: CurrencyCode.USD, balance: new Prisma.Decimal(10000) });
+    mockPrisma.provider.findUnique.mockResolvedValue({ id: 'provider-mock', code: 'MOCK', currency: CurrencyCode.USD, balance: new Prisma.Decimal(10000) });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -100,6 +123,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
           amount: 2500.0,
           referenceNumber: 'WIRE-CAC-998877',
         }),
+        mockPrisma,
       );
 
       // Check balance is updated

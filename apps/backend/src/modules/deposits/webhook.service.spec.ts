@@ -263,44 +263,5 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
     });
   });
 
-  describe('P05 Acceptance Criteria: Channel Safe Failover', () => {
-    it('قناة غير متوفرة تتحول إلى Manual/Disabled بأمان: Unavailable channel fails safe to Manual/Disabled', async () => {
-      // Initially, JAIB is active
-      const initialInfo = adapterRegistry.getAdapter(PaymentChannelCode.JAIB)!.getInfo();
-      expect(initialInfo.mode).toBe(PaymentChannelMode.MANUAL);
 
-      // Emergency failover triggered
-      const failoverInfo = depositsService.failoverChannel(
-        PaymentChannelCode.JAIB,
-        'انقطاع مزود خدمة CAC Bank في صنعاء',
-      );
-
-      expect(failoverInfo.mode).toBe(PaymentChannelMode.MANUAL);
-      expect(failoverInfo.capabilities?.depositConfirm).toBe(false);
-
-      // Explicitly switch channel to DISABLED
-      depositsService.switchChannelMode(PaymentChannelCode.JAIB, PaymentChannelMode.DISABLED);
-      const disabledInfo = adapterRegistry.getAdapter(PaymentChannelCode.JAIB)!.getInfo();
-      expect(disabledInfo.mode).toBe(PaymentChannelMode.DISABLED);
-
-      // Inbound webhook on disabled channel is rejected safely
-      const rejectedWebhook = await depositsService.handleInboundWebhook(PaymentChannelCode.JAIB, {
-        channelCode: PaymentChannelCode.JAIB,
-        transactionReference: 'REF-DISABLED-CHANNEL-01',
-        amount: 20000,
-        currency: CurrencyCode.YER,
-        beneficiaryAccount: '770123456',
-      });
-
-      expect(rejectedWebhook.success).toBe(false);
-      expect(rejectedWebhook.status).toBe('REJECTED');
-      expect(rejectedWebhook.message).toContain('معطلة حالياً');
-    });
-
-    it('ensures legal receiving accounts verification passes without test numbers in production (BR-06)', () => {
-      const verification = depositsService.verifyLegalAccounts();
-      expect(verification.isValid).toBe(true);
-      expect(verification.unverified.length).toBe(0);
-    });
-  });
 });

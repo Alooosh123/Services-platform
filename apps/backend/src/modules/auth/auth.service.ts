@@ -7,6 +7,7 @@ import {
   Logger,
   HttpException,
   HttpStatus,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../database/prisma.service';
@@ -26,6 +27,7 @@ import { TotpUtil } from './utils/totp.util';
 import { EncryptionService } from '../../security/encryption.service';
 import { RedisIdempotencyStore } from '../../security/redis-idempotency.store';
 import { createHash } from 'crypto';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 
 interface InMemoryUser {
   id: string;
@@ -35,6 +37,7 @@ interface InMemoryUser {
   fullNameAr?: string | null;
   passwordHash: string;
   role: UserRole;
+  tenantId?: string | null;
   isVerified: boolean;
   isActive: boolean;
   isTwoFactorEnabled: boolean;
@@ -174,7 +177,33 @@ export class AuthService {
     return secret || defaultPlaceholder;
   }
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, tenantId?: string) {
+    const resolvedTenantId = getCurrentTenantId();
+    if (tenantId && resolvedTenantId && tenantId !== resolvedTenantId) {
+      throw new ForbiddenException('Tenant registration context is invalid.');
+    }
+    tenantId = resolvedTenantId || tenantId;
+
+    // Public registration always creates a customer. Ownership is assigned only
+    // by the audited Super Admin tenant-owner verification workflow.
+    const registrationRole = UserRole.CUSTOMER;
+    if (tenantId) {
+      try {
+        const tenant = await this.prisma.saaSTenant.findUnique({
+          where: { id: tenantId },
+          select: { id: true, status: true },
+        });
+        if (!tenant || tenant.status !== 'ACTIVE') {
+          throw new ForbiddenException('This store is not active for customer registration.');
+        }
+      } catch (error: any) {
+        if (error instanceof ForbiddenException) throw error;
+        this.logger.error(`Tenant registration lookup failed: ${error?.message || error}`);
+        throw new ServiceUnavailableException('Store registration is unavailable until the tenant database can be reached.');
+      }
+    }
+    // A null tenant context is allowed only for localhost or an explicitly
+    // configured PLATFORM_HOSTS entry; unknown hosts receive the unresolved sentinel.
     if (!dto.email && !dto.phone) {
       throw new BadRequestException('Either email or phone number must be provided');
     }
@@ -194,7 +223,11 @@ export class AuthService {
       }
     } catch (err: any) {
       if (err instanceof ConflictException) throw err;
-      this.logger.warn(`Prisma offline during register: continuing with memory store (${err?.message})`);
+      if (tenantId || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Registration lookup failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Registration is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development registration fallback: ${err?.message}`);
 
       for (const u of this.memoryUsers.values()) {
         if ((dto.email && u.email === dto.email) || (dto.phone && u.phone === dto.phone)) {
@@ -215,7 +248,8 @@ export class AuthService {
           email: dto.email || null,
           phone: dto.phone || null,
           passwordHash,
-          role: UserRole.CUSTOMER,
+          role: registrationRole,
+          tenantId: tenantId || null,
           verificationCode,
           isVerified: false,
           wallets: {
@@ -229,7 +263,11 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during user.create: saving to memory (${err?.message})`);
+      if (tenantId || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Persistent account creation failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Account registration failed because the account database is unavailable.');
+      }
+      this.logger.warn(`Local unscoped development account fallback: ${err?.message}`);
 
       const newId = `user-cust-${Date.now()}`;
       const memoryUser: InMemoryUser = {
@@ -267,6 +305,7 @@ export class AuthService {
         email: createdUser.email,
         phone: createdUser.phone,
         role: createdUser.role,
+        tenantId: createdUser.tenantId || null,
         isVerified: createdUser.isVerified,
         wallets: createdUser.wallets,
       },
@@ -285,10 +324,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during login: checking memory users (${err?.message})`);
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Login database lookup failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Login is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development login fallback (${err?.message})`);
     }
 
-    if (!user) {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -340,10 +383,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during admin login (${err?.message})`);
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Admin login database lookup failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Administrative login is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development admin login fallback (${err?.message})`);
     }
 
-    if (!user) {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -583,7 +630,20 @@ export class AuthService {
   async createStaff(callerUserId: string, dto: CreateStaffDto) {
     const caller = await this.findUserById(callerUserId);
     if (!caller || (caller.role !== UserRole.SUPER_ADMIN && caller.role !== UserRole.OWNER)) {
-      throw new ForbiddenException('فقط المدير العام يمتلك صلاحية إنشاء حسابات إدارية جديدة');
+      throw new ForbiddenException('فقط المدير العام أو مالك المتجر يستطيع إنشاء حسابات ضمن نطاق صلاحياته');
+    }
+
+    if (caller.role === UserRole.OWNER) {
+      const tenantStaffRoles = [
+        UserRole.GENERAL_MANAGER,
+        UserRole.FINANCE_MANAGER,
+        UserRole.SUPPORT,
+        UserRole.FULFILLMENT_OPERATOR,
+        UserRole.AUDITOR,
+      ];
+      if (!caller.tenantId || !tenantStaffRoles.includes(dto.role)) {
+        throw new ForbiddenException('مالك المتجر لا يستطيع إنشاء حسابات منصة أو منح صلاحية مالك/مدير منصة.');
+      }
     }
 
     const passwordHash = await this.hashPassword(dto.password);
@@ -598,6 +658,7 @@ export class AuthService {
           phone: dto.phone || null,
           passwordHash,
           role: dto.role,
+          tenantId: caller.tenantId || null,
           isVerified: true,
           emailVerifiedAt: new Date(),
           phoneVerifiedAt: new Date(),
@@ -616,7 +677,11 @@ export class AuthService {
         createdAt: created.createdAt,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during createStaff: saving to memory (${err?.message})`);
+      if (caller.tenantId || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Staff account persistence failed: ${err?.message || err}`);
+        throw new ServiceUnavailableException('Staff account creation is unavailable because the account database could not be reached.');
+      }
+      this.logger.warn(`Local unscoped development staff fallback (${err?.message})`);
 
       const newId = `user-staff-${Date.now()}`;
       const memoryStaff: InMemoryUser = {
@@ -762,14 +827,15 @@ export class AuthService {
         include: { wallets: true },
       });
       if (dbUser) return dbUser;
-    } catch {
-      // offline fallback
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return null;
+    } catch (error: any) {
+      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+        this.logger.error(`Persistent user lookup failed: ${error?.message || error}`);
+        throw new ServiceUnavailableException('The authenticated account database is unavailable.');
+      }
     }
 
-    const memUser = this.memoryUsers.get(userId);
-    if (memUser) return memUser;
-
-    return null;
+    return this.memoryUsers.get(userId) || null;
   }
 
   /**

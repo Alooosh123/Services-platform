@@ -2,6 +2,8 @@ import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '@digital-topup/shared';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { setSaaSFinanceContext } from '../../../tenant/tenant-context.store';
+import { SAAS_INVOICE_FINANCE_ACCESS_KEY } from '../../saas/decorators/saas-invoice-finance.decorator';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -23,8 +25,8 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Authentication required');
     }
 
-    // Super Admin & Owner have all privileges
-    if (user.role === UserRole.SUPER_ADMIN || user.role === UserRole.OWNER) {
+    // Only the platform Super Admin bypasses role checks. Tenant Owner is not platform admin.
+    if (user.role === UserRole.SUPER_ADMIN) {
       return true;
     }
 
@@ -32,6 +34,16 @@ export class RolesGuard implements CanActivate {
     if (!hasRole) {
       throw new ForbiddenException(`Access denied. Required roles: ${requiredRoles.join(', ')}`);
     }
+
+    // Cross-tenant SaaS billing access requires both the explicit Finance
+    // Manager role and the dedicated invoice-confirmation handler marker.
+    const isSaaSInvoiceFinanceHandler =
+      this.reflector.get<boolean>(SAAS_INVOICE_FINANCE_ACCESS_KEY, context.getHandler()) === true;
+    setSaaSFinanceContext(
+      user.role === UserRole.FINANCE_MANAGER &&
+      requiredRoles.includes(UserRole.FINANCE_MANAGER) &&
+      isSaaSInvoiceFinanceHandler,
+    );
 
     return true;
   }

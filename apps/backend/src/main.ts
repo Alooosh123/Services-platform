@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { PrismaService } from './database/prisma.service';
 
 /**
  * Validates critical production secrets and environment integrity (SG-05).
@@ -79,10 +80,44 @@ async function bootstrap() {
     ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
     : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'];
 
+  const prisma = app.get(PrismaService);
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      let hostname: string;
+      try {
+        hostname = new URL(origin).hostname.toLowerCase();
+      } catch {
+        callback(null, false);
+        return;
+      }
+
+      // Custom storefront origins are allowed only when they resolve to an
+      // active tenant domain already registered in PostgreSQL.
+      void prisma.saaSTenant.findFirst({
+        where: {
+          status: 'ACTIVE',
+          OR: [{ domain: hostname }, { customDomain: hostname }],
+        },
+        select: { id: true },
+      }).then((tenant) => callback(null, Boolean(tenant)))
+        .catch(() => callback(null, false));
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Tenant-Domain',
+      'Idempotency-Key',
+      'X-Device-Fingerprint',
+      'X-CSRF-Token',
+    ],
     credentials: true,
+    maxAge: 600,
   });
 
   // Global validation pipe

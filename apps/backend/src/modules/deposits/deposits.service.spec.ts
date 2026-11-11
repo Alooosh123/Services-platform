@@ -14,6 +14,7 @@ import {
 import { CurrencyCode, PaymentChannelCode, DepositStatus } from '@digital-topup/shared';
 import { ConflictException, BadRequestException } from '@nestjs/common';
 import { HmacSignatureService } from '../../security/hmac-signature.service';
+import { runWithTenantContext } from '../../tenant/tenant-context.store';
 
 describe('DepositsService (Phase 2)', () => {
   let service: DepositsService;
@@ -127,19 +128,11 @@ describe('DepositsService (Phase 2)', () => {
     ledgerService = module.get<LedgerService>(LedgerService);
   });
 
-  it('should list all 5 active Yemeni payment channels with instructions', async () => {
-    const channels = await service.getPaymentChannels();
-    expect(channels.length).toBeGreaterThanOrEqual(5);
-    const codes = channels.map((c) => c.code);
-    expect(codes).toContain(PaymentChannelCode.JAIB);
-    expect(codes).toContain(PaymentChannelCode.JAWALI);
-    expect(codes).toContain(PaymentChannelCode.CASH);
-    expect(codes).toContain(PaymentChannelCode.ONE_CASH);
-    expect(codes).toContain(PaymentChannelCode.EASY);
-
-    const jaib = channels.find((c) => c.code === PaymentChannelCode.JAIB);
-    expect(jaib?.accountNumber).toBe('770123456');
-    expect(jaib?.accountHolderName).toContain('منصة الشحن والخدمات الرقمية');
+  it('does not publish shared mock payment adapters inside a tenant storefront', async () => {
+    const channels = await runWithTenantContext('tenant-alpha', () =>
+      service.getPaymentChannels(),
+    );
+    expect(channels).toEqual([]);
   });
 
   it('should create deposit request in PENDING status without crediting wallet', async () => {

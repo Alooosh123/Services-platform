@@ -5,8 +5,10 @@ import {
   ForbiddenException,
   ConflictException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { ProfitEngineService } from './profit-engine.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { TotpUtil } from '../auth/utils/totp.util';
@@ -65,6 +67,17 @@ export interface InMemoryEarningsWallet {
 export class OwnerEarningsService {
   private readonly logger = new Logger(OwnerEarningsService.name);
 
+  private assertPlatformOwnerContext(): void {
+    if (getCurrentTenantId()) {
+      throw new ForbiddenException('Platform owner earnings are not accessible from a tenant storefront domain.');
+    }
+    if (process.env.NODE_ENV === 'production') {
+      throw new ServiceUnavailableException(
+        'Platform owner earnings are unavailable until the persistent financial wallet workflow is completed.',
+      );
+    }
+  }
+
   // In-memory state for rapid fallback / testing
   private memoryBeneficiaries: Map<string, InMemoryBeneficiary> = new Map();
   private memoryPayouts: Map<string, InMemoryOwnerPayout> = new Map();
@@ -113,10 +126,12 @@ export class OwnerEarningsService {
   }
 
   getTestTotpSecret() {
+    this.assertPlatformOwnerContext();
     return this.defaultTotpSecret;
   }
 
   generateValidTotp(): string {
+    this.assertPlatformOwnerContext();
     return TotpUtil.generateCode(this.defaultTotpSecret);
   }
 
@@ -127,6 +142,7 @@ export class OwnerEarningsService {
     userId: string,
     dto: CreatePayoutBeneficiaryDto,
   ): Promise<InMemoryBeneficiary> {
+    this.assertPlatformOwnerContext();
     if (!dto.beneficiaryName || !dto.accountNumber) {
       throw new BadRequestException('اسم المستفيد ورقم الحساب مطلوبان');
     }
@@ -163,6 +179,7 @@ export class OwnerEarningsService {
   }
 
   async listBeneficiaries(userId: string): Promise<InMemoryBeneficiary[]> {
+    this.assertPlatformOwnerContext();
     try {
       const dbList = await this.prisma.payoutBeneficiary.findMany({
         where: { userId },
@@ -190,6 +207,7 @@ export class OwnerEarningsService {
    * 2. Get Owner Statement & Liquidity Breakdown for a currency
    */
   async getEarningsStatement(userId: string, currency: CurrencyCode) {
+    this.assertPlatformOwnerContext();
     const key = `${userId}:${currency}`;
     const wallet = this.memoryWallets.get(key) || {
       userId,
@@ -243,6 +261,7 @@ export class OwnerEarningsService {
     userId: string,
     dto: OwnerPayoutRequestDto,
   ): Promise<{ success: boolean; payout: InMemoryOwnerPayout; message: string }> {
+    this.assertPlatformOwnerContext();
     // A. Idempotency Check (AT-18)
     if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
       throw new BadRequestException('مفتاح عدم التكرار (idempotencyKey) مطلوب إجبارياً');
@@ -343,6 +362,7 @@ export class OwnerEarningsService {
     dto: ApproveOwnerPayoutDto,
     financeUserId: string,
   ): Promise<InMemoryOwnerPayout> {
+    this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
       throw new NotFoundException('طلب السحب غير موجود');
@@ -382,6 +402,7 @@ export class OwnerEarningsService {
     externalRef: string,
     financeUserId: string,
   ): Promise<InMemoryOwnerPayout> {
+    this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
       throw new NotFoundException('طلب السحب غير موجود');
@@ -451,6 +472,7 @@ export class OwnerEarningsService {
    * 6. Fail Payout & Release Hold (AT-18 Hold Release)
    */
   async failPayout(payoutId: string, reason: string): Promise<InMemoryOwnerPayout> {
+    this.assertPlatformOwnerContext();
     const payout = this.memoryPayouts.get(payoutId);
     if (!payout) {
       throw new NotFoundException('طلب السحب غير موجود');
@@ -475,6 +497,7 @@ export class OwnerEarningsService {
   }
 
   async listOwnerPayouts(userId?: string): Promise<InMemoryOwnerPayout[]> {
+    this.assertPlatformOwnerContext();
     const list = Array.from(this.memoryPayouts.values());
     if (userId) {
       return list.filter((p) => p.userId === userId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

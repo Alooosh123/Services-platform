@@ -110,14 +110,8 @@ export class OrdersService {
 
     const [tierPrice, branchPrice, parentTierPrice] = await Promise.all([
       checkoutUser.tierId
-        ? this.prisma.productTierPrice.findUnique({
-            where: {
-              productId_tierId_currency: {
-                productId: product.id,
-                tierId: checkoutUser.tierId,
-                currency,
-              },
-            },
+        ? this.prisma.productTierPrice.findFirst({
+            where: { productId: product.id, tierId: checkoutUser.tierId, currency },
           })
         : Promise.resolve(null),
       checkoutUser.role === UserRole.SUB_AGENT && checkoutUser.agentPricingMode === 'CUSTOM_PRICE'
@@ -132,14 +126,8 @@ export class OrdersService {
           })
         : Promise.resolve(null),
       checkoutUser.parentAgent?.tierId
-        ? this.prisma.productTierPrice.findUnique({
-            where: {
-              productId_tierId_currency: {
-                productId: product.id,
-                tierId: checkoutUser.parentAgent.tierId,
-                currency,
-              },
-            },
+        ? this.prisma.productTierPrice.findFirst({
+            where: { productId: product.id, tierId: checkoutUser.parentAgent.tierId, currency },
           })
         : Promise.resolve(null),
     ]);

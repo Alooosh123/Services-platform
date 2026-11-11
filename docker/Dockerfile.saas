@@ -1,0 +1,27 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+COPY packages/ ./packages/
+COPY apps/web-saas/ ./apps/web-saas/
+
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN npm install
+RUN npm run build --workspace=packages/shared
+RUN npm run build --workspace=apps/web-saas
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/web-saas/.next ./apps/web-saas/.next
+COPY --from=builder /app/apps/web-saas/package.json ./apps/web-saas/package.json
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start", "--workspace=apps/web-saas"]

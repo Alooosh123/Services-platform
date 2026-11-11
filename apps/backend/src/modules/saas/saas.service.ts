@@ -3,7 +3,10 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import {
   SaaSBillingCycle,
@@ -25,768 +28,958 @@ import {
   RenewSubscriptionDto,
   UpdatePlanPriceDto,
   CreateInvoiceDto,
+  MarkSaasInvoicePaidDto,
 } from './dto/saas.dto';
 import * as crypto from 'crypto';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class SaasService {
   private readonly logger = new Logger(SaasService.name);
 
-  // Equal Features Suite - strictly identical across ALL subscription tiers
   private readonly fullEqualFeatures: SaaSFeatureItem[] = [
     {
       key: 'INSTANT_TOPUP_UNLIMITED',
       name: 'Unlimited Instant Top-Up Engine',
-      nameAr: 'محرك الشحن الفوري غير المحدود للألعاب والبطاقات',
+      nameAr: 'محرك الشحن الفوري للألعاب والبطاقات',
       included: true,
-      descriptionAr: 'شحن مباشر وفوري لـ PUBG, Free Fire, Mobile Legends, Google Play وكافة المنتجات بدون سقف للطلبات',
+      descriptionAr: 'إتاحة محرك طلبات الشحن وفق حدود الأمان والتشغيل المعتمدة.',
     },
     {
       key: 'PROVIDER_API_INTEGRATIONS',
-      name: 'Full Provider Adapters & APIs',
-      nameAr: 'الوصول الكامل لمزودي الشحن والمحولات الخارجية',
+      name: 'Provider Adapters & APIs',
+      nameAr: 'محولات مزودي الشحن وواجهات API',
       included: true,
-      descriptionAr: 'ربط مباشر مع Smile.One, UniPin, والمحاكي التجريبي Mock Provider مع إدارة الأرصدة التلقائية',
+      descriptionAr: 'إتاحة طبقة تكامل المزودين، مع بقاء كل مزود غير معتمد في وضع الإيقاف.',
     },
     {
       key: 'IMMUTABLE_DOUBLE_ENTRY_LEDGER',
-      name: 'Immutable Financial Double-Entry Ledger',
-      nameAr: 'دفتر الأستاذ المالي المحاسبي بالقيد المزدوج',
+      name: 'Immutable Double-Entry Ledger',
+      nameAr: 'دفتر الأستاذ المالي بالقيد المزدوج',
       included: true,
-      descriptionAr: 'نظام محاسبي بنكي غير قابل للتعديل المباشر لمنع أي تلاعب وتتبع كامل لحركات الإيداع والخصم',
+      descriptionAr: 'إتاحة أدوات الدفتر المالي وسجل التدقيق لكل متجر ضمن عزله.',
     },
     {
       key: 'ALL_PAYMENT_GATEWAYS',
-      name: 'All Payment Channels & Local Gateways',
-      nameAr: 'بوابات الدفع الإلكتروني اليمنية والدولية كاملة',
+      name: 'Payment Channels',
+      nameAr: 'قنوات الدفع',
       included: true,
-      descriptionAr: 'دعم محفظة جيب (Jaib)، جوالي (Jawali)، ون كاش (OneCash)، والكريمي مع التحقق الفوري',
+      descriptionAr: 'إتاحة إدارة قنوات الدفع، دون تفعيل قناة قبل التحقق والاعتماد المالي.',
     },
     {
       key: 'CUSTOMER_WALLETS_SYSTEM',
-      name: 'Multi-Currency Customer Wallet Engine',
-      nameAr: 'نظام المحافظ الرقمية متعددة العملات (YER / USD / SAR)',
+      name: 'Multi-Currency Wallets',
+      nameAr: 'محافظ متعددة العملات',
       included: true,
-      descriptionAr: 'إدارة محافظ العملاء، الإيداعات البنكية، تجميد المحافظ، والتحويلات المالية الآمنة',
+      descriptionAr: 'إتاحة محافظ YER وUSD وSAR مع فصل العملات وعدم التحويل الضمني.',
     },
     {
       key: 'DYNAMIC_FORMS_ENGINE',
-      name: 'Dynamic Forms & Regex Validation Engine',
-      nameAr: 'محرك النماذج الديناميكية والتحقق من معرفات اللاعبين',
+      name: 'Dynamic Forms Engine',
+      nameAr: 'محرك النماذج الديناميكية',
       included: true,
-      descriptionAr: 'إضافة أي خدمة أو لعبة جديدة وتخصيص حقول إدخال اللاعب وفحص Regex تلقائياً دون برمجة إضافية',
+      descriptionAr: 'إتاحة نماذج خدمات ديناميكية قابلة للتهيئة.',
     },
     {
       key: 'AI_RISK_AND_ANTIFRAUD',
-      name: 'AI Risk Scoring & Anti-Fraud Security Suite',
-      nameAr: 'محرك الذكاء الاصطناعي لتقييم المخاطر ومكافحة الاحتيال',
+      name: 'Risk & Anti-Fraud Controls',
+      nameAr: 'ضوابط المخاطر ومكافحة الاحتيال',
       included: true,
-      descriptionAr: 'كشف العمليات المتكررة المشبوهة، فحص BOLA، منع التلاعب بالـ Webhooks، وحماية أمنية شاملة',
+      descriptionAr: 'إتاحة ضوابط المخاطر والمراجعة البشرية.',
     },
     {
       key: 'FULL_SUPPORT_TICKETING',
-      name: 'Customer Support & Live Notification Suite',
-      nameAr: 'منظومة خدمة العملاء والتذاكر والإشعارات الفورية',
+      name: 'Support Ticketing',
+      nameAr: 'تذاكر الدعم الفني',
       included: true,
-      descriptionAr: 'تذاكر الدعم الفني متعددة الأولويات وإشعارات SMS وبريد إلكتروني وتنبيهات داخل النظام',
+      descriptionAr: 'إتاحة إدارة طلبات الدعم ومتابعتها.',
     },
     {
       key: 'FINANCIAL_REPORTS_RECONCILIATION',
-      name: 'Daily Close & Automated Bank Reconciliation',
-      nameAr: 'التقارير المالية المتقدمة، الإقفال اليومي والمطابقة',
+      name: 'Financial Reports & Reconciliation',
+      nameAr: 'التقارير المالية والمطابقة',
       included: true,
-      descriptionAr: 'تقارير أرباح المنصة، كشوفات الحركة، والمطابقة التلقائية مع كشوفات الحسابات البنكية',
+      descriptionAr: 'إتاحة تقارير المتجر وعمليات المطابقة.',
     },
     {
       key: 'CUSTOM_DOMAIN_AND_BRANDING',
-      name: 'Custom Domain & Storefront White-Labeling',
-      nameAr: 'ربط النطاق المخصص وهوية المتجر الخاصة (White-Label)',
+      name: 'Custom Domain & Branding',
+      nameAr: 'النطاق والهوية المخصصة',
       included: true,
-      descriptionAr: 'إمكانية ربط متجر العميل بنطاقك الخاص وشعارك وألوان هويتك التجارية مع شهادة SSL مجانية',
+      descriptionAr: 'إتاحة تهيئة هوية المتجر والنطاق بعد التحقق الفني.',
     },
     {
       key: 'AUTOMATED_BACKUPS_AND_SLA',
-      name: 'Automated Backups & 99.9% Uptime Guarantee',
-      nameAr: 'النسخ الاحتياطي السحابي التلقائي وضمان استقرار 99.9%',
+      name: 'Backups & Operational Monitoring',
+      nameAr: 'النسخ الاحتياطي ومراقبة التشغيل',
       included: true,
-      descriptionAr: 'نسخ احتياطي يومي مشفر لقاعدة البيانات ومراقبة استقرار الخوادم على مدار الساعة',
+      descriptionAr: 'إتاحة سياسات النسخ الاحتياطي والمراقبة بحسب إعدادات الاستضافة الفعلية.',
     },
     {
       key: 'REST_APIS_AND_WEBHOOKS',
-      name: 'Full REST API & Webhook Capabilities',
-      nameAr: 'الوصول الكامل لواجهات البرمجة REST API والـ Webhooks',
+      name: 'REST APIs & Webhooks',
+      nameAr: 'واجهات REST وWebhooks',
       included: true,
-      descriptionAr: 'توثيق Swagger كامل وربط الـ Webhooks مع أنظمة العميل الخارجية بحرية تامة',
+      descriptionAr: 'إتاحة واجهات الربط والتكامل ضمن ضوابط صلاحيات المتجر.',
     },
   ];
 
-  // In-Memory resilient storage for SaaS platform
-  private inMemoryPlans: SaaSPlanDto[] = [
-    {
-      id: 'plan-weekly',
-      name: 'Weekly Full-Access Plan',
-      nameAr: 'الباقة الأسبوعية الشاملة',
-      billingCycle: SaaSBillingCycle.WEEKLY,
-      durationDays: 7,
-      priceUsd: 15.0,
-      priceYer: 10000.0,
-      priceSar: 55.0,
-      hasFullPermissions: true,
-      descriptionAr: 'اشتراك أسبوعي مرن للمتاجر الناشئة والتشغيل التجريبي، يمنح كامل صلاحيات ومميزات المنظومة دون استثناء.',
-      features: this.fullEqualFeatures,
-      isActive: true,
-      sortOrder: 1,
-      activeSubscribersCount: 8,
-    },
-    {
-      id: 'plan-monthly',
-      name: 'Monthly Full-Access Plan',
-      nameAr: 'الباقة الشهرية الشاملة',
-      billingCycle: SaaSBillingCycle.MONTHLY,
-      durationDays: 30,
-      priceUsd: 49.0,
-      priceYer: 35000.0,
-      priceSar: 185.0,
-      hasFullPermissions: true,
-      descriptionAr: 'الخيار الأكثر شعبية للمتاجر والموزعين، دورة فوترة شهرية مستقرة مع كامل الصلاحيات والخدمات بلا حدود.',
-      features: this.fullEqualFeatures,
-      isActive: true,
-      sortOrder: 2,
-      activeSubscribersCount: 24,
-    },
-    {
-      id: 'plan-annual',
-      name: 'Annual Full-Access Plan',
-      nameAr: 'الباقة السنوية الشاملة',
-      billingCycle: SaaSBillingCycle.ANNUAL,
-      durationDays: 365,
-      priceUsd: 450.0,
-      priceYer: 320000.0,
-      priceSar: 1690.0,
-      hasFullPermissions: true,
-      descriptionAr: 'الاشتراك السنوي الأمثل مع توفير اقتصادي كبير، دفع مقدم لعام كامل مع نفس الصلاحيات والمزايا الكاملة.',
-      features: this.fullEqualFeatures,
-      isActive: true,
-      sortOrder: 3,
-      activeSubscribersCount: 12,
-    },
-  ];
+  constructor(private readonly prisma: PrismaService) {}
 
-  private inMemoryTenants: SaaSTenantDto[] = [
-    {
-      id: 'tenant-101',
-      name: 'منصة الجزيرة لبطاقات الألعاب',
-      slug: 'al-jazira-cards',
-      domain: 'cards.al-jazira.ye',
-      customDomain: 'aljaziracards.com',
-      ownerName: 'م. عمر بن محفوظ',
-      ownerEmail: 'omar@aljaziracards.com',
-      ownerPhone: '+967770112233',
-      status: SaaSTenantStatus.ACTIVE,
-      licenseKey: 'LIC-SAAS-JAZIRA-9988-2026',
-      notes: 'مشترك سنوي رئيسي - صنعاء',
-      currentSubscription: {
-        id: 'sub-301',
-        tenantId: 'tenant-101',
-        tenantName: 'منصة الجزيرة لبطاقات الألعاب',
-        planId: 'plan-annual',
-        planName: 'الباقة السنوية الشاملة',
-        billingCycle: SaaSBillingCycle.ANNUAL,
-        pricePaid: 450.0,
-        currency: CurrencyCode.USD,
-        startDate: '2026-01-01T00:00:00Z',
-        endDate: '2026-12-31T23:59:59Z',
-        autoRenew: true,
-        status: SaaSSubscriptionStatus.ACTIVE,
-        daysRemaining: 79,
-        lastRenewalDate: '2026-01-01T00:00:00Z',
-        createdAt: '2026-01-01T00:00:00Z',
-      },
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-10-10T12:00:00Z',
-    },
-    {
-      id: 'tenant-102',
-      name: 'متجر الصقر للشحن الرقمي',
-      slug: 'falcon-topup',
-      domain: 'topup.falcon.ye',
-      customDomain: 'falcon-topup.net',
-      ownerName: 'أ. أحمد الحميري',
-      ownerEmail: 'ahmed@falcon-topup.net',
-      ownerPhone: '+967771234567',
-      status: SaaSTenantStatus.ACTIVE,
-      licenseKey: 'LIC-SAAS-FALCON-4422-2026',
-      notes: 'مشترك شهري - عدن',
-      currentSubscription: {
-        id: 'sub-302',
-        tenantId: 'tenant-102',
-        tenantName: 'متجر الصقر للشحن الرقمي',
-        planId: 'plan-monthly',
-        planName: 'الباقة الشهرية الشاملة',
-        billingCycle: SaaSBillingCycle.MONTHLY,
-        pricePaid: 49.0,
-        currency: CurrencyCode.USD,
-        startDate: '2026-10-01T00:00:00Z',
-        endDate: '2026-10-31T23:59:59Z',
-        autoRenew: true,
-        status: SaaSSubscriptionStatus.ACTIVE,
-        daysRemaining: 18,
-        lastRenewalDate: '2026-10-01T00:00:00Z',
-        createdAt: '2026-04-10T00:00:00Z',
-      },
-      createdAt: '2026-04-10T00:00:00Z',
-      updatedAt: '2026-10-01T00:00:00Z',
-    },
-    {
-      id: 'tenant-103',
-      name: 'شبكة النجم للخدمات الرقمية',
-      slug: 'al-najm-services',
-      domain: 'topup.alnajm.ye',
-      ownerName: 'م. سامي الوصابي',
-      ownerEmail: 'sami@alnajm.ye',
-      ownerPhone: '+967773344556',
-      status: SaaSTenantStatus.ACTIVE,
-      licenseKey: 'LIC-SAAS-NAJM-7766-2026',
-      notes: 'مشترك أسبوعي نشط - تعز',
-      currentSubscription: {
-        id: 'sub-303',
-        tenantId: 'tenant-103',
-        tenantName: 'شبكة النجم للخدمات الرقمية',
-        planId: 'plan-weekly',
-        planName: 'الباقة الأسبوعية الشاملة',
-        billingCycle: SaaSBillingCycle.WEEKLY,
-        pricePaid: 15.0,
-        currency: CurrencyCode.USD,
-        startDate: '2026-10-10T00:00:00Z',
-        endDate: '2026-10-17T23:59:59Z',
-        autoRenew: true,
-        status: SaaSSubscriptionStatus.ACTIVE,
-        daysRemaining: 4,
-        lastRenewalDate: '2026-10-10T00:00:00Z',
-        createdAt: '2026-09-01T00:00:00Z',
-      },
-      createdAt: '2026-09-01T00:00:00Z',
-      updatedAt: '2026-10-10T00:00:00Z',
-    },
-    {
-      id: 'tenant-104',
-      name: 'متجر سبأ كارد للشحن السريع',
-      slug: 'saba-card',
-      domain: 'saba.cards.ye',
-      ownerName: 'أ. عادل السنحاني',
-      ownerEmail: 'adel@sabacard.ye',
-      ownerPhone: '+967775566778',
-      status: SaaSTenantStatus.SUSPENDED,
-      licenseKey: 'LIC-SAAS-SABA-1122-2026',
-      notes: 'اشتراك منتهي بانتظار سداد التجديد',
-      currentSubscription: {
-        id: 'sub-304',
-        tenantId: 'tenant-104',
-        tenantName: 'متجر سبأ كارد للشحن السريع',
-        planId: 'plan-monthly',
-        planName: 'الباقة الشهرية الشاملة',
-        billingCycle: SaaSBillingCycle.MONTHLY,
-        pricePaid: 49.0,
-        currency: CurrencyCode.USD,
-        startDate: '2026-09-01T00:00:00Z',
-        endDate: '2026-09-30T23:59:59Z',
-        autoRenew: false,
-        status: SaaSSubscriptionStatus.EXPIRED,
-        daysRemaining: 0,
-        createdAt: '2026-08-15T00:00:00Z',
-      },
-      createdAt: '2026-08-15T00:00:00Z',
-      updatedAt: '2026-10-01T00:00:00Z',
-    },
-  ];
-
-  private inMemoryInvoices: SaaSInvoiceDto[] = [
-    {
-      id: 'inv-801',
-      invoiceNumber: 'INV-SAAS-2026-0081',
-      tenantId: 'tenant-101',
-      tenantName: 'منصة الجزيرة لبطاقات الألعاب',
-      subscriptionId: 'sub-301',
-      amount: 450.0,
-      currency: CurrencyCode.USD,
-      status: SaaSInvoiceStatus.PAID,
-      billingCycle: SaaSBillingCycle.ANNUAL,
-      paymentMethod: 'KURIMI_BANK',
-      referenceNumber: 'TX-KURIMI-998822',
-      paidAt: '2026-01-01T10:30:00Z',
-      dueDate: '2026-01-05T00:00:00Z',
-      createdAt: '2026-01-01T00:00:00Z',
-    },
-    {
-      id: 'inv-802',
-      invoiceNumber: 'INV-SAAS-2026-0082',
-      tenantId: 'tenant-102',
-      tenantName: 'متجر الصقر للشحن الرقمي',
-      subscriptionId: 'sub-302',
-      amount: 49.0,
-      currency: CurrencyCode.USD,
-      status: SaaSInvoiceStatus.PAID,
-      billingCycle: SaaSBillingCycle.MONTHLY,
-      paymentMethod: 'JAIB_WALLET',
-      referenceNumber: 'JAIB-778899',
-      paidAt: '2026-10-01T09:15:00Z',
-      dueDate: '2026-10-03T00:00:00Z',
-      createdAt: '2026-10-01T00:00:00Z',
-    },
-    {
-      id: 'inv-803',
-      invoiceNumber: 'INV-SAAS-2026-0083',
-      tenantId: 'tenant-103',
-      tenantName: 'شبكة النجم للخدمات الرقمية',
-      subscriptionId: 'sub-303',
-      amount: 15.0,
-      currency: CurrencyCode.USD,
-      status: SaaSInvoiceStatus.PAID,
-      billingCycle: SaaSBillingCycle.WEEKLY,
-      paymentMethod: 'ONE_CASH',
-      referenceNumber: 'OC-445566',
-      paidAt: '2026-10-10T14:20:00Z',
-      dueDate: '2026-10-12T00:00:00Z',
-      createdAt: '2026-10-10T00:00:00Z',
-    },
-    {
-      id: 'inv-804',
-      invoiceNumber: 'INV-SAAS-2026-0084',
-      tenantId: 'tenant-104',
-      tenantName: 'متجر سبأ كارد للشحن السريع',
-      subscriptionId: 'sub-304',
-      amount: 49.0,
-      currency: CurrencyCode.USD,
-      status: SaaSInvoiceStatus.OVERDUE,
-      billingCycle: SaaSBillingCycle.MONTHLY,
-      dueDate: '2026-10-05T00:00:00Z',
-      createdAt: '2026-09-30T00:00:00Z',
-    },
-  ];
-
-  constructor(private readonly prisma: PrismaService) {
-    this.logger.log('SaaS Platform & Multi-Tenant Subscription Service initialized');
+  private mapPlan(plan: any, activeSubscribersCount?: number): SaaSPlanDto {
+    return {
+      id: plan.id,
+      name: plan.name,
+      nameAr: plan.nameAr,
+      billingCycle: plan.billingCycle as SaaSBillingCycle,
+      durationDays: plan.durationDays,
+      priceUsd: Number(plan.priceUsd),
+      priceYer: Number(plan.priceYer),
+      priceSar: Number(plan.priceSar),
+      hasFullPermissions: plan.hasFullPermissions,
+      descriptionAr: plan.descriptionAr,
+      features: Array.isArray(plan.featuresJson)
+        ? (plan.featuresJson as unknown as SaaSFeatureItem[])
+        : [],
+      isActive: plan.isActive,
+      sortOrder: plan.sortOrder,
+      ...(activeSubscribersCount === undefined ? {} : { activeSubscribersCount }),
+    };
   }
 
-  /**
-   * Returns all available SaaS subscription plans (Weekly, Monthly, Annual).
-   * Verifies that each tier strictly provides the exact same full permissions.
-   */
-  async getPlans(): Promise<SaaSPlanDto[]> {
-    try {
-      if (this.prisma?.saaSPlan) {
-        const dbPlans = await this.prisma.saaSPlan.findMany({
-          orderBy: { sortOrder: 'asc' },
-        });
-        if (dbPlans && dbPlans.length > 0) {
-          return dbPlans.map((p) => ({
-            id: p.id,
-            name: p.name,
-            nameAr: p.nameAr,
-            billingCycle: p.billingCycle as SaaSBillingCycle,
-            durationDays: p.durationDays,
-            priceUsd: Number(p.priceUsd),
-            priceYer: Number(p.priceYer),
-            priceSar: Number(p.priceSar),
-            hasFullPermissions: p.hasFullPermissions,
-            descriptionAr: p.descriptionAr,
-            features: (p.featuresJson as any) || this.fullEqualFeatures,
-            isActive: p.isActive,
-            sortOrder: p.sortOrder,
-          }));
-        }
-      }
-    } catch (err: any) {
-      this.logger.debug(`Database reading error, using in-memory plans: ${err.message}`);
-    }
-    return this.inMemoryPlans;
+  private mapSubscription(subscription: any): SaaSSubscriptionDto {
+    const now = Date.now();
+    const endDate = new Date(subscription.endDate).getTime();
+    return {
+      id: subscription.id,
+      tenantId: subscription.tenantId,
+      tenantName: subscription.tenant?.name,
+      planId: subscription.planId,
+      planName: subscription.plan?.nameAr,
+      billingCycle: subscription.billingCycle as SaaSBillingCycle,
+      pricePaid: Number(subscription.pricePaid),
+      currency: subscription.currency as CurrencyCode,
+      startDate: new Date(subscription.startDate).toISOString(),
+      endDate: new Date(subscription.endDate).toISOString(),
+      autoRenew: subscription.autoRenew,
+      status: subscription.status as SaaSSubscriptionStatus,
+      daysRemaining: Math.max(0, Math.ceil((endDate - now) / DAY_MS)),
+      lastRenewalDate: subscription.lastRenewalDate
+        ? new Date(subscription.lastRenewalDate).toISOString()
+        : undefined,
+      createdAt: new Date(subscription.createdAt).toISOString(),
+    };
   }
 
-  /**
-   * Updates pricing for a specific subscription plan while preserving equal permissions.
-   */
-  async updatePlanPrice(planId: string, dto: UpdatePlanPriceDto): Promise<SaaSPlanDto> {
-    const plan = this.inMemoryPlans.find((p) => p.id === planId);
-    if (!plan) {
-      throw new NotFoundException(`Plan with id ${planId} not found`);
+  private mapInvoice(invoice: any): SaaSInvoiceDto {
+    return {
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      tenantId: invoice.tenantId,
+      tenantName: invoice.tenant?.name,
+      subscriptionId: invoice.subscriptionId || undefined,
+      amount: Number(invoice.amount),
+      currency: invoice.currency as CurrencyCode,
+      status: invoice.status as SaaSInvoiceStatus,
+      billingCycle: invoice.billingCycle as SaaSBillingCycle,
+      paymentMethod: invoice.paymentMethod || undefined,
+      referenceNumber: invoice.referenceNumber || undefined,
+      paidAt: invoice.paidAt ? new Date(invoice.paidAt).toISOString() : undefined,
+      dueDate: new Date(invoice.dueDate).toISOString(),
+      createdAt: new Date(invoice.createdAt).toISOString(),
+    };
+  }
+
+  private mapTenant(tenant: any): SaaSTenantDto {
+    const now = new Date();
+    const latestSubscription =
+      tenant.subscriptions?.find(
+        (subscription: any) =>
+          subscription.status === SaaSSubscriptionStatus.ACTIVE &&
+          new Date(subscription.startDate) <= now &&
+          new Date(subscription.endDate) > now,
+      ) || tenant.subscriptions?.[0];
+    return {
+      id: tenant.id,
+      name: tenant.name,
+      slug: tenant.slug,
+      domain: tenant.domain || undefined,
+      customDomain: tenant.customDomain || undefined,
+      ownerName: tenant.ownerName,
+      ownerEmail: tenant.ownerEmail,
+      ownerPhone: tenant.ownerPhone,
+      status: tenant.status as SaaSTenantStatus,
+      licenseKey: tenant.licenseKey,
+      notes: tenant.notes || undefined,
+      currentSubscription: latestSubscription
+        ? this.mapSubscription({ ...latestSubscription, tenant })
+        : undefined,
+      createdAt: new Date(tenant.createdAt).toISOString(),
+      updatedAt: new Date(tenant.updatedAt).toISOString(),
+    };
+  }
+
+  private planPrice(plan: any, currency: CurrencyCode): Prisma.Decimal {
+    switch (currency) {
+      case CurrencyCode.YER:
+        return new Prisma.Decimal(plan.priceYer);
+      case CurrencyCode.SAR:
+        return new Prisma.Decimal(plan.priceSar);
+      case CurrencyCode.USD:
+      default:
+        return new Prisma.Decimal(plan.priceUsd);
     }
+  }
 
-    plan.priceUsd = dto.priceUsd;
-    plan.priceYer = dto.priceYer;
-    plan.priceSar = dto.priceSar;
+  private createInvoiceNumber(): string {
+    const date = new Date();
+    const month = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return `INV-SAAS-${month}-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+  }
 
-    try {
-      if (this.prisma?.saaSPlan) {
-        await this.prisma.saaSPlan.update({
-          where: { id: planId },
-          data: {
-            priceUsd: dto.priceUsd,
-            priceYer: dto.priceYer,
-            priceSar: dto.priceSar,
-          },
-        });
-      }
-    } catch (err: any) {
-      this.logger.debug(`Could not update plan in database: ${err.message}`);
+  private async getActivePlan(cycle: SaaSBillingCycle) {
+    const plan = await this.prisma.saaSPlan.findUnique({ where: { billingCycle: cycle } });
+    if (!plan || !plan.isActive) {
+      throw new NotFoundException(`No active SaaS plan is configured for billing cycle ${cycle}`);
     }
-
-    this.logger.log(
-      `Plan ${plan.nameAr} (${plan.billingCycle}) prices updated: USD $${dto.priceUsd}, YER ${dto.priceYer}`,
-    );
-
     return plan;
   }
 
   /**
-   * Performs an automated architectural audit proving the Invariant:
-   * "All subscription plans grant 100% equal permissions; differences are limited to price and duration".
+   * Plans are always read from PostgreSQL. There is deliberately no in-memory
+   * fallback in any environment because it can diverge between API instances.
    */
+  async getPlans(): Promise<SaaSPlanDto[]> {
+    try {
+      const plans = await this.prisma.saaSPlan.findMany({
+        orderBy: { sortOrder: 'asc' },
+      });
+      const subscriberCounts = await this.prisma.saaSSubscription.groupBy({
+        by: ['planId'],
+        where: { status: SaaSSubscriptionStatus.ACTIVE },
+        _count: { _all: true },
+      });
+      const countByPlan = new Map(
+        subscriberCounts.map((row) => [row.planId, row._count._all]),
+      );
+      return plans.map((plan) => this.mapPlan(plan, countByPlan.get(plan.id) || 0));
+    } catch (error: any) {
+      this.logger.error(`SaaS plan database read failed: ${error?.message || error}`);
+      throw new ServiceUnavailableException('SaaS plans are temporarily unavailable from the database.');
+    }
+  }
+
+  async updatePlanPrice(planId: string, dto: UpdatePlanPriceDto): Promise<SaaSPlanDto> {
+    const plan = await this.prisma.saaSPlan.findUnique({ where: { id: planId } });
+    if (!plan) throw new NotFoundException('SaaS plan not found');
+
+    const updated = await this.prisma.saaSPlan.update({
+      where: { id: planId },
+      data: {
+        priceUsd: new Prisma.Decimal(dto.priceUsd),
+        priceYer: new Prisma.Decimal(dto.priceYer),
+        priceSar: new Prisma.Decimal(dto.priceSar),
+      },
+    });
+    return this.mapPlan(updated);
+  }
+
   async verifyAllPlansEqualPermissions(): Promise<SaaSPermissionsAuditDto> {
-    const plans = await this.getPlans();
-    const evaluatedTiers = plans.map((p) => {
-      const activeFeatures = p.features.filter((f) => f.included);
+    const plans = await this.prisma.saaSPlan.findMany({ orderBy: { sortOrder: 'asc' } });
+    const expectedKeys = this.fullEqualFeatures.map((feature) => feature.key).sort();
+    const evaluatedTiers = plans.map((plan) => {
+      const features = Array.isArray(plan.featuresJson)
+        ? (plan.featuresJson as unknown as unknown as SaaSFeatureItem[])
+        : [];
+      const enabledKeys = features.filter((feature) => feature.included).map((feature) => feature.key).sort();
+      const equalKeys =
+        enabledKeys.length === expectedKeys.length &&
+        enabledKeys.every((key, index) => key === expectedKeys[index]);
       return {
-        billingCycle: p.billingCycle,
-        priceUsd: p.priceUsd,
-        priceYer: p.priceYer,
-        permissionsCount: activeFeatures.length,
-        allModulesAccessible: p.hasFullPermissions && activeFeatures.length === this.fullEqualFeatures.length,
+        billingCycle: plan.billingCycle as SaaSBillingCycle,
+        priceUsd: Number(plan.priceUsd),
+        priceYer: Number(plan.priceYer),
+        permissionsCount: enabledKeys.length,
+        allModulesAccessible: plan.hasFullPermissions && equalKeys,
       };
     });
-
-    const invariantPassed = evaluatedTiers.every((t) => t.allModulesAccessible);
+    const invariantPassed =
+      plans.length > 0 &&
+      evaluatedTiers.length === 3 &&
+      evaluatedTiers.every((tier) => tier.allModulesAccessible);
 
     return {
       verifiedAt: new Date().toISOString(),
       invariantPassed,
       policyDeclaration:
-        'سياسة المنظومة الصارمة: جميع باقات الاشتراك (أسبوعية، شهرية، سنوية) تتمتع بكامل صلاحيات المنظومة بدون أي قيود، والفرق فقط في مدة الدورة السعرية.',
+        'تمنح الباقات الأسبوعية والشهرية والسنوية الصلاحيات الوظيفية نفسها؛ ويقتصر الاختلاف على السعر ومدة الاشتراك.',
       tiersEvaluated: evaluatedTiers,
     };
   }
 
-  /**
-   * Lists all SaaS tenants / subscribers.
-   */
   async getTenants(search?: string, status?: SaaSTenantStatus): Promise<SaaSTenantDto[]> {
-    let tenants = [...this.inMemoryTenants];
-
-    if (status) {
-      tenants = tenants.filter((t) => t.status === status);
+    const where: Prisma.SaaSTenantWhereInput = {};
+    if (status) where.status = status;
+    if (search?.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { slug: { contains: term, mode: 'insensitive' } },
+        { ownerName: { contains: term, mode: 'insensitive' } },
+        { ownerEmail: { contains: term, mode: 'insensitive' } },
+        { ownerPhone: { contains: term } },
+      ];
     }
-
-    if (search) {
-      const q = search.toLowerCase();
-      tenants = tenants.filter(
-        (t) =>
-          t.name.toLowerCase().includes(q) ||
-          t.slug.toLowerCase().includes(q) ||
-          t.ownerName.toLowerCase().includes(q) ||
-          t.ownerPhone.includes(q) ||
-          t.licenseKey.toLowerCase().includes(q),
-      );
-    }
-
-    return tenants;
+    const tenants = await this.prisma.saaSTenant.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        subscriptions: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: { plan: true },
+        },
+      },
+    });
+    return tenants.map((tenant) => this.mapTenant(tenant));
   }
 
-  /**
-   * Returns a specific tenant by ID.
-   */
   async getTenantById(id: string): Promise<SaaSTenantDto> {
-    const tenant = this.inMemoryTenants.find((t) => t.id === id);
-    if (!tenant) {
-      throw new NotFoundException(`Tenant with id ${id} not found`);
-    }
-    return tenant;
+    const tenant = await this.prisma.saaSTenant.findUnique({
+      where: { id },
+      include: {
+        subscriptions: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: { plan: true },
+        },
+      },
+    });
+    if (!tenant) throw new NotFoundException(`SaaS tenant ${id} was not found`);
+    return this.mapTenant(tenant);
   }
 
-  /**
-   * Creates / Onboards a new tenant with automatic license generation and subscription setup.
-   */
   async createTenant(dto: CreateTenantDto): Promise<SaaSTenantDto> {
-    // Check slug uniqueness
-    const exists = this.inMemoryTenants.some((t) => t.slug === dto.slug);
-    if (exists) {
-      throw new BadRequestException(`Tenant with slug "${dto.slug}" already exists`);
-    }
-
-    const plan = this.inMemoryPlans.find((p) => p.billingCycle === dto.billingCycle) || this.inMemoryPlans[1];
-    const tenantId = `tenant-${Date.now().toString(36)}`;
-    const licenseKey = `LIC-SAAS-${dto.slug.toUpperCase().slice(0, 6)}-${crypto.randomBytes(3).toString('hex').toUpperCase()}-2026`;
-
+    const plan = await this.getActivePlan(dto.billingCycle);
+    const currency = dto.currency || CurrencyCode.USD;
     const now = new Date();
-    const endDate = new Date(now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
+    const invoiceDueDate = new Date(now.getTime() + 7 * DAY_MS);
+    const plannedStartDate = now;
+    const plannedEndDate = new Date(plannedStartDate.getTime() + plan.durationDays * DAY_MS);
+    const licenseKey =
+      `LIC-SAAS-${dto.slug.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
-    const subscription: SaaSSubscriptionDto = {
-      id: `sub-${Date.now().toString(36)}`,
-      tenantId,
-      tenantName: dto.name,
-      planId: plan.id,
-      planName: plan.nameAr,
-      billingCycle: plan.billingCycle,
-      pricePaid: plan.priceUsd,
-      currency: CurrencyCode.USD,
-      startDate: now.toISOString(),
-      endDate: endDate.toISOString(),
-      autoRenew: true,
-      status: SaaSSubscriptionStatus.ACTIVE,
-      daysRemaining: plan.durationDays,
-      lastRenewalDate: now.toISOString(),
-      createdAt: now.toISOString(),
-    };
+    try {
+      const tenant = await this.prisma.$transaction(async (tx) => {
+        const createdTenant = await tx.saaSTenant.create({
+          data: {
+            name: dto.name.trim(),
+            slug: dto.slug.trim().toLowerCase(),
+            domain: dto.domain?.trim().toLowerCase() || null,
+            ownerName: dto.ownerName.trim(),
+            ownerEmail: dto.ownerEmail.trim().toLowerCase(),
+            ownerPhone: dto.ownerPhone.trim(),
+            status: SaaSTenantStatus.PENDING_SETUP,
+            licenseKey,
+            notes: dto.notes?.trim() || null,
+          },
+        });
 
-    const newTenant: SaaSTenantDto = {
-      id: tenantId,
-      name: dto.name,
-      slug: dto.slug,
-      domain: dto.domain || `${dto.slug}.topup.ye`,
-      ownerName: dto.ownerName,
-      ownerEmail: dto.ownerEmail,
-      ownerPhone: dto.ownerPhone,
-      status: SaaSTenantStatus.ACTIVE,
-      licenseKey,
-      notes: dto.notes,
-      currentSubscription: subscription,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    };
+        const subscription = await tx.saaSSubscription.create({
+          data: {
+            tenantId: createdTenant.id,
+            planId: plan.id,
+            billingCycle: plan.billingCycle,
+            pricePaid: this.planPrice(plan, currency),
+            currency,
+            startDate: plannedStartDate,
+            endDate: plannedEndDate,
+            autoRenew: false,
+            status: SaaSSubscriptionStatus.PENDING_PAYMENT,
+          },
+        });
 
-    this.inMemoryTenants.unshift(newTenant);
+        await tx.saaSInvoice.create({
+          data: {
+            invoiceNumber: this.createInvoiceNumber(),
+            tenantId: createdTenant.id,
+            subscriptionId: subscription.id,
+            amount: this.planPrice(plan, currency),
+            currency,
+            status: SaaSInvoiceStatus.PENDING,
+            billingCycle: plan.billingCycle,
+            dueDate: invoiceDueDate,
+          },
+        });
 
-    // Auto-generate inaugural invoice
-    const invoiceNumber = `INV-SAAS-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(
-      this.inMemoryInvoices.length + 1,
-    ).padStart(4, '0')}`;
-
-    this.inMemoryInvoices.unshift({
-      id: `inv-${Date.now().toString(36)}`,
-      invoiceNumber,
-      tenantId: newTenant.id,
-      tenantName: newTenant.name,
-      subscriptionId: subscription.id,
-      amount: plan.priceUsd,
-      currency: CurrencyCode.USD,
-      status: SaaSInvoiceStatus.PAID,
-      billingCycle: plan.billingCycle,
-      paymentMethod: 'INITIAL_ONBOARDING',
-      paidAt: now.toISOString(),
-      dueDate: endDate.toISOString(),
-      createdAt: now.toISOString(),
-    });
-
-    this.logger.log(`New SaaS Tenant onboarded: ${newTenant.name} (${newTenant.slug}) on ${plan.nameAr}`);
-    return newTenant;
+        return tx.saaSTenant.findUniqueOrThrow({
+          where: { id: createdTenant.id },
+          include: {
+            subscriptions: {
+              orderBy: { createdAt: 'desc' },
+              take: 5,
+              include: { plan: true },
+            },
+          },
+        });
+      });
+      return this.mapTenant(tenant);
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new ConflictException('Tenant slug, domain or license key already exists');
+      }
+      throw error;
+    }
   }
 
-  /**
-   * Updates tenant status (ACTIVE, SUSPENDED, TERMINATED).
-   */
-  async updateTenantStatus(id: string, dto: UpdateTenantStatusDto): Promise<SaaSTenantDto> {
-    const tenant = await this.getTenantById(id);
-    tenant.status = dto.status;
-    tenant.updatedAt = new Date().toISOString();
-
-    if (dto.status === SaaSTenantStatus.SUSPENDED && tenant.currentSubscription) {
-      tenant.currentSubscription.status = SaaSSubscriptionStatus.SUSPENDED;
-    } else if (dto.status === SaaSTenantStatus.ACTIVE && tenant.currentSubscription) {
-      tenant.currentSubscription.status = SaaSSubscriptionStatus.ACTIVE;
+  async assignTenantOwner(
+    tenantId: string,
+    dto: { userId: string; verificationReference: string },
+    actorUserId: string,
+  ): Promise<{ tenantId: string; userId: string; role: string; verificationReference: string }> {
+    const verificationReference = dto.verificationReference.trim();
+    if (!verificationReference) {
+      throw new BadRequestException('A manual owner identity-verification reference is required.');
     }
 
-    this.logger.log(`Tenant ${tenant.name} status updated to ${dto.status}`);
-    return tenant;
+    return this.prisma.$transaction(async (tx) => {
+      const tenant = await tx.saaSTenant.findUnique({ where: { id: tenantId } });
+      if (!tenant || tenant.status !== SaaSTenantStatus.ACTIVE) {
+        throw new NotFoundException('An active SaaS tenant was not found.');
+      }
+
+      const user = await tx.user.findUnique({ where: { id: dto.userId } });
+      if (!user) throw new NotFoundException('The owner account was not found.');
+      if (user.tenantId && user.tenantId !== tenantId) {
+        throw new ConflictException('This account already belongs to another tenant.');
+      }
+      if (
+        user.role !== 'CUSTOMER' &&
+        !(user.role === 'OWNER' && user.tenantId === tenantId)
+      ) {
+        throw new BadRequestException('Only a customer account can be promoted to tenant owner.');
+      }
+
+      const emailMatches =
+        !!user.email &&
+        user.email.trim().toLowerCase() === tenant.ownerEmail.trim().toLowerCase();
+      const phoneMatches =
+        !!user.phone &&
+        user.phone.trim() === tenant.ownerPhone.trim();
+      if (!emailMatches || !phoneMatches) {
+        throw new BadRequestException('The account email and phone must both match the tenant owner records.');
+      }
+
+      const existingOwner = await tx.user.findFirst({
+        where: { tenantId, role: 'OWNER' },
+        select: { id: true },
+      });
+      if (existingOwner && existingOwner.id !== user.id) {
+        throw new ConflictException('This tenant already has an assigned owner account.');
+      }
+
+      // Compare-and-set prevents the same customer from being claimed by two
+      // tenants concurrently after the initial ownership/email/phone checks.
+      const claimed = await tx.user.updateMany({
+        where: {
+          id: user.id,
+          tenantId: user.tenantId ?? null,
+          role: user.role,
+          email: user.email,
+          phone: user.phone,
+        },
+        data: {
+          tenantId,
+          role: 'OWNER',
+          isVerified: true,
+          emailVerifiedAt: new Date(),
+          phoneVerifiedAt: new Date(),
+          verificationCode: null,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('This owner account changed while it was being assigned. Reload and retry.');
+      }
+
+      const updatedUser = await tx.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: { id: true, email: true, phone: true, role: true },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: actorUserId,
+          userRole: 'SUPER_ADMIN',
+          action: 'SAAS_TENANT_OWNER_ASSIGNED',
+          entityName: 'SaaSTenant',
+          entityId: tenantId,
+          newValues: {
+            userId: updatedUser.id,
+            email: updatedUser.email,
+            phone: updatedUser.phone,
+            verificationReference,
+            manualVerification: true,
+          },
+        },
+      });
+
+      return {
+        tenantId,
+        userId: updatedUser.id,
+        role: updatedUser.role,
+        verificationReference,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
-  /**
-   * Renews or changes subscription duration for a tenant (Weekly, Monthly, Annual).
-   */
-  async renewSubscription(tenantId: string, dto: RenewSubscriptionDto): Promise<SaaSTenantDto> {
-    const tenant = await this.getTenantById(tenantId);
-    const plan = this.inMemoryPlans.find((p) => p.billingCycle === dto.billingCycle) || this.inMemoryPlans[1];
-
+  async updateTenantStatus(
+    id: string,
+    dto: UpdateTenantStatusDto,
+    actorUserId?: string,
+  ): Promise<SaaSTenantDto> {
     const now = new Date();
-    // Extend from current endDate if still active, otherwise from now
-    let baseDate = now;
-    if (tenant.currentSubscription && new Date(tenant.currentSubscription.endDate) > now) {
-      baseDate = new Date(tenant.currentSubscription.endDate);
-    }
-
-    const newEndDate = new Date(baseDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
-    const daysRemaining = Math.max(1, Math.ceil((newEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-
-    const newSub: SaaSSubscriptionDto = {
-      id: `sub-${Date.now().toString(36)}`,
-      tenantId: tenant.id,
-      tenantName: tenant.name,
-      planId: plan.id,
-      planName: plan.nameAr,
-      billingCycle: plan.billingCycle,
-      pricePaid: plan.priceUsd,
-      currency: dto.currency || CurrencyCode.USD,
-      startDate: now.toISOString(),
-      endDate: newEndDate.toISOString(),
-      autoRenew: true,
-      status: SaaSSubscriptionStatus.ACTIVE,
-      daysRemaining,
-      lastRenewalDate: now.toISOString(),
-      createdAt: now.toISOString(),
-    };
-
-    tenant.currentSubscription = newSub;
-    tenant.status = SaaSTenantStatus.ACTIVE;
-    tenant.updatedAt = now.toISOString();
-
-    // Create paid invoice for this renewal
-    const invoiceNumber = `INV-SAAS-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(
-      this.inMemoryInvoices.length + 1,
-    ).padStart(4, '0')}`;
-
-    this.inMemoryInvoices.unshift({
-      id: `inv-${Date.now().toString(36)}`,
-      invoiceNumber,
-      tenantId: tenant.id,
-      tenantName: tenant.name,
-      subscriptionId: newSub.id,
-      amount: plan.priceUsd,
-      currency: dto.currency || CurrencyCode.USD,
-      status: SaaSInvoiceStatus.PAID,
-      billingCycle: plan.billingCycle,
-      paymentMethod: dto.paymentMethod || 'MANUAL_RENEWAL',
-      referenceNumber: dto.referenceNumber || `TX-REN-${Date.now().toString(36).toUpperCase()}`,
-      paidAt: now.toISOString(),
-      dueDate: newEndDate.toISOString(),
-      createdAt: now.toISOString(),
-    });
-
-    this.logger.log(`Subscription renewed for ${tenant.name} (${plan.nameAr}) until ${newEndDate.toISOString()}`);
-    return tenant;
-  }
-
-  /**
-   * Retrieves all active and historical subscriptions.
-   */
-  async getSubscriptions(status?: SaaSSubscriptionStatus): Promise<SaaSSubscriptionDto[]> {
-    let subs = this.inMemoryTenants
-      .map((t) => t.currentSubscription)
-      .filter((s): s is SaaSSubscriptionDto => Boolean(s));
-
-    if (status) {
-      subs = subs.filter((s) => s.status === status);
-    }
-    return subs;
-  }
-
-  /**
-   * Lists SaaS billing invoices.
-   */
-  async getInvoices(status?: SaaSInvoiceStatus): Promise<SaaSInvoiceDto[]> {
-    if (status) {
-      return this.inMemoryInvoices.filter((i) => i.status === status);
-    }
-    return this.inMemoryInvoices;
-  }
-
-  /**
-   * Generates a new invoice.
-   */
-  async createInvoice(dto: CreateInvoiceDto): Promise<SaaSInvoiceDto> {
-    const tenant = await this.getTenantById(dto.tenantId);
-    const now = new Date();
-    const invoiceNumber = `INV-SAAS-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(
-      this.inMemoryInvoices.length + 1,
-    ).padStart(4, '0')}`;
-
-    const invoice: SaaSInvoiceDto = {
-      id: `inv-${Date.now().toString(36)}`,
-      invoiceNumber,
-      tenantId: tenant.id,
-      tenantName: tenant.name,
-      amount: dto.amount,
-      currency: dto.currency,
-      status: dto.status || SaaSInvoiceStatus.PAID,
-      billingCycle: dto.billingCycle,
-      paymentMethod: dto.paymentMethod,
-      referenceNumber: dto.referenceNumber,
-      paidAt: dto.status === SaaSInvoiceStatus.PAID ? now.toISOString() : undefined,
-      dueDate: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      createdAt: now.toISOString(),
-    };
-
-    this.inMemoryInvoices.unshift(invoice);
-    return invoice;
-  }
-
-  /**
-   * Computes SaaS business metrics (MRR, ARR, active counts, retention rate).
-   */
-  async getSaaSKpiDashboard(): Promise<SaaSKpiDashboardDto> {
-    const totalTenants = this.inMemoryTenants.length;
-    const activeSubscribers = this.inMemoryTenants.filter(
-      (t) => t.status === SaaSTenantStatus.ACTIVE && t.currentSubscription?.status === SaaSSubscriptionStatus.ACTIVE,
-    ).length;
-
-    let weeklyCount = 0;
-    let monthlyCount = 0;
-    let annualCount = 0;
-    let expiredCount = 0;
-
-    let mrrUsd = 0;
-
-    for (const t of this.inMemoryTenants) {
-      if (!t.currentSubscription) continue;
-      const sub = t.currentSubscription;
-
-      if (sub.status === SaaSSubscriptionStatus.ACTIVE) {
-        if (sub.billingCycle === SaaSBillingCycle.WEEKLY) {
-          weeklyCount++;
-          mrrUsd += sub.pricePaid * 4.33; // Normalized to month
-        } else if (sub.billingCycle === SaaSBillingCycle.MONTHLY) {
-          monthlyCount++;
-          mrrUsd += sub.pricePaid;
-        } else if (sub.billingCycle === SaaSBillingCycle.ANNUAL) {
-          annualCount++;
-          mrrUsd += sub.pricePaid / 12; // Normalized to month
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.saaSTenant.findUnique({ where: { id } });
+        if (!existing) throw new NotFoundException('SaaS tenant not found');
+        if (
+          existing.status === SaaSTenantStatus.TERMINATED &&
+          dto.status !== SaaSTenantStatus.TERMINATED
+        ) {
+          throw new BadRequestException('A terminated tenant cannot be reactivated.');
         }
-      } else {
-        expiredCount++;
+
+        if (dto.status === SaaSTenantStatus.ACTIVE) {
+          const paidSubscription = await tx.saaSSubscription.findFirst({
+            where: {
+              tenantId: id,
+              status: { in: [SaaSSubscriptionStatus.ACTIVE, SaaSSubscriptionStatus.SUSPENDED] },
+              startDate: { lte: now },
+              endDate: { gt: now },
+            },
+          });
+          if (!paidSubscription) {
+            throw new BadRequestException('Cannot activate a tenant without a paid, currently valid subscription.');
+          }
+        }
+
+        await tx.saaSTenant.update({
+          where: { id },
+          data: { status: dto.status },
+        });
+
+        if (dto.status === SaaSTenantStatus.SUSPENDED) {
+          await tx.saaSSubscription.updateMany({
+            where: { tenantId: id, status: SaaSSubscriptionStatus.ACTIVE },
+            data: { status: SaaSSubscriptionStatus.SUSPENDED },
+          });
+        } else if (dto.status === SaaSTenantStatus.ACTIVE) {
+          await tx.saaSSubscription.updateMany({
+            where: {
+              tenantId: id,
+              status: SaaSSubscriptionStatus.SUSPENDED,
+              startDate: { lte: now },
+              endDate: { gt: now },
+            },
+            data: { status: SaaSSubscriptionStatus.ACTIVE },
+          });
+        } else if (dto.status === SaaSTenantStatus.TERMINATED) {
+          await tx.saaSSubscription.updateMany({
+            where: {
+              tenantId: id,
+              status: {
+                in: [
+                  SaaSSubscriptionStatus.ACTIVE,
+                  SaaSSubscriptionStatus.SUSPENDED,
+                  SaaSSubscriptionStatus.TRIAL,
+                  SaaSSubscriptionStatus.PENDING_PAYMENT,
+                ],
+              },
+            },
+            data: { status: SaaSSubscriptionStatus.CANCELLED, autoRenew: false },
+          });
+          await tx.saaSInvoice.updateMany({
+            where: {
+              tenantId: id,
+              status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+            },
+            data: { status: SaaSInvoiceStatus.CANCELLED },
+          });
+        }
+
+        if (actorUserId) {
+          await tx.auditLog.create({
+            data: {
+              userId: actorUserId,
+              userRole: 'SUPER_ADMIN',
+              action: 'SAAS_TENANT_STATUS_UPDATED',
+              entityName: 'SaaSTenant',
+              entityId: id,
+              oldValues: { status: existing.status },
+              newValues: {
+                status: dto.status,
+                reason: dto.reason?.trim() || null,
+              },
+            },
+          });
+        }
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error: any) {
+      if (error?.code === 'P2034') {
+        throw new ConflictException('Tenant status changed concurrently. Reload the tenant and retry.');
+      }
+      throw error;
+    }
+
+    return this.getTenantById(id);
+  }
+
+  async renewSubscription(tenantId: string, dto: RenewSubscriptionDto): Promise<SaaSTenantDto> {
+    const plan = await this.getActivePlan(dto.billingCycle);
+    const currency = dto.currency || CurrencyCode.USD;
+    const now = new Date();
+    const dueDate = new Date(now.getTime() + 7 * DAY_MS);
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const tenant = await tx.saaSTenant.findUnique({ where: { id: tenantId } });
+        if (!tenant) throw new NotFoundException('SaaS tenant not found');
+        if (tenant.status === SaaSTenantStatus.TERMINATED) {
+          throw new BadRequestException('A terminated tenant cannot be renewed');
+        }
+
+        const pending = await tx.saaSInvoice.count({
+          where: {
+            tenantId,
+            status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+          },
+        });
+        if (pending > 0) {
+          throw new ConflictException('This tenant already has an unpaid SaaS invoice');
+        }
+
+        const activeSubscription = await tx.saaSSubscription.findFirst({
+          where: {
+            tenantId,
+            status: SaaSSubscriptionStatus.ACTIVE,
+            endDate: { gt: now },
+          },
+          orderBy: { endDate: 'desc' },
+        });
+        const startDate =
+          activeSubscription && activeSubscription.endDate > now
+            ? activeSubscription.endDate
+            : now;
+        const endDate = new Date(startDate.getTime() + plan.durationDays * DAY_MS);
+
+        const subscription = await tx.saaSSubscription.create({
+          data: {
+            tenantId,
+            planId: plan.id,
+            billingCycle: plan.billingCycle,
+            pricePaid: this.planPrice(plan, currency),
+            currency,
+            startDate,
+            endDate,
+            autoRenew: false,
+            status: SaaSSubscriptionStatus.PENDING_PAYMENT,
+          },
+        });
+
+        await tx.saaSInvoice.create({
+          data: {
+            invoiceNumber: this.createInvoiceNumber(),
+            tenantId,
+            subscriptionId: subscription.id,
+            amount: this.planPrice(plan, currency),
+            currency,
+            status: SaaSInvoiceStatus.PENDING,
+            billingCycle: plan.billingCycle,
+            dueDate,
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error: any) {
+      if (error?.code === 'P2034' || error?.code === 'P2002') {
+        throw new ConflictException('A pending renewal invoice already exists or this tenant was renewed concurrently.');
+      }
+      throw error;
+    }
+
+    return this.getTenantById(tenantId);
+  }
+
+  async markInvoicePaid(
+    invoiceId: string,
+    dto: MarkSaasInvoicePaidDto,
+    actorUserId: string,
+    actorUserRole: string = 'SUPER_ADMIN',
+  ): Promise<SaaSInvoiceDto> {
+    const paymentMethod = dto.paymentMethod.trim();
+    const referenceNumber = dto.referenceNumber.trim();
+    const paidAt = new Date();
+
+    try {
+      const invoice = await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.saaSInvoice.findUnique({
+          where: { id: invoiceId },
+          include: { subscription: { include: { plan: true } } },
+        });
+        if (!existing) throw new NotFoundException('SaaS invoice not found');
+        if (existing.status !== 'PENDING' && existing.status !== 'OVERDUE') {
+          throw new ConflictException('Only pending or overdue invoices can be marked as paid');
+        }
+
+        const duplicateReference = await tx.saaSInvoice.findFirst({
+          where: {
+            paymentMethod,
+            referenceNumber,
+            id: { not: invoiceId },
+          },
+        });
+        if (duplicateReference) {
+          throw new ConflictException('This payment reference is already attached to another SaaS invoice');
+        }
+
+        const claimed = await tx.saaSInvoice.updateMany({
+          where: {
+            id: invoiceId,
+            status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] },
+          },
+          data: {
+            status: SaaSInvoiceStatus.PAID,
+            paymentMethod,
+            referenceNumber,
+            paidAt,
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('Invoice payment was already processed by another request');
+        }
+
+        if (existing.subscriptionId && existing.subscription) {
+          const subscription = existing.subscription;
+          const tenant = await tx.saaSTenant.findUnique({ where: { id: existing.tenantId } });
+          if (!tenant || tenant.status === SaaSTenantStatus.TERMINATED) {
+            throw new BadRequestException('The tenant is not eligible for activation');
+          }
+
+          const startsAt =
+            subscription.startDate > paidAt ? subscription.startDate : paidAt;
+          // An early renewal is queued after the current term; retain the current
+          // subscription until the queued term actually starts.
+          if (startsAt <= paidAt) {
+            await tx.saaSSubscription.updateMany({
+              where: {
+                tenantId: existing.tenantId,
+                status: SaaSSubscriptionStatus.ACTIVE,
+                id: { not: subscription.id },
+                endDate: { lte: startsAt },
+              },
+              data: { status: SaaSSubscriptionStatus.EXPIRED },
+            });
+          }
+          const endsAt = new Date(startsAt.getTime() + subscription.plan.durationDays * DAY_MS);
+
+          await tx.saaSSubscription.update({
+            where: { id: subscription.id },
+            data: {
+              status: SaaSSubscriptionStatus.ACTIVE,
+              startDate: startsAt,
+              endDate: endsAt,
+              lastRenewalDate: paidAt,
+            },
+          });
+          await tx.saaSTenant.update({
+            where: { id: existing.tenantId },
+            data: { status: SaaSTenantStatus.ACTIVE },
+          });
+        }
+
+        await tx.auditLog.create({
+          data: {
+            userId: actorUserId,
+            userRole: actorUserRole,
+            action: 'SAAS_INVOICE_MARKED_PAID',
+            entityName: 'SaaSInvoice',
+            entityId: invoiceId,
+            newValues: {
+              paymentMethod,
+              referenceNumber,
+              paidAt: paidAt.toISOString(),
+              amount: Number(existing.amount),
+              currency: existing.currency,
+            },
+          },
+        });
+
+        return tx.saaSInvoice.findUniqueOrThrow({
+          where: { id: invoiceId },
+          include: { tenant: true },
+        });
+      });
+      return this.mapInvoice(invoice);
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new ConflictException('This payment reference has already been used');
+      }
+      throw error;
+    }
+  }
+
+  async getSubscriptions(status?: SaaSSubscriptionStatus): Promise<SaaSSubscriptionDto[]> {
+    const subscriptions = await this.prisma.saaSSubscription.findMany({
+      where: status ? { status } : undefined,
+      orderBy: { createdAt: 'desc' },
+      include: { tenant: true, plan: true },
+    });
+    return subscriptions.map((subscription) => this.mapSubscription(subscription));
+  }
+
+  async getInvoices(status?: SaaSInvoiceStatus): Promise<SaaSInvoiceDto[]> {
+    const invoices = await this.prisma.saaSInvoice.findMany({
+      where: status ? { status } : undefined,
+      orderBy: { createdAt: 'desc' },
+      include: { tenant: true },
+    });
+    return invoices.map((invoice) => this.mapInvoice(invoice));
+  }
+
+  async createInvoice(dto: CreateInvoiceDto): Promise<SaaSInvoiceDto> {
+    const tenant = await this.prisma.saaSTenant.findUnique({ where: { id: dto.tenantId } });
+    if (!tenant) throw new NotFoundException('SaaS tenant not found');
+
+    if (dto.subscriptionId) {
+      const subscription = await this.prisma.saaSSubscription.findFirst({
+        where: { id: dto.subscriptionId, tenantId: dto.tenantId },
+      });
+      if (!subscription) throw new BadRequestException('Subscription does not belong to this tenant');
+    }
+
+    const invoice = await this.prisma.saaSInvoice.create({
+      data: {
+        invoiceNumber: this.createInvoiceNumber(),
+        tenantId: dto.tenantId,
+        subscriptionId: dto.subscriptionId || null,
+        amount: new Prisma.Decimal(dto.amount),
+        currency: dto.currency,
+        status: SaaSInvoiceStatus.PENDING,
+        billingCycle: dto.billingCycle,
+        dueDate: new Date(Date.now() + 7 * DAY_MS),
+      },
+      include: { tenant: true },
+    });
+    return this.mapInvoice(invoice);
+  }
+
+  async getSaaSKpiDashboard(): Promise<SaaSKpiDashboardDto> {
+    const now = new Date();
+    const [totalTenantsCount, activeSubscribersCount, subscriptions, pendingInvoices, expiredSubscriptionsCount] =
+      await Promise.all([
+        this.prisma.saaSTenant.count(),
+        this.prisma.saaSSubscription.count({
+          where: {
+            status: SaaSSubscriptionStatus.ACTIVE,
+            startDate: { lte: now },
+            endDate: { gt: now },
+            tenant: { status: SaaSTenantStatus.ACTIVE },
+          },
+        }),
+        this.prisma.saaSSubscription.findMany({
+          where: { status: SaaSSubscriptionStatus.ACTIVE, startDate: { lte: now }, endDate: { gt: now } },
+          select: { billingCycle: true, pricePaid: true, currency: true },
+        }),
+        this.prisma.saaSInvoice.findMany({
+          where: { status: { in: [SaaSInvoiceStatus.PENDING, SaaSInvoiceStatus.OVERDUE] } },
+          select: { amount: true, currency: true },
+        }),
+        this.prisma.saaSSubscription.count({
+          where: {
+            OR: [
+              { status: SaaSSubscriptionStatus.EXPIRED },
+              { endDate: { lte: now }, status: SaaSSubscriptionStatus.ACTIVE },
+            ],
+          },
+        }),
+      ]);
+
+    let weeklySubscriptionsCount = 0;
+    let monthlySubscriptionsCount = 0;
+    let annualSubscriptionsCount = 0;
+    let monthlyRecurringRevenueUsd = 0;
+
+    for (const subscription of subscriptions) {
+      if (subscription.billingCycle === SaaSBillingCycle.WEEKLY) weeklySubscriptionsCount++;
+      if (subscription.billingCycle === SaaSBillingCycle.MONTHLY) monthlySubscriptionsCount++;
+      if (subscription.billingCycle === SaaSBillingCycle.ANNUAL) annualSubscriptionsCount++;
+
+      // MRR is reported in USD only. Non-USD subscriptions are not converted implicitly.
+      if (subscription.currency === CurrencyCode.USD) {
+        const amount = Number(subscription.pricePaid);
+        if (subscription.billingCycle === SaaSBillingCycle.WEEKLY) monthlyRecurringRevenueUsd += amount * (52 / 12);
+        if (subscription.billingCycle === SaaSBillingCycle.MONTHLY) monthlyRecurringRevenueUsd += amount;
+        if (subscription.billingCycle === SaaSBillingCycle.ANNUAL) monthlyRecurringRevenueUsd += amount / 12;
       }
     }
 
-    const pendingInvoices = this.inMemoryInvoices
-      .filter((i) => i.status === SaaSInvoiceStatus.PENDING || i.status === SaaSInvoiceStatus.OVERDUE)
-      .reduce((sum, i) => sum + i.amount, 0);
+    const pendingInvoicesAmountUsd = pendingInvoices
+      .filter((invoice) => invoice.currency === CurrencyCode.USD)
+      .reduce((sum, invoice) => sum + Number(invoice.amount), 0);
+
+    // This is an active-subscriber ratio, not a cohort-based retention metric.
+    const retentionRatePercent =
+      totalTenantsCount === 0
+        ? 0
+        : Math.round((activeSubscribersCount / totalTenantsCount) * 10000) / 100;
+    const roundedMrr = Math.round(monthlyRecurringRevenueUsd * 100) / 100;
 
     return {
-      timestamp: new Date().toISOString(),
-      totalTenantsCount: totalTenants,
-      activeSubscribersCount: activeSubscribers,
-      monthlyRecurringRevenueUsd: Math.round(mrrUsd * 100) / 100,
-      annualRunRateUsd: Math.round(mrrUsd * 12 * 100) / 100,
-      weeklySubscriptionsCount: weeklyCount,
-      monthlySubscriptionsCount: monthlyCount,
-      annualSubscriptionsCount: annualCount,
-      expiredSubscriptionsCount: expiredCount,
-      pendingInvoicesAmountUsd: pendingInvoices,
-      retentionRatePercent: 96.4,
-      equalPermissionsPolicyEnforced: true,
+      timestamp: now.toISOString(),
+      totalTenantsCount,
+      activeSubscribersCount,
+      monthlyRecurringRevenueUsd: roundedMrr,
+      annualRunRateUsd: Math.round(roundedMrr * 12 * 100) / 100,
+      weeklySubscriptionsCount,
+      monthlySubscriptionsCount,
+      annualSubscriptionsCount,
+      expiredSubscriptionsCount,
+      pendingInvoicesAmountUsd: Math.round(pendingInvoicesAmountUsd * 100) / 100,
+      retentionRatePercent,
+      equalPermissionsPolicyEnforced: await this.verifyAllPlansEqualPermissions().then((audit) => audit.invariantPassed),
     };
   }
 
-  /**
-   * Global system status for Super Admin.
-   */
   async getSystemStatus() {
-    return {
-      status: 'OPERATIONAL',
-      version: '2.5.0-saas-enterprise',
-      platformName: 'Yemen Digital Services SaaS Platform Engine',
-      superAdminRole: 'PLATFORM_MASTER_SUPER_ADMIN',
-      uptimeSeconds: process.uptime(),
-      multiTenantMode: true,
-      equalPermissionsPolicy: 'STRICTLY_ENFORCED',
-      activeGatewaysCount: 5,
-      activeProvidersCount: 3,
-      serverTime: new Date().toISOString(),
-    };
+    try {
+      const [tenantCount, activeTenantCount, activeProvidersCount, activeGatewaysCount, planCount] =
+        await Promise.all([
+          this.prisma.saaSTenant.count(),
+          this.prisma.saaSTenant.count({ where: { status: SaaSTenantStatus.ACTIVE } }),
+          this.prisma.provider.count({ where: { isActive: true } }),
+          this.prisma.paymentMethod.count({ where: { isActive: true, isMock: false } }),
+          this.prisma.saaSPlan.count({ where: { isActive: true } }),
+        ]);
+
+      return {
+        status: planCount > 0 ? 'OPERATIONAL' : 'DEGRADED',
+        version: '2.6.0-saas-persistent',
+        platformName: 'Yemen Digital Services SaaS Platform Engine',
+        superAdminRole: 'PLATFORM_MASTER_SUPER_ADMIN',
+        uptimeSeconds: process.uptime(),
+        multiTenantMode: true,
+        equalPermissionsPolicy: (await this.verifyAllPlansEqualPermissions()).invariantPassed
+          ? 'STRICTLY_ENFORCED'
+          : 'NOT_VERIFIED',
+        activeGatewaysCount,
+        activeProvidersCount,
+        totalTenantsCount: tenantCount,
+        activeTenantsCount: activeTenantCount,
+        serverTime: new Date().toISOString(),
+      };
+    } catch (error: any) {
+      this.logger.error(`SaaS system status query failed: ${error?.message || error}`);
+      throw new ServiceUnavailableException('SaaS system status is unavailable because the database could not be read.');
+    }
   }
 }

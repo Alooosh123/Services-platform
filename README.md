@@ -14,7 +14,7 @@
 | **الكاش وقوائم الانتظار** | Redis | التخزين المؤقت، Rate Limiting، ومزامنة العمليات |
 | **لوحة الإدارة (Web Admin)** | Next.js 14 + Tailwind CSS | الإدارة المركزية، متابعة الطلبات، إضافة الألعاب ديناميكياً، والتدقيق المالي |
 | **متجر العميل (Web Customer)** | Next.js 14 + Tailwind CSS | متجر سريع ومتجاوب، التحقق الفوري من معرف اللاعب، والمحفظة الرقمية |
-| **تطبيق الهاتف (Customer Mobile)** | Flutter (iOS & Android) | تطبيق عميل بنمط Clean Architecture للشحن المباشر والمحفظة |
+| **تطبيق الهاتف (Customer Mobile)** | Flutter (iOS & Android) | واجهة نموذجية غير مكتملة؛ لا تتصل بعد بالـ API ولا تنفذ عمليات مالية فعلية |
 | **التوثيق التفاعلي** | Swagger OpenAPI | توثيق كافة مسارات الـ API واختبارها |
 
 ---
@@ -32,6 +32,7 @@ docker compose -f docker/docker-compose.yml ps
 
 * **متجر العميل:** `http://localhost:3000`
 * **لوحة الإدارة:** `http://localhost:3001`
+* **بوابة إدارة SaaS:** `http://localhost:3002`
 * **توثيق Swagger:** `http://localhost:4000/api/docs`
 
 ### 2. التشغيل اليدوي (Local Development)
@@ -53,6 +54,12 @@ npm run dev:admin
 
 # تشغيل متجر العميل (نافذة ثالثة)
 npm run dev:customer
+
+# تطبيق Flutter (من مجلد apps/mobile-customer)
+# flutter pub get && flutter run --dart-define=API_BASE_URL=http://10.0.2.2:4000/api
+
+# تشغيل بوابة SaaS المستقلة (نافذة رابعة)
+npm run dev:saas
 ```
 
 أمر `npm run db:seed` لا يمسح بيانات قاعدة موجودة. إعادة ضبط بيانات التطوير بشكل صريح تتطلب تعيين `RESET_DATABASE_SEED=true`، وهو أمر هدّام ولا يعمل في بيئة الإنتاج.
@@ -60,15 +67,18 @@ npm run dev:customer
 
 ---
 
-## 🔐 حسابات التجربة المعدة مسبقاً (Default Seed Accounts)
+## 🔐 إعداد حسابات التطوير
 
-| الحساب | البريد الإلكتروني | كلمة المرور | الدور والصلاحيات |
-| :--- | :--- | :--- | :--- |
-| **Super Admin** | `admin@digitaltopup.com` | `Admin@123456` | التحكم الكامل بجميع وحدات المنظومة |
-| **Finance Officer** | `finance@digitaltopup.com` | `Finance@123456` | التدقيق المالي والتعديل الإداري المسبب |
-| **Test Customer** | `customer@gmail.com` | `Customer@123456` | عميل تجريبي مع محفظة ممولة بـ **$100.00** |
+لا توجد كلمات مرور افتراضية أو حسابات دخول عامة داخل المستودع. قبل تشغيل `npm run db:seed`، انسخ ملف `.env.example` إلى `.env` وحدد قيماً سرية محلية وفريدة للمتغيرات التالية:
 
----
+- `SEED_SUPER_ADMIN_EMAIL`
+- `SEED_SUPER_ADMIN_PASSWORD`
+- `SEED_FINANCE_PASSWORD`
+- `SEED_CUSTOMER_PASSWORD`
+
+يجب أن تكون كلمات مرور التطوير بطول 20 حرفاً على الأقل، وألا يعاد استخدامها في الإنتاج. لا تستخدم حسابات seed كحسابات تشغيل حقيقية.
+
+**قنوات الدفع اليمنية تُنشأ معطلة افتراضياً** إلى أن يضع مسؤول المالية أرقام الاستقبال الرسمية ويتحقق منها ويعتمدها. لا تعتمد على بيانات المثال أو على أسعار الصرف المرجعية كقيم تشغيلية دون مراجعة مالية حديثة.
 
 ## 💎 أبرز المزايا المعمارية المنفذة
 
@@ -91,6 +101,8 @@ npm run dev:customer
 ---
 
 ## 📚 التوثيق المرفق
+* 📱 [دليل ربط تطبيق Flutter وتشغيله](docs/MOBILE_APP_API_INTEGRATION.md)
+* 🏢 [دليل بوابة إدارة SaaS](docs/SAAS_ADMIN_PORTAL_GUIDE.md)
 * 📖 [دليل النشر والتشغيل (Deployment Guide)](docs/DEPLOYMENT_GUIDE.md)
 * 🛡️ [قائمة التحقق الأمني (Security Checklist)](docs/SECURITY_CHECKLIST.md)
 * 💾 [دليل النسخ الاحتياطي والطوارئ (Backup & Recovery Guide)](docs/BACKUP_AND_RECOVERY_GUIDE.md)

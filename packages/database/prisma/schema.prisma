@@ -294,6 +294,7 @@ model User {
   transactionPinFailedAttempts Int              @default(0)
   transactionPinLockedUntil    DateTime?
   tierId                       String?
+  tenantId                     String?
   parentAgentId                String?
   agentPricingMode             AgentPricingMode @default(PERCENTAGE)
   parentAgentCommissionPercent Decimal          @default(0.0000) @db.Decimal(7, 4)
@@ -306,6 +307,7 @@ model User {
   updatedAt                    DateTime         @updatedAt
 
   tier                     Tier?                  @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  tenant                   SaaSTenant?            @relation(fields: [tenantId], references: [id], onDelete: SetNull)
   parentAgent              User?                  @relation("AgentHierarchy", fields: [parentAgentId], references: [id], onDelete: SetNull)
   subAgents                User[]                 @relation("AgentHierarchy")
   agentProductPrices       AgentProductPrice[]    @relation("AgentBranchPrices")
@@ -313,6 +315,7 @@ model User {
   merchantApiCredential    MerchantApiCredential?
   wallets                  Wallet[]
   orders                   Order[]
+  payments                 Payment[]
   sessions                 Session[]
   walletTopups             WalletTopup[]
   depositRequests          DepositRequest[]       @relation("UserDeposits")
@@ -326,8 +329,12 @@ model User {
   reviewedServiceRequests  ServiceRequest[]       @relation("UserReviewedServiceRequests")
   priceRuleVersions        PriceRuleVersion[]
   commissionsEarned        Order[]                @relation("AgentCommissionRecipient")
+  supportTickets          SupportTicket[]
+  notifications            Notification[]
+  payoutBeneficiaries      PayoutBeneficiary[]
 
   @@index([parentAgentId])
+  @@index([tenantId, role, status])
   @@index([tierId, role])
   @@index([status, role])
   @@map("users")
@@ -536,7 +543,8 @@ model DepositStatusHistory {
 
 model PaymentChannelConfig {
   id                      String                    @id @default(uuid())
-  code                    PaymentChannelCode        @unique
+  tenantId                String?
+  code                    PaymentChannelCode
   name                    String
   nameAr                  String
   accountNumber           String // E.g. "770123456"
@@ -550,7 +558,9 @@ model PaymentChannelConfig {
   verifiedByFinanceUserId String?
   verifiedAt              DateTime?
   financeApprovalRequired Boolean                   @default(false)
+  proposedByUserId        String?
   pendingAccountNumber    String?
+  pendingAccountHolderName String?
   pendingInstructionsAr   String?
   pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
   killSwitchReason        String?
@@ -559,6 +569,9 @@ model PaymentChannelConfig {
   createdAt               DateTime                  @default(now())
   updatedAt               DateTime                  @updatedAt
 
+  tenant    SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
   @@map("payment_channel_configs")
 }
 
@@ -586,6 +599,7 @@ model WalletTopup {
 
 model LedgerAccount {
   id          String            @id @default(uuid())
+  tenantId    String?
   code        String            @unique // E.g. "1001-CASH-JAIB", "2001-CUSTOMER-WALLET-YER"
   name        String
   type        LedgerAccountType
@@ -593,6 +607,7 @@ model LedgerAccount {
   description String?
   createdAt   DateTime          @default(now())
 
+  tenant      SaaSTenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   currencyRel Currency      @relation(fields: [currency], references: [code])
   entries     LedgerEntry[]
 
@@ -601,6 +616,7 @@ model LedgerAccount {
 
 model LedgerTransaction {
   id              String                @id @default(uuid())
+  tenantId        String?
   txNumber        String                @unique // E.g. "LTX-20261009-0001"
   type            LedgerTransactionType
   status          String                @default("POSTED") // POSTED, REVERSED
@@ -614,14 +630,16 @@ model LedgerTransaction {
   reversalOfId    String? // Link to reversed transaction if this is a reversal
   createdAt       DateTime              @default(now())
 
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entries LedgerEntry[]
 
-  @@index([referenceType, referenceId])
+  @@index([tenantId, referenceType, referenceId])
   @@map("ledger_transactions")
 }
 
 model LedgerEntry {
   id            String       @id @default(uuid())
+  tenantId      String?
   transactionId String
   accountId     String
   walletId      String? // Associated customer wallet if applicable
@@ -631,6 +649,7 @@ model LedgerEntry {
   notes         String?
   createdAt     DateTime     @default(now())
 
+  tenant      SaaSTenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   account     LedgerAccount     @relation(fields: [accountId], references: [id])
   wallet      Wallet?           @relation(fields: [walletId], references: [id])
@@ -737,6 +756,7 @@ model Product {
 
 model ProductPrice {
   id          String       @id @default(uuid())
+  tenantId    String?
   productId   String
   currency    CurrencyCode
   retailPrice Decimal      @db.Decimal(18, 4)
@@ -744,14 +764,16 @@ model ProductPrice {
   isAvailable Boolean      @default(true)
   updatedAt   DateTime     @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, currency])
+  @@unique([tenantId, productId, currency])
   @@map("product_prices")
 }
 
 model ProductTierPrice {
   id                     String       @id @default(uuid())
+  tenantId               String?
   productId              String
   tierId                 String
   currency               CurrencyCode
@@ -761,11 +783,12 @@ model ProductTierPrice {
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  tier    Tier    @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tier    Tier         @relation(fields: [tierId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, tierId, currency])
-  @@index([tierId, isActive])
+  @@unique([tenantId, productId, tierId, currency])
+  @@index([tenantId, tierId, isActive])
   @@map("product_tier_prices")
 }
 
@@ -791,6 +814,7 @@ model ProductProviderMapping {
 
 model PinVault {
   id                   String         @id @default(uuid())
+  tenantId             String?
   productId            String
   orderId              String?
   serialNumber         String?
@@ -805,6 +829,7 @@ model PinVault {
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
+  tenant  SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
@@ -816,6 +841,7 @@ model PinVault {
 
 model ProviderApiLog {
   id              String   @id @default(uuid())
+  tenantId        String?
   providerId      String
   orderId         String?
   operation       String
@@ -828,6 +854,7 @@ model ProviderApiLog {
   errorMessage    String?
   createdAt       DateTime @default(now())
 
+  tenant   SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   provider Provider @relation(fields: [providerId], references: [id], onDelete: Restrict)
   order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
@@ -886,6 +913,7 @@ model Payment {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
   order         Order?                @relation(fields: [orderId], references: [id])
   paymentMethod PaymentMethod         @relation(fields: [paymentMethodId], references: [id])
   webhookEvents PaymentWebhookEvent[]
@@ -1077,6 +1105,7 @@ model PayoutRequest {
 
 model ReconciliationBatch {
   id                    String              @id @default(uuid())
+  tenantId              String?
   batchNumber           String              @unique // E.g. "REC-20261010-001"
   channelCode           PaymentChannelCode?
   statementDate         DateTime
@@ -1090,6 +1119,8 @@ model ReconciliationBatch {
   notes                 String?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
+
+  tenant SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   items ReconciliationItem[]
 
@@ -1120,6 +1151,7 @@ model ReconciliationItem {
 
 model SupplierAccount {
   id               String              @id @default(uuid())
+  tenantId         String?
   providerId       String
   currency         CurrencyCode        @default(USD)
   balance          Decimal             @default(0.0000) @db.Decimal(18, 4)
@@ -1129,10 +1161,11 @@ model SupplierAccount {
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
+  tenant       SaaSTenant?           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   provider     Provider              @relation(fields: [providerId], references: [id], onDelete: Cascade)
   transactions SupplierTransaction[]
 
-  @@unique([providerId, currency])
+  @@unique([tenantId, providerId, currency])
   @@map("supplier_accounts")
 }
 
@@ -1181,6 +1214,7 @@ model ServiceRequest {
 
 model PriceRuleVersion {
   id              String         @id @default(uuid())
+  tenantId        String?
   version         Int            @default(1)
   scope           PriceRuleScope
   targetId        String?
@@ -1197,9 +1231,11 @@ model PriceRuleVersion {
   createdByUserId String?
   createdAt       DateTime       @default(now())
 
+  tenant        SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdByUser User? @relation(fields: [createdByUserId], references: [id])
 
   @@index([scope, targetId])
+  @@index([tenantId, scope, targetId])
   @@map("price_rule_versions")
 }
 
@@ -1208,7 +1244,8 @@ model PriceRuleVersion {
 // ----------------------------------------------------
 model DailyCloseReport {
   id                   String   @id @default(uuid())
-  closeDate            String   @unique // Format: YYYY-MM-DD
+  tenantId             String?
+  closeDate            String   // Format: YYYY-MM-DD
   status               String   @default("CLOSED") // OPEN, PRELIMINARY, CLOSED, ADJUSTED
   totalOrdersCount     Int      @default(0)
   completedOrdersCount Int      @default(0)
@@ -1221,8 +1258,10 @@ model DailyCloseReport {
   closedAt             DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
+  tenant      SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   adjustments DailyCloseAdjustment[]
 
+  @@unique([tenantId, closeDate])
   @@map("daily_close_reports")
 }
 
@@ -1255,6 +1294,7 @@ model PayoutBeneficiary {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
+  user    User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   payouts OwnerPayoutTransaction[]
 
   @@index([userId])
@@ -1287,6 +1327,7 @@ model OwnerPayoutTransaction {
 
 model OwnerEarningsWallet {
   id                String       @id @default(uuid())
+  tenantId          String?
   userId            String
   currency          CurrencyCode
   realizedEarnings  Decimal      @default(0.0000) @db.Decimal(18, 4)
@@ -1294,7 +1335,9 @@ model OwnerEarningsWallet {
   withdrawnEarnings Decimal      @default(0.0000) @db.Decimal(18, 4)
   updatedAt         DateTime     @updatedAt
 
-  @@unique([userId, currency])
+  tenant SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, currency])
   @@map("owner_earnings_wallets")
 }
 
@@ -1320,6 +1363,7 @@ model SupportTicket {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages TicketMessage[]
 
   @@index([userId])
@@ -1357,6 +1401,8 @@ model Notification {
   channel   String    @default("IN_APP") // IN_APP, SMS, EMAIL
   readAt    DateTime?
   createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
@@ -1433,6 +1479,7 @@ model PilotConfig {
 
 model PilotRunAudit {
   id                     String   @id @default(uuid())
+  tenantId               String?
   cycleName              String
   userId                 String
   depositTxId            String
@@ -1449,6 +1496,7 @@ model PilotRunAudit {
   status                 String   @default("PASSED")
   detailsJson            Json?
   executedBy             String   @default("SYSTEM_PILOT_RUNNER")
+  tenant                 SaaSTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdAt              DateTime @default(now())
 
   @@index([status])
@@ -1525,7 +1573,7 @@ model SaaSTenant {
   name           String
   slug           String           @unique
   domain         String?          @unique
-  customDomain   String?
+  customDomain   String?          @unique
   ownerName      String
   ownerEmail     String
   ownerPhone     String
@@ -1536,8 +1584,23 @@ model SaaSTenant {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  subscriptions SaaSSubscription[]
-  invoices      SaaSInvoice[]
+  subscriptions          SaaSSubscription[]
+  invoices               SaaSInvoice[]
+  users                  User[]
+  ledgerAccounts         LedgerAccount[]
+  ledgerTransactions     LedgerTransaction[]
+  ledgerEntries          LedgerEntry[]
+  reconciliationBatches ReconciliationBatch[]
+  supplierAccounts       SupplierAccount[]
+  priceRuleVersions      PriceRuleVersion[]
+  dailyCloseReports      DailyCloseReport[]
+  ownerEarningsWallets   OwnerEarningsWallet[]
+  pinVaultItems          PinVault[]
+  providerApiLogs        ProviderApiLog[]
+  paymentChannelConfigs  PaymentChannelConfig[]
+  productPrices          ProductPrice[]
+  productTierPrices      ProductTierPrice[]
+  pilotRunAudits          PilotRunAudit[]
 
   @@index([status])
   @@map("saas_tenants")
@@ -1575,7 +1638,7 @@ model SaaSInvoice {
   subscriptionId  String?
   amount          Decimal           @db.Decimal(18, 4)
   currency        CurrencyCode      @default(USD)
-  status          SaaSInvoiceStatus @default(PAID)
+  status          SaaSInvoiceStatus @default(PENDING)
   billingCycle    SaaSBillingCycle
   paymentMethod   String?
   referenceNumber String?
@@ -1589,5 +1652,6 @@ model SaaSInvoice {
 
   @@index([tenantId])
   @@index([status])
+  @@unique([paymentMethod, referenceNumber])
   @@map("saas_invoices")
 }

@@ -1,10 +1,14 @@
-name: Yemen TopUp Platform - CI/CD Pipeline & Quality Gate (Phase 10)
+name: Yemen TopUp Platform - CI, Security & Build Gates (Deployment Not Configured)
 
 on:
   push:
-    branches: [main, develop, 'release/*']
+    branches: [main, develop, 'release/*', 'production-completion']
   pull_request:
     branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # -------------------------------------------------------------
@@ -33,7 +37,7 @@ jobs:
         run: npm run build --workspace=packages/shared && npm run build --workspace=packages/database
 
       - name: Security Vulnerability Audit
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=high
 
   # -------------------------------------------------------------
   # Job 2: Unit, Integration & Security Tests
@@ -41,7 +45,6 @@ jobs:
   automated-tests:
     name: Backend Unit, Security & Stress Tests
     runs-on: ubuntu-latest
-    needs: quality-gate
     services:
       postgres:
         image: postgres:16-alpine
@@ -73,6 +76,10 @@ jobs:
       JWT_SECRET: "test-jwt-access-token-secret-for-ci-pipeline-minimum-32-chars-long"
       JWT_REFRESH_SECRET: "test-jwt-refresh-token-secret-for-ci-pipeline-minimum-32-chars-long"
       NODE_ENV: test
+      SEED_SUPER_ADMIN_EMAIL: ci-admin@example.test
+      SEED_SUPER_ADMIN_PASSWORD: ci-only-super-admin-password-32-chars
+      SEED_FINANCE_PASSWORD: ci-only-finance-password-32-chars
+      SEED_CUSTOMER_PASSWORD: ci-only-customer-password-32-chars
 
     steps:
       - name: Checkout Code
@@ -87,6 +94,12 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Build shared workspace
+        run: npm run build --workspace=packages/shared
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
       - name: Push Test Schema
         run: npx prisma db push --schema=packages/database/prisma/schema.prisma
 
@@ -100,9 +113,24 @@ jobs:
   # Job 3: Prisma Migration Dry-Run & Schema Safety Check
   # -------------------------------------------------------------
   migration-dryrun:
-    name: Migration Dry-Run & Safety Check
+    name: Prisma Migration Apply & Safety Check
     runs-on: ubuntu-latest
-    needs: quality-gate
+    env:
+      DATABASE_URL: "postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public"
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: digital_topup_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -119,13 +147,19 @@ jobs:
       - name: Prisma Schema Validation
         run: npx prisma validate --schema=packages/database/prisma/schema.prisma
 
+      - name: Apply all migrations to an empty PostgreSQL instance
+        run: npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+
+      - name: Verify deployed migration history
+        run: npx prisma migrate status --schema=packages/database/prisma/schema.prisma
+
   # -------------------------------------------------------------
   # Job 4: Build Monorepo Production Artifacts
   # -------------------------------------------------------------
   build-production:
     name: Build Monorepo Packages & Apps
     runs-on: ubuntu-latest
-    needs: [automated-tests, migration-dryrun]
+    needs: [automated-tests, migration-dryrun, mobile-quality]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -139,40 +173,43 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Build shared workspace
+        run: npm run build --workspace=packages/shared
+
       - name: Build All Workspaces
         run: npm run build
 
   # -------------------------------------------------------------
-  # Job 5: Deploy to Staging & Automated Health Smoke Test
+  # Job 5: Flutter API-connected mobile static analysis and tests
   # -------------------------------------------------------------
-  deploy-staging:
-    name: Deploy to Staging & Run AT-20 Drill
+  mobile-quality:
+    name: Flutter Customer App Analysis & Tests
     runs-on: ubuntu-latest
-    needs: build-production
-    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
     steps:
-      - name: Staging Deployment Notice
-        run: echo "Deploying release candidate to Staging Environment (staging-api.yementopup.com)..."
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Execute Health Probe
-        run: echo "Verifying GET /api/health and /api/health/ready probes..."
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
 
-      - name: Execute AT-20 Restore Drill
-        run: echo "Verifying SHA-256 backup restore and ledger conservation..."
+      - name: Install Flutter Dependencies
+        working-directory: apps/mobile-customer
+        run: flutter pub get
 
-  # -------------------------------------------------------------
-  # Job 6: Gated Production Deployment with Rollback Trigger
-  # -------------------------------------------------------------
-  deploy-production:
-    name: Gated Production Release (Manual Approval Required)
-    runs-on: ubuntu-latest
-    needs: deploy-staging
-    if: github.ref == 'refs/heads/main'
-    environment:
-      name: production
-      url: https://yementopup.com
-    steps:
-      - name: Production Gate Check
-        run: |
-          echo "Production release gate passed."
-          echo "Rollback Trigger: If /api/health reports UNHEALTHY or 5xx > 1%, trigger scripts/rollback.ts."
+      - name: Analyze Flutter Source
+        working-directory: apps/mobile-customer
+        run: flutter analyze
+
+      - name: Run Flutter Unit Tests
+        working-directory: apps/mobile-customer
+        run: flutter test
+
+  # No staging/production deployment jobs are defined yet.
+  # This workflow is CI-only until a real host, DNS, TLS, protected secrets,
+  # deployment action and endpoint-based health/restore verification are configured.

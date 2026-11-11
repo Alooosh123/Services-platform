@@ -31,10 +31,13 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
     },
     productPrice: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
     },
     productTierPrice: {
       findMany: jest.fn(),
-      upsert: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     agentProductPrice: {
       upsert: jest.fn(),
@@ -107,7 +110,7 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
 
     it('should throw ConflictException if setting price below product cost', async () => {
       mockPrisma.tier.findUnique.mockResolvedValue({ id: 't1', isActive: true });
-      mockPrisma.productPrice.findUnique.mockResolvedValue({
+      mockPrisma.productPrice.findFirst.mockResolvedValue({
         costPrice: 10,
         retailPrice: 12,
         isAvailable: true,
@@ -124,12 +127,13 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
 
     it('should upsert tier product price successfully when valid', async () => {
       mockPrisma.tier.findUnique.mockResolvedValue({ id: 't1', isActive: true });
-      mockPrisma.productPrice.findUnique.mockResolvedValue({
+      mockPrisma.productPrice.findFirst.mockResolvedValue({
         costPrice: 10,
         retailPrice: 12,
         isAvailable: true,
       });
-      mockPrisma.productTierPrice.upsert.mockResolvedValue({
+      mockPrisma.productTierPrice.findFirst.mockResolvedValue(null);
+      mockPrisma.productTierPrice.create.mockResolvedValue({
         id: 'ptp-1',
         productId: 'p1',
         tierId: 't1',
@@ -144,7 +148,7 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
       });
 
       expect(res.id).toBe('ptp-1');
-      expect(mockPrisma.productTierPrice.upsert).toHaveBeenCalled();
+      expect(mockPrisma.productTierPrice.create).toHaveBeenCalled();
     });
   });
 
@@ -237,7 +241,7 @@ describe('Stage 06 — User Tiers & Sub-Agents Architecture', () => {
         id: 'subagent-001',
         parentAgentId,
       });
-      mockPrisma.productPrice.findUnique.mockResolvedValue({
+      mockPrisma.productPrice.findFirst.mockResolvedValue({
         costPrice: 5.0,
         retailPrice: 6.0,
         isAvailable: true,
