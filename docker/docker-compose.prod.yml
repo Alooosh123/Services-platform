@@ -41,6 +41,8 @@ services:
       - no-new-privileges:true
 
   migrate:
+    profiles:
+      - manual-migration
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend
@@ -80,8 +82,6 @@ services:
     expose:
       - "4000"
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
