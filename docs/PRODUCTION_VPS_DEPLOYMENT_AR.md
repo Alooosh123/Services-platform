@@ -29,18 +29,65 @@ openssl rand -hex 32
 
 ## 3. معاينة الإعداد والنشر
 
-من جذر المستودع على VPS:
+**لا تشغّل `up -d` على كامل المشروع قبل النسخ الاحتياطي ومراجعة الهجرات.** خدمة Prisma migration ملفوفة في profile يدوي حتى لا تُنفّذ تلقائياً عند تشغيل Backend.
+
+من جذر المستودع على VPS، بعد تجهيز `.env.production`:
+
+### أ. تحقق من الإعداد وشغّل قاعدة البيانات وRedis فقط
 
 ```bash
 docker compose --env-file .env.production -f docker/docker-compose.prod.yml config
-docker compose --env-file .env.production -f docker/docker-compose.prod.yml build
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml up -d postgres redis
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml ps
+```
+
+تحقق من صحة PostgreSQL وRedis:
+
+```bash
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml exec -T postgres pg_isready
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml exec -T redis sh -c 'redis-cli -a "$REDIS_PASSWORD" ping'
+```
+
+### ب. أنشئ نسخة احتياطية قبل أي هجرة
+
+تأكد أولاً أن مجلد النسخ الاحتياطية موجود على قرص آمن خارج مجلد المشروع، وأنه مشمول في سياسة النسخ المشفر والاحتفاظ خارج VPS. المثال التالي يكتب أرشيف PostgreSQL على جهاز/خادم الإدارة الذي ينفذ الأمر، وليس داخل حاوية قاعدة البيانات:
+
+```bash
+mkdir -p /secure-backups/yemen-topup
+BACKUP="/secure-backups/yemen-topup/pre-migration-$(date -u +%Y%m%dT%H%M%SZ).dump"
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$BACKUP"
+test -s "$BACKUP"
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml exec -T postgres pg_restore --list < "$BACKUP" >/dev/null
+sha256sum "$BACKUP"
+```
+
+لا تتابع إن فشل `pg_dump` أو كان الملف فارغاً أو فشل `pg_restore --list`. احفظ نسخة ثانية مشفرة خارج VPS، ونفّذ تجربة استعادة إلى قاعدة معزولة قبل تطبيق هجرات الإنتاج. لا تعتبر مجرد إنشاء ملف نسخة احتياطية اختبار استعادة ناجحاً.
+
+### ج. راجع حالة الهجرات ثم نفّذها صراحةً
+
+```bash
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml --profile manual-migration run --rm migrate npx prisma migrate status --schema=packages/database/prisma/schema.prisma
+```
+
+بعد مراجعة الحالة والنسخة الاحتياطية واختبار الاستعادة والموافقة التشغيلية، نفّذ:
+
+```bash
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml --profile manual-migration run --rm migrate
+docker compose --env-file .env.production -f docker/docker-compose.prod.yml --profile manual-migration run --rm migrate npx prisma migrate status --schema=packages/database/prisma/schema.prisma
+```
+
+إذا ظهر drift أو migration failed أو نتيجة غير متوقعة، أوقف النشر ولا تعِد المحاولة عشوائياً. افحص `_prisma_migrations` وسجلات PostgreSQL وخطة الاستعادة أولاً.
+
+### د. شغّل التطبيقات بعد نجاح التحقق
+
+```bash
 docker compose --env-file .env.production -f docker/docker-compose.prod.yml up -d
 docker compose --env-file .env.production -f docker/docker-compose.prod.yml ps
 ```
 
-خدمة migrate تشغّل `prisma migrate deploy` قبل تشغيل Backend. لا تستخدم `prisma db push` على قاعدة الإنتاج. لا يوجد نشر تلقائي إلى خادم إنتاج في CI بعد؛ النشر اليدوي أعلاه يجب أن يُنفذ بعد الموافقة على الإصدار.
+خدمة `migrate` موجودة ضمن profile باسم `manual-migration`، ولا تُشغّل عند تنفيذ `up -d` العادي. Backend لا يعتمد عليها تلقائياً؛ يجب أن تكون مرحلة الهجرة اليدوية قد اكتملت بنجاح قبل تشغيل التطبيقات.
 
-PostgreSQL وRedis لا يملكان منافذ منشورة على المضيف. Caddy هو المدخل العام ويصدر شهادات TLS تلقائياً بعد ضبط DNS والجدار الناري.
+PostgreSQL وRedis لا يملكان منافذ منشورة على المضيف. Caddy هو المدخل العام ويصدر شهادات TLS تلقائياً بعد ضبط DNS والجدار الناري. لا تفتح 3000 أو 4000 أو 5432 أو 6379 أو 8080 على الإنترنت.
 
 ## 4. التحقق بعد النشر
 
