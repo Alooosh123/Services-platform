@@ -1,143 +1,157 @@
-# دليل النشر والتشغيل الشامل (Deployment Guide)
-## Digital TopUp & Services Platform
+# دليل التشغيل والنشر — Digital TopUp Platform
 
-يقدم هذا الدليل الخطوات الدقيقة لتشغيل المنصة محليًا بنقرة واحدة (Local Development & Demo Mode) بالإضافة إلى النشر المباشر على الخوادم الافتراضية الخاصة (Production VPS).
+هذا الدليل يميّز بين بيئة التطوير المحلية وبيئة الإنتاج. لا تستخدم بيانات التطوير أو قنوات الدفع غير المعتمدة لاستقبال أموال حقيقية.
 
----
+## 1. متطلبات التشغيل المحلي
 
-## 1. التشغيل المحلي السريع (Local Development & Demo Mode)
+- Node.js: إصدار 20.19.0 أو أحدث ضمن خط 20/22/24، وأقل من 25.
+- npm: الإصدار 10 أو أحدث.
+- Docker Desktop مع Docker Engine يعمل باستخدام Linux containers، أو PostgreSQL 16 وRedis 7 مثبتين محلياً.
+- Flutter SDK عند تشغيل تطبيق الهاتف.
 
-### المتطلبات الأساسية
-* Node.js (v20 أو v24)
-* Docker & Docker Compose (اختياري للتشغيل عبر الحاويات)
-* PostgreSQL 15+ و Redis 7+
+## 2. التشغيل على Windows PowerShell
 
-### التشغيل عبر Docker Compose (أمر واحد)
+نفّذ الأوامر من جذر المستودع. احتفظ بملف .env الموجود ولا تستبدله:
 
-للتشغيل الفوري لكامل مكونات المنصة (قاعدة البيانات، الكاش، الـ Backend، لوحة الإدارة، ومتجر العميل):
+~~~powershell
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+}
+~~~
 
-```bash
-# 1. نسخ ملف البيئة
-cp .env.example .env
+افتح ملف .env محلياً واضبط كلمات مرور Seed مختلفة وفريدة، لا تقل كل واحدة عن 20 حرفاً، وأسرار JWT والتشفير وWebhook. حقول كلمات مرور Seed في .env.example فارغة عمداً؛ يمنع Seed الآن استخدام كلمات مرور المثال العامة. لا تشارك ملف .env أو محتوياته.
 
-# 2. تشغيل الحاويات
-docker compose -f docker/docker-compose.yml up -d --build
-```
+### تشغيل قواعد البيانات
 
-بعد اكتمال التشغيل، ستكون الروابط متاحة كالتالي:
-* **متجر العميل (Customer Storefront):** `http://localhost:3000`
-* **لوحة الإدارة (Admin Dashboard):** `http://localhost:3001`
-* **واجهة البرمجة (Backend REST API):** `http://localhost:4000/api`
-* **توثيق Swagger التفاعلي:** `http://localhost:4000/api/docs`
-* **مدير قاعدة البيانات (Adminer):** `http://localhost:8080`
+~~~powershell
+docker compose -f docker/docker-compose.yml up -d postgres redis
+docker compose -f docker/docker-compose.yml ps
+~~~
 
----
+تأكد من ظهور PostgreSQL وRedis بحالة Healthy قبل المتابعة. منافذ قاعدة البيانات وRedis وAdminer مرتبطة بـ 127.0.0.1 فقط.
 
-## 2. التشغيل اليدوي (بدون Docker)
+### تثبيت المشروع وتطبيق migrations
 
-### الخطوة 1: تثبيت الاعتماديات وبناء الحزم المشتركة
-```bash
-# تثبيت كافة حزم الـ Monorepo
-npm install
-
-# بناء الحزم المشتركة
+~~~powershell
+npm ci
 npm run build --workspace=packages/shared
-```
-
-### الخطوة 2: تهيئة وتغذية قاعدة البيانات (Migrations & Seeders)
-```bash
-# توليد عميل Prisma
 npm run db:generate
-
-# مزامنة الجداول مع PostgreSQL
-npm run db:push
-
-# إدخال البيانات التجريبية الأولية (Seed Data)
+npm run db:migrate:deploy
 npm run db:seed
-```
+~~~
 
-> **حسابات التجربة الأولية المنشأة تلقائيًا:**
-> * **المدير العام (Super Admin):** `admin@digitaltopup.com` | كلمة المرور: `Admin@123456`
-> * **المدير المالي (Finance Officer):** `finance@digitaltopup.com` | كلمة المرور: `Finance@123456`
-> * **العميل التجريبي (Customer):** `customer@gmail.com` | كلمة المرور: `Customer@123456` (رصيد محفظة: $100.00)
+طبّق migrations على قاعدة تطوير جديدة أو قاعدة سبق تسجيل خط أساس Prisma لها فقط. إذا كانت لديك قاعدة محلية قائمة أُنشئت بواسطة db push أو تحتوي بيانات تريد الاحتفاظ بها، فلا تنفذ migrate deploy قبل مراجعة تاريخ المخطط والهجرات. لا تحذف Docker volumes لحل مشكلة هجرة أو تشغيل.
 
-### الخطوة 3: تشغيل الخدمات
-```bash
-# تشغيل الـ Backend API (Port 4000)
+### تشغيل الخدمات محلياً
+
+شغّل كل أمر في نافذة مستقلة:
+
+~~~powershell
 npm run dev:backend
+~~~
 
-# في نافذة طرفية أخرى: تشغيل لوحة الإدارة (Port 3001)
-npm run dev:admin
-
-# في نافذة طرفية ثالثة: تشغيل متجر العميل (Port 3000)
+~~~powershell
 npm run dev:customer
-```
+~~~
 
----
+~~~powershell
+npm run dev:admin
+~~~
 
-## 3. نشر بيئة الإنتاج على VPS (Production Deployment)
+~~~powershell
+npm run dev:saas
+~~~
 
-### المواصفات الموصى بها للخادم
-* المعالج: 2 vCPU
-* الذاكرة: 4GB RAM أو أكثر
-* التخزين: 40GB SSD / NVMe
-* نظام التشغيل: Ubuntu 22.04 LTS
+العناوين:
+- Customer: http://localhost:3000
+- Admin: http://localhost:3001
+- SaaS: http://localhost:3002
+- API: http://localhost:4000/api
+- Swagger: http://localhost:4000/api/docs
+- Readiness: http://localhost:4000/api/health/ready
 
-### إعداد الخادم
-```bash
-# تحديث الحزم
-sudo apt update && sudo apt upgrade -y
+لا تعتبر ظهور صفحات الويب دليلاً على أن قاعدة البيانات جاهزة؛ افحص readiness وسجلات Backend.
 
-# تثبيت Docker و Docker Compose
-sudo apt install -y docker.io docker-compose-plugin
-sudo systemctl enable --now docker
+### تشغيل تطبيقات الويب داخل Docker
 
-# تثبيت Nginx و Certbot لتأمين شهادات SSL
-sudo apt install -y nginx certbot python3-certbot-nginx
-```
+بعد تطبيق migrations وSeed محلياً:
 
-### إعداد Nginx Reverse Proxy
-قم بإنشاء ملف التكوين `/etc/nginx/sites-available/topup.conf`:
+~~~powershell
+docker compose -f docker/docker-compose.yml up -d --build backend web-admin web-customer web-saas db-admin
+docker compose -f docker/docker-compose.yml ps
+~~~
 
-```nginx
-server {
-    server_name api.yourdomain.com;
-    location / {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
+## 3. تشخيص تعذر تنزيل صور Docker Hub
 
-server {
-    server_name admin.yourdomain.com;
-    location / {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
+إذا ظهر خطأ من نوع:
 
-server {
-    server_name yourdomain.com www.yourdomain.com;
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
+~~~text
+failed to resolve reference "docker.io/library/postgres:16-alpine"
+lookup registry-1.docker.io: no such host
+~~~
 
-تفعيل الإعداد واستخراج شهادة SSL المجانية:
-```bash
-sudo ln -s /etc/nginx/sites-available/topup.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d yourdomain.com -d admin.yourdomain.com -d api.yourdomain.com
-```
+فهذا يعني أن Docker لم يتمكن من حل اسم سجل الصور. نفّذ الفحوص التالية على Windows:
+
+~~~powershell
+nslookup google.com
+nslookup registry-1.docker.io
+nslookup auth.docker.io
+curl.exe -I --max-time 15 https://registry-1.docker.io/v2/
+Test-NetConnection 1.1.1.1 -Port 443
+~~~
+
+استجابة HTTP 401 من مسار /v2/ متوقعة عادةً وتدل على أن عنوان السجل قابل للوصول؛ أما فشل DNS أو timeout فيحتاج إلى تشخيص شبكة الجهاز أو Docker Desktop.
+
+- إذا فشل nslookup على Windows نفسه، فالمشكلة في DNS أو الشبكة أو VPN على الجهاز/الموجّه. أصلح اتصال Windows أولاً، ثم أعد الفحص.
+- إذا نجح DNS في Windows وفشل docker pull، افتح Docker Desktop ثم Settings > Resources > Proxies. راجع إعداد Containers proxy لأنه المسار المستخدم لتنزيل الصور. استخدم System/Same as host إذا كانت شبكتك تتطلب Proxy مضبوطاً، أو No proxy إذا كان الاتصال المباشر هو إعداد شبكتك الصحيح. لا تضع عنوان Proxy عشوائياً.
+- راجع Settings > Resources > Network واترك DNS resolution behavior على Auto أولاً. لا تغيّر وضع IPv4/IPv6 إلا إذا أثبتت الاختبارات عدم توافق الشبكة.
+- تحقق من أن جدار حماية Windows أو برنامج الحماية لا يمنع com.docker.backend.exe من الوصول إلى الإنترنت.
+
+وثائق Docker الرسمية:
+- https://docs.docker.com/desktop/settings-and-maintenance/settings/
+- https://docs.docker.com/desktop/features/networking/
+- https://docs.docker.com/desktop/enterprise/allow-list/
+
+بعد إصلاح الاتصال، اختبر تنزيل الصور مباشرة:
+
+~~~powershell
+docker pull postgres:16-alpine
+docker pull redis:7-alpine
+~~~
+
+ثم أعد تشغيل قاعدة البيانات فقط. لا تحذف volumes ولا تستخدم أوامر prune لحل مشكلة DNS.
+
+## 4. تطبيق Flutter
+
+~~~powershell
+Set-Location apps/mobile-customer
+flutter pub get
+flutter analyze
+flutter test
+~~~
+
+إذا لم تكن مجلدات Android وiOS موجودة:
+
+~~~powershell
+flutter create --platforms=android,ios .
+~~~
+
+Android Emulator يستخدم عادةً العنوان التالي للـ API المحلي:
+
+~~~powershell
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:4000/api
+~~~
+
+أما الهاتف الفعلي فيستخدم IP الحاسوب ضمن الشبكة المحلية. لا تستخدم HTTP خارج التطوير المحلي.
+
+## 5. النشر على Staging أو Production
+
+لا تعتمد هذا الدليل القديم وحده للنشر. اتبع [دليل نشر VPS الحالي](PRODUCTION_VPS_DEPLOYMENT_AR.md)، وراجع [قرار Go/No-Go](GO_NO_GO_DECISION.md) أولاً. قرار المستودع الحالي هو NO-GO؛ لم يثبت بعد نشر Staging، أو استعادة نسخة احتياطية تشغيلية، أو ربط مزود دفع/شحن حقيقي معتمد.
+
+قبل أي قاعدة إنتاجية يجب توفير نسخة احتياطية قابلة للتحقق وتجربة استعادة مكتملة وموافقة تشغيلية مكتوبة، ثم تنفيذ migrations عبر الإجراء الإنتاجي المخصص. لا تستخدم db push أو Seed على الإنتاج. لا تفعّل أي محفظة أو Auto-credit أو مزود خارجي إلا بعد المستندات النظامية والعقد ومواصفات API/Sandbox الرسمية واختبار المطابقة والتسوية.
+
+## 6. بيانات الحسابات وأمان التشغيل
+
+لا توجد كلمات مرور دخول ثابتة موثوقة للمشروع. تُنشأ حسابات Seed محلياً فقط من القيم الخاصة في ملف .env، وتتطلب كلمات مرور مختلفة لا تقل عن 20 حرفاً. لا تستخدم حسابات Seed في Staging أو Production.
+
+قنوات المحافظ في Seed معطلة، وبيانات الاستقبال ليست أرقاماً فعلية. لا تحاول اختبار الإيداع بأموال حقيقية. أبقِ مفاتيح مزودي الخدمة وملفات البيئة خارج GitHub وسجلات CI والمحادثات.
