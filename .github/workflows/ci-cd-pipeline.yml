@@ -67,6 +67,13 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
+      - name: Validate local Docker Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password-32-characters
+          JWT_SECRET: ci-only-jwt-access-secret-minimum-32-characters-long
+          JWT_REFRESH_SECRET: ci-only-jwt-refresh-secret-minimum-32-characters-long
+        run: docker compose -f docker/docker-compose.yml config --quiet
+
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
