@@ -123,7 +123,7 @@ async function seedSaasPlans() {
 async function ensureSuperAdmin() {
   const email = process.env.SEED_SUPER_ADMIN_EMAIL?.trim();
   const password = process.env.SEED_SUPER_ADMIN_PASSWORD;
-  if (!email || isWeakOrPlaceholderSeedSecret(password)) {
+  if (!email || !password || isWeakOrPlaceholderSeedSecret(password)) {
     throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique, non-placeholder SEED_SUPER_ADMIN_PASSWORD of at least 20 characters before running the development seed.');
   }
   if (process.env.NODE_ENV === 'production') {
