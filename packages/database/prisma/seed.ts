@@ -30,6 +30,11 @@ if (process.env.NODE_ENV === 'production') {
 
 const prisma = new PrismaClient();
 
+function isWeakOrPlaceholderSeedSecret(value: string | undefined): boolean {
+  if (!value || value.trim().length < 20) return true;
+  return /^(?:replace[-_ ]?with|change[-_ ]?me|your[-_ ]|example[-_ ]?password)/i.test(value.trim());
+}
+
 const defaultTiers = [
   { code: 'B2C', name: 'Standard Customer', nameAr: 'عميل عادي', displayOrder: 1 },
   { code: 'BRONZE', name: 'Bronze Reseller', nameAr: 'وكيل برونزي', displayOrder: 2 },
@@ -118,8 +123,8 @@ async function seedSaasPlans() {
 async function ensureSuperAdmin() {
   const email = process.env.SEED_SUPER_ADMIN_EMAIL?.trim();
   const password = process.env.SEED_SUPER_ADMIN_PASSWORD;
-  if (!email || !password || password.length < 20) {
-    throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique SEED_SUPER_ADMIN_PASSWORD of at least 20 characters before running the development seed.');
+  if (!email || isWeakOrPlaceholderSeedSecret(password)) {
+    throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique, non-placeholder SEED_SUPER_ADMIN_PASSWORD of at least 20 characters before running the development seed.');
   }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Development seed is disabled in production.');
@@ -154,8 +159,8 @@ async function main() {
     ['SEED_CUSTOMER_PASSWORD', process.env.SEED_CUSTOMER_PASSWORD],
   ] as const;
   for (const [name, value] of requiredSeedSecrets) {
-    if (!value || (name.endsWith('_PASSWORD') && value.length < 20)) {
-      throw new Error(`Missing or weak ${name}. Configure unique development-only seed credentials before running the seed.`);
+    if (!value || (name.endsWith('_PASSWORD') && isWeakOrPlaceholderSeedSecret(value))) {
+      throw new Error(`Missing, placeholder, or weak ${name}. Configure a unique development-only secret of at least 20 characters before running the seed.`);
     }
   }
 
