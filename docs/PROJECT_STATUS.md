@@ -1,6 +1,28 @@
 # تقرير حالة المشروع الشامل (Project Status Report)
 
-## أحدث تحقق فعلي — 12 نوفمبر 2026 (Run #783)
+## أحدث تحقق فعلي — 12 نوفمبر 2026 (Run #813)
+
+> الالتزام المختبر: `a77bc3a2be474fbba2a00020f72db87aefc59909` على الفرع `fix/production-hardening-20261108`. اكتملت وظائف CI الست كلها بنجاح في GitHub Actions. هذه نتيجة Runner مؤقت، ولا تثبت تشغيل جهاز المطور أو Staging أو الإنتاج.
+
+- **GitHub Actions:** Run #813 — جميع الوظائف الست ناجحة: Safe Dependency Lockfile Refresh، Lint/Types/Security Audit، Backend Unit/Security/Stress، Flutter Analyze/Tests، Prisma Migration Apply/Safety، وBuild Monorepo.
+- **Backend:** `npm run db:seed` نجح بعد تشديد رفض كلمات المرور الفارغة/النمطية، ثم نجحت **44 مجموعة اختبار و296 اختباراً**.
+- **Flutter:** نجح `flutter analyze` و`flutter test`.
+- **PostgreSQL/Prisma:** تم التحقق من المخطط وتطبيق **27 هجرة** على PostgreSQL 16 مؤقتة، ثم التحقق من سجل الهجرات.
+- **Docker Compose:** نجح فحص `docker compose -f docker/docker-compose.yml config --quiet` في CI بعد تعديل ملف Compose.
+- **Dependency audit:** `npm audit --omit=dev --audit-level=low` أعاد **0 vulnerabilities**. التدقيق الكامل نجح عند مستوى High، مع بقاء **9 نتائج LOW** في أدوات تطوير متعدية مرتبطة بـ `deepmerge@4.3.1`. لم تُستخدم ترقيات إجبارية قد تكسر Nest CLI أو Jest.
+- **Build:** نجح بناء جميع الحزم والتطبيقات.
+- **تغييرات hardening المصاحبة:** جعل كلمة مرور PostgreSQL مطلوبة، ربط منافذ PostgreSQL/Redis/Adminer بـ loopback، تحسين healthcheck، رفض كلمات مرور Seed الافتراضية، تفريغ قيم كلمات مرور Seed وقاعدة البيانات في `.env.example` حتى يحددها المطور محلياً، وإضافة توثيق تشغيل Windows وحل DNS وتحديث دليل النشر وإزالة بيانات الدخول التجريبية الثابتة.
+- **التحقق المحلي:** Docker Desktop وLinux Engine و`hello-world` نجحت على جهاز صاحب المشروع، لكن سحب `postgres:16-alpine` و`redis:7-alpine` لا يزال متوقفاً بسبب فشل DNS إلى `registry-1.docker.io`. لذلك لم تثبت بعد صحة PostgreSQL/Redis محلياً أو تشغيل API والتطبيقات على الجهاز.
+- **الإطلاق:** ما زال `NO-GO`. لا يوجد نشر Staging/Production أو استعادة احتياطية حية أو تكامل مالي/مزود شحن معتمد.
+
+روابط الإثبات:
+- [GitHub Actions Run #813](https://github.com/Alooosh123/Services-platform/actions/runs/43293514243)
+- [Commit a77bc3a](https://github.com/Alooosh123/Services-platform/commit/a77bc3a2be474fbba2a00020f72db87aefc59909)
+- [PR #4](https://github.com/Alooosh123/Services-platform/pull/4)
+
+---
+
+## تحقق سابق — 12 نوفمبر 2026 (Run #783)
 
 > الالتزام المختبر: `fff26535b12251e4df2a53bbbfaa85c0ba8497af` على الفرع `fix/production-hardening-20261108`. نجحت الوظائف الست كاملة في GitHub Actions. هذا يثبت التحقق على Runner مؤقت في GitHub فقط، ولا يثبت تشغيل Docker المحلي أو Staging أو الإنتاج.
 
