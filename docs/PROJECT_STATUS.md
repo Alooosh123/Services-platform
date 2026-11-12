@@ -1,6 +1,27 @@
 # تقرير حالة المشروع الشامل (Project Status Report)
 
-## أحدث تحقق فعلي — 10 نوفمبر 2026 (Run #763)
+## أحدث تحقق فعلي — 12 نوفمبر 2026 (Run #783)
+
+> الالتزام المختبر: `fff26535b12251e4df2a53bbbfaa85c0ba8497af` على الفرع `fix/production-hardening-20261108`. نجحت الوظائف الست كاملة في GitHub Actions. هذا يثبت التحقق على Runner مؤقت في GitHub فقط، ولا يثبت تشغيل Docker المحلي أو Staging أو الإنتاج.
+
+- **GitHub Actions:** الوظائف الست ناجحة: Safe Dependency Lockfile Refresh، Backend Unit/Security/Stress، Flutter Analyze/Tests، Prisma Migrations، Lint/Types/Security Audit، وبناء جميع workspaces/apps.
+- **Backend:** 44 مجموعة اختبارات و296 اختباراً ناجحاً.
+- **Flutter:** `flutter pub get` و`flutter analyze` واختبارات الوحدات ناجحة على Flutter 3.50.0. تم تحديث الاستيراد إلى `material_ui: ^1.11.0` وتوافق `intl: ^0.20.3`، وإزالة استيراد Widgets غير الضروري.
+- **PostgreSQL/Prisma:** تم التحقق من المخطط وتطبيق 27 هجرة على PostgreSQL 16 مؤقتة والتحقق من أن سجل الهجرات نظيف. لا يشمل ذلك قاعدة محلية أو إنتاجية.
+- **Dependency audit:** `npm audit --omit=dev --audit-level=low` أعاد **0 vulnerabilities**. التدقيق الكامل عند مستوى high نجح، مع بقاء **9 ثغرات LOW** في اعتماديات تطوير متعدية عبر `deepmerge@4.3.1`. لم تُخفَ النتائج ولم تُستخدم ترقيات إجبارية.
+- **Build:** نجح بناء جميع تطبيقات وحزم Monorepo في Run #783.
+- **Docker production safety:** تم جعل خدمة Prisma migration في `docker/docker-compose.prod.yml` تعمل فقط عبر profile صريح `manual-migration`، وإزالة اعتماد Backend التلقائي عليها. أُحدّث دليل النشر ليشترط تشغيل قاعدة البيانات أولاً، ثم نسخة احتياطية قابلة للفحص وتجربة استعادة، ثم الهجرة اليدوية والتحقق قبل تشغيل التطبيقات. لم تُشغّل هذه الخطوات على VPS.
+- **قرار الإطلاق:** يبقى `NO-GO`. لا يوجد بعد إثبات تشغيل محلي على جهاز صاحب المشروع، أو نشر Staging، أو استعادة نسخة فعلية، أو تكامل محافظ/مزودين حقيقيين، أو تهيئة Email/WhatsApp/FCM/APNs.
+
+روابط الإثبات:
+- [GitHub Actions Run #783](https://github.com/Alooosh123/Services-platform/actions/runs/43182192215)
+- [Commit fff2653](https://github.com/Alooosh123/Services-platform/commit/fff26535b12251e4df2a53bbbfaa85c0ba8497af)
+- [PR #4](https://github.com/Alooosh123/Services-platform/pull/4)
+
+---
+
+## تحقق سابق — 10 نوفمبر 2026 (Run #763، مرجع تاريخي)
+
 
 > هذه أحدث نتيجة CI موثقة للفرع `fix/production-hardening-20261108` عند Commit `d259ca98b288f15e14bc0b59049d4529e58a80c4`. وهي تثبت جودة الكود على بيئة اختبار مؤقتة فقط؛ لا تثبت تشغيل الإنتاج أو تفعيل أي محفظة مالية.
 
