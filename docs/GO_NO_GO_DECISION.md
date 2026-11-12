@@ -5,24 +5,24 @@
 **المستودع:** `Alooosh123/Services-platform`  
 **PR قيد المراجعة:** [#4 — Production hardening](https://github.com/Alooosh123/Services-platform/pull/4)
 
-> هذه الوثيقة تحل محل أرقام وحالات التدقيق القديمة الواردة في نسخ سابقة. آخر دليل CI موثق في هذه المراجعة هو Run #783 على commit `fff26535b12251e4df2a53bbbfaa85c0ba8497af` بتاريخ 12 نوفمبر 2026. اجتازت الوظائف الست كاملة. نجاح CI على قاعدة مؤقتة لا يثبت تشغيل بيئة الجهاز المحلي أو staging أو الإنتاج.
+> هذه الوثيقة تحل محل أرقام وحالات التدقيق القديمة الواردة في نسخ سابقة. آخر دليل CI موثق في هذه المراجعة هو Run #813 على commit `a77bc3a2be474fbba2a00020f72db87aefc59909` بتاريخ 12 نوفمبر 2026. اجتازت الوظائف الست كاملة. نجاح CI على قاعدة مؤقتة لا يثبت تشغيل بيئة الجهاز المحلي أو staging أو الإنتاج.
 
 ## 1. الأدلة التقنية المتاحة
 
 | البوابة | آخر دليل موثق | الحكم الحالي |
 |---|---|---|
-| Backend tests | 44 suite / 296 test في Run #783 | ناجح في CI فقط |
-| Prisma migrations | تحقق من المخطط وتطبيق 27 هجرة على PostgreSQL 16 مؤقت | ناجح في CI فقط؛ لم تطبق على الإنتاج |
-| Runtime dependency audit | 0 نتائج معروفة في اعتماديات الإنتاج حسب Run #783 | ناجح في ذلك التشغيل؛ يلزم إعادة تشغيل على HEAD الحالي |
-| Full dependency audit | 9 نتائج LOW في أدوات التطوير، عبر deepmerge@4.3.1؛ لا تُخفى | لا توجد High/Critical في ملخص Run #783 |
-| Flutter | Analyze/tests ناجحان في Run #783 | لا يثبت اختبار رحلة عميل حقيقية على staging |
-| Monorepo build | بناء جميع workspaces/apps ناجح في Run #783 | ناجح في CI فقط |
+| Backend tests | 44 suite / 296 test في Run #813 | ناجح في CI فقط |
+| Prisma migrations | تحقق من المخطط وتطبيق 27 هجرة على PostgreSQL 16 مؤقت في Run #813 | ناجح في CI فقط؛ لم تطبق على الإنتاج |
+| Runtime dependency audit | 0 نتائج معروفة في اعتماديات الإنتاج حسب Run #813 | ناجح في ذلك التشغيل؛ يلزم إعادة تشغيل عند تغير الاعتماديات |
+| Full dependency audit | 9 نتائج LOW في أدوات التطوير، عبر deepmerge@4.3.1؛ لا تُخفى | لا توجد High/Critical في Run #813 |
+| Flutter | Analyze/tests ناجحان في Run #813 | لا يثبت اختبار رحلة عميل حقيقية على staging |
+| Monorepo build | بناء جميع workspaces/apps ناجح في Run #813 | ناجح في CI فقط |
 | In-app notifications | تخزين وقراءة دائمة في Prisma مع اختبارات | منفذة برمجياً؛ يلزم اختبار قبول على staging |
 | Sender-account approval | اختبار PostgreSQL للتسجيل والرفض قبل اعتماد المالك والموافقة وإعادة الاستخدام | اختبار آلي؛ لا يثبت تجربة مستخدم فعلية محلية أو إنتاجية |
 
 روابط الأدلة:
-- [GitHub Actions Run #783](https://github.com/Alooosh123/Services-platform/actions/runs/43182192215)
-- [Commit fff2653](https://github.com/Alooosh123/Services-platform/commit/fff26535b12251e4df2a53bbbfaa85c0ba8497af)
+- [GitHub Actions Run #813](https://github.com/Alooosh123/Services-platform/actions/runs/43293514243)
+- [Commit a77bc3a](https://github.com/Alooosh123/Services-platform/commit/a77bc3a2be474fbba2a00020f72db87aefc59909)
 - [PR #4](https://github.com/Alooosh123/Services-platform/pull/4)
 
 ## 2. حالة Git والدمج
@@ -30,7 +30,7 @@
 نتيجة المقارنة التي أُجريت في 12 نوفمبر 2026:
 - المستودع يستخدم `main` كفرع افتراضي.
 - فرع `production-completion` متباعد عن `main`: 214 التزاماً في اتجاهه و6 التزامات في الاتجاه الآخر.
-- فرع `fix/production-hardening-20261108` يتقدم على `production-completion` بـ268 التزاماً ولا يتأخر عنه، لكنه متباعد عن `main` ويظهر 6 التزامات في اتجاه `main` غير موجودة في فرع العمل.
+- فرع `fix/production-hardening-20261108` يتقدم على `production-completion` بـ286 التزاماً ولا يتأخر عنه، لكنه متباعد عن `main` ويظهر 6 التزامات في اتجاه `main` غير موجودة في فرع العمل.
 - PR #4 ما زال Draft وغير مدمج، وقاعدة الدمج الحالية هي `production-completion`.
 
 **الإجراء المطلوب:** لا تغيّر قاعدة PR إلى `main` ولا تدمجه مباشرة. يجب أولاً مراجعة الالتزامات الستة الموجودة على `main` ودمج/إعادة تأسيس تاريخ الفرع بطريقة غير قسرية، ثم حل التعارضات ومراجعة جميع الملفات المالية والهجرات وإعادة CI. يمنع استخدام force-push لتجاوز الاختلافات.
@@ -75,7 +75,7 @@
 ## 6. Docker وStaging والنشر
 
 - يوجد Docker Compose للتطوير، وملف إنتاج منفصل، وملفات بناء للخدمات. تم تعديل خدمة الهجرة في `docker/docker-compose.prod.yml` لتعمل فقط عبر profile صريح `manual-migration`، وأزيل اعتماد Backend التلقائي عليها؛ ووثّق التشغيل الاحتياطي/الهجرة/التحقق قبل تشغيل التطبيقات. لم يُنفذ هذا الإجراء على VPS أو قاعدة إنتاج.
-- لا يوجد دليل في هذه المراجعة على أن Docker Desktop المحلي لدى صاحب المشروع بدأ Engine بنجاح أو أن PostgreSQL/Redis أصبحا Healthy. تثبيت Docker Desktop وحده لا يثبت جاهزية الحاويات.
+- ثبت أن Docker Desktop المحلي بدأ Linux Engine بنجاح وأن `docker run --rm hello-world` نجح على جهاز صاحب المشروع بتاريخ 12 نوفمبر 2026. لكن تنزيل `postgres:16-alpine` تعطل بسبب DNS (`registry-1.docker.io: no such host`)، ولذلك لم تثبت جاهزية PostgreSQL أو Redis محلياً بعد. كما اجتاز ملف Compose فحص التكوين في CI Run #813؛ هذا لا يثبت تشغيل الحاويات على جهاز المطور.
 - لا يوجد نشر Staging/Production موثق، أو فحوصات Health/HTTPS/DNS، أو اختبار رحلة طلب وإيداع/شحن حقيقية.
 - ملف Compose التطويري يتضمن إعدادات افتراضية ومنافذ خدمات؛ يجب عدم استخدام كلمات مروره الافتراضية أو تعريض PostgreSQL/Redis/Adminer للإنترنت.
 - لا تضع أسرار `.env` أو مفاتيح المزودين في Git أو سجلات CI أو المحادثات.
@@ -86,7 +86,7 @@
 |---|---|
 | مزامنة الفروع | استيعاب التزامات main الستة بمراجعة غير قسرية، ثم إعادة CI |
 | أمن الاعتماديات | إعادة npm audit على HEAD النهائي، معالجة أي High/Critical، توثيق LOW المتبقية |
-| الاختبارات المحلية | Docker Engine + PostgreSQL + Redis + npm ci + Prisma generate + backend tests + build على workspace الفعلي |
+| الاختبارات المحلية | Docker Engine متاح وhello-world ناجح؛ إصلاح DNS وتنزيل PostgreSQL/Redis ثم npm ci وPrisma وBackend/Web/Flutter على جهاز المطور |
 | هجرات staging | تطبيق جميع الهجرات على قاعدة staging نظيفة ثم اختبار ترقية قاعدة موجودة واستعادتها |
 | أرقام المحافظ | اختبار E2E على staging مع حسابات اختبار غير مالية ومراجعة OWNER/SUPER_ADMIN |
 | إشعارات خارجية | تهيئة البريد وWhatsApp وFCM/APNs بمزودين حقيقيين وإثبات التسليم |
