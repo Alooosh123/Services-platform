@@ -59,7 +59,7 @@ async function runBackup(
   key: Buffer,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const childProcess = spawn('mysqldump', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const childProcess = spawn(process.env.MYSQLDUMP_BIN || 'mysqldump', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = fs.createWriteStream(destination, { flags: 'wx' });
     const nonce = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
