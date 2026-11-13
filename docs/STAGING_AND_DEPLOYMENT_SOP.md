@@ -10,7 +10,7 @@
 
 | البيئة (Environment) | النطاقات (Domains) | مصدر البيانات (Database) | إدارة الأسرار (Secrets Management) | وضع المزودين (Provider Mode) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Development** | `localhost:3000 / 3001 / 4000` | MySQL 8.4 محلياً عبر Podman Desktop | ملف `.env` المحلي (مفاتيح افتراضية) | `MOCK` / محاكيات محلية |
+| **Development** | `localhost:3000 / 3001 / 4000` | MySQL 8.4 محلياً عبر Podman Desktop | ملف `.env` محلي يحوي أسراراً فريدة غير افتراضية وغير متعقبة | `MOCK` / محاكيات محلية |
 | **Staging** | `staging.yementopup.com` | خادم MySQL 8.4 سحابي مخصص معزول | بيئة CI/CD المحمية (`.env.staging`) | `SANDBOX` + محاكيات معتمدة |
 | **Production** | `yementopup.com` | عنقود MySQL 8.4 مكرر عالي التوافر | Vault / AWS Secrets Manager / Cloud KMS | `MANUAL` / `API` (بعقود رسمية فقط) |
 
@@ -28,14 +28,14 @@
 1. **الخطوة 1: الفحص المسبق والتحقق من الشيفرة (Pre-flight Validation):**
    - فحص Linter وخلو الشيفرة من الأخطاء: `npm run lint`
    - التحقق من مطابقة Typescript: `npm run build --workspaces`
-   - اختبارات Backend والـ Security Gate: `npm test --workspace=apps/backend` (19 حزمة اختبار، 141 اختباراً بنسبة نجاح 100%).
+   - اختبارات Backend والـ Security Gate: `npm test --workspace=apps/backend`. تُعتمد أعداد الاختبارات من أحدث تشغيل CI ناجح، ولا تُنسخ أرقام تاريخية قديمة.
 
 2. **الخطوة 2: فحص هجرة قاعدة البيانات (Prisma Migration Dry-Run):**
    - التأكد من أن أي تعديل في `schema.prisma` غير هدام (Non-destructive).
    - التحقق من عدم حذف أي جداول مالية أو أعمدة مستخدمة.
 
 3. **الخطوة 3: النشر التلقائي لبيئة Staging:**
-   - بناء حاويات Docker وتشغيلها عبر Docker Compose أو Kubernetes.
+   - بناء وتشغيل الحاويات عبر Podman Desktop وPodman Compose باستخدام ملفات Containerfile. لا تعتمد هذه التعليمات على Docker Desktop.
    - التحقق من نجاح فحص الجاهزية:
      ```bash
      curl -f https://staging-api.yementopup.com/api/health/ready
@@ -47,7 +47,7 @@
 
 5. **الخطوة 5: ترقية الإنتاج المشروطة (Gated Production Release):**
    - موافقة صريحة من المدير الفني والمدير المالي في بوابة GitHub Actions.
-   - تفعيل وضع النشر المتدرج (Rolling Deployment / Blue-Green).
+   - تفعيل وضع النشر المتدرج (Rolling Deployment / Blue-Green) بعد توفر بيانات الاعتماد، وفحوص الاستعادة والمطابقة المالية الحية. إلى حينها تبقى ترقية Staging/Production محجوبة.
 
 ---
 
@@ -58,16 +58,16 @@
 2. الانتظار حتى اكتمال جميع الطلبات الجارية في طابور التنفيذ (`Queue lag = 0`).
 3. إيقاف خوادم الـ API والعمال:
    ```bash
-   docker-compose -f docker/docker-compose.yml stop backend
+   podman compose -f podman/compose.yml stop backend web-admin web-customer
    ```
 4. أخذ لقطة احتياطية فورية لقاعدة البيانات وحساب بصمتها SHA-256.
 
 ### تشغيل الخدمة واستئناف العمل (Cold Startup SOP):
-1. بدء تشغيل PostgreSQL وRedis والتأكد من الصحة:
+1. بدء تشغيل MySQL 8.4 وRedis والتأكد من الصحة:
    ```bash
-   docker-compose -f docker/docker-compose.yml up -d postgres redis
+   podman compose -f podman/compose.yml up -d mysql redis
    ```
-2. فحص استجابة قاعدة البيانات: `pg_isready -h localhost -p 5432`.
+2. فحص استجابة قاعدة البيانات: `podman compose -f podman/compose.yml exec mysql sh -lc 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent'`.
 3. بدء تشغيل Backend والتحقق من سجلات البداية وفحص الأسرار `validateProductionSecrets`.
 4. التحقق من مسار `/api/health` والتأكد من رجوع `status: "HEALTHY"`.
 5. بدء واجهات الويب `web-admin` و `web-customer`.
