@@ -34,10 +34,26 @@ $backup = Join-Path $runRoot "source-metadata-backup-$stamp"
 New-Item -ItemType Directory -Force -Path $runRoot, $stage, $backup | Out-Null
 
 Write-Host "Downloading branch source archive: $branch"
-Invoke-WebRequest -Uri $archiveUrl -OutFile $archive -UseBasicParsing
-if (-not (Test-Path -LiteralPath $archive) -or (Get-Item -LiteralPath $archive).Length -lt 100000) {
+$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+if (-not $curl) {
+    throw 'curl.exe is required for the large GitHub archive download. No project files were changed.'
+}
+$partialArchive = "$archive.download"
+if (Test-Path -LiteralPath $partialArchive) {
+    Remove-Item -LiteralPath $partialArchive -Force
+}
+& $curl.Source -L --fail --retry 6 --retry-delay 5 --retry-max-time 1200 --connect-timeout 30 --max-time 1200 --output $partialArchive $archiveUrl
+$downloadExit = $LASTEXITCODE
+if ($downloadExit -ne 0) {
+    if (Test-Path -LiteralPath $partialArchive) {
+        Write-Warning "Incomplete download retained for diagnosis: $partialArchive"
+    }
+    throw "GitHub archive download failed (curl exit $downloadExit). No project source files were changed. Check network/VPN or retry later."
+}
+if (-not (Test-Path -LiteralPath $partialArchive) -or (Get-Item -LiteralPath $partialArchive).Length -lt 100000) {
     throw 'GitHub archive is missing or unexpectedly small. No project files were changed.'
 }
+Move-Item -LiteralPath $partialArchive -Destination $archive -Force
 
 Write-Host 'Extracting source into isolated staging directory...'
 Expand-Archive -LiteralPath $archive -DestinationPath $stage -Force
