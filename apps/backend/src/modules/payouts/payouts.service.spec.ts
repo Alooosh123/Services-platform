@@ -121,7 +121,7 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
 
       await payoutsService.approvePayout('user-finance-002', req.payout.id);
 
-      const dispatchResult = await payoutsService.dispatchPayout('user-finance-002', req.payout.id);
+      const dispatchResult = await payoutsService.dispatchPayout('user-finance-003', req.payout.id);
 
       expect(dispatchResult.success).toBe(false);
       expect(dispatchResult.message).toContain('BLOCKED_EXTERNAL');
@@ -138,8 +138,9 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
         idempotencyKey: 'IDEMP-PO-MANUAL-01',
       });
 
+      await payoutsService.approvePayout('user-finance-002', req.payout.id);
       const confirmResult = await payoutsService.confirmManualPayout(
-        'user-finance-002',
+        'user-finance-003',
         req.payout.id,
         'CAC-SLIP-776655',
         'تم التحويل اليدوي ومطابقة إشعار البنك',
@@ -150,6 +151,25 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
       expect(confirmResult.payout.externalReference).toBe('CAC-SLIP-776655');
       expect(mockLedgerService.recordPayoutSettlement).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('blocks the built-in Sandbox wallet channel in production', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(payoutsService.createPayoutRequest('user-customer-003', {
+        currency: CurrencyCode.YER,
+        amount: 5000,
+        channelCode: PaymentChannelCode.WALLET,
+        destinationAccount: 'SANDBOX-ACC-01',
+        beneficiaryName: 'Test',
+        idempotencyKey: 'IDEMP-PO-PROD-SANDBOX-001',
+      })).rejects.toThrow('Sandbox/Wallet');
+      expect(mockLedgerService.holdWalletBalance).not.toHaveBeenCalled();
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   describe('AT-18: Outbound Failure & UNKNOWN Safety', () => {
@@ -172,7 +192,7 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
 
       await payoutsService.approvePayout('user-finance-002', req.payout.id);
 
-      const dispatchResult = await payoutsService.dispatchPayout('user-finance-002', req.payout.id);
+      const dispatchResult = await payoutsService.dispatchPayout('user-finance-003', req.payout.id);
 
       expect(dispatchResult.status).toBe(PayoutStatus.FAILED);
       expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith(
@@ -209,5 +229,30 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
       // 2. Settlement was NOT called (funds not marked credited to bank)
       expect(mockLedgerService.recordPayoutSettlement).not.toHaveBeenCalled();
     });
+    it('keeps a manually transferred payout UNKNOWN when double-entry posting fails', async () => {
+      const req = await payoutsService.createPayoutRequest('user-customer-003', {
+        currency: CurrencyCode.YER,
+        amount: 15000,
+        channelCode: PaymentChannelCode.JAIB,
+        destinationAccount: '770123456',
+        beneficiaryName: 'أحمد محمد الحاشدي',
+        idempotencyKey: 'IDEMP-PO-MANUAL-LEDGER-FAIL',
+      });
+      await payoutsService.approvePayout('user-finance-002', req.payout.id);
+      mockLedgerService.recordPayoutSettlement.mockRejectedValueOnce(new Error('ledger DB unavailable'));
+
+      const result = await payoutsService.confirmManualPayout(
+        'user-finance-003',
+        req.payout.id,
+        'CAC-SLIP-FAIL-001',
+        'تم إرسال التحويل لكن تعذر حفظ القيد.',
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.payout.status).toBe(PayoutStatus.UNKNOWN);
+      expect(result.payout.ledgerTxId).toBeUndefined();
+      expect(mockLedgerService.releaseWalletHold).not.toHaveBeenCalled();
+    });
+
   });
 });
