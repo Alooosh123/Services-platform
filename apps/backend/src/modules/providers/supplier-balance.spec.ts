@@ -144,8 +144,8 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         userId: 'cust-101',
         status: OrderStatus.Queued,
         snapshotServiceName: 'PUBG Mobile',
-        snapshotRetailPrice: new Prisma.Decimal(100.0),
-        snapshotCostPrice: new Prisma.Decimal(999999999.0), // Exceeds balance!
+        snapshotRetailPrice: new Prisma.Decimal('1000000000.0000'),
+        snapshotCostPrice: new Prisma.Decimal('999999999.0000'), // Exceeds supplier balance while remaining below retail price.
         snapshotCurrency: CurrencyCode.USD,
         snapshotBeneficiaryFields: { player_id: '12345678' },
         product: { sku: 'PUBG-BIG-PACK' },
