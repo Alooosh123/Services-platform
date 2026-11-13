@@ -45,10 +45,10 @@ export class BackupService {
    */
   async createBackupRecord(_dto: CreateBackupRecordDto): Promise<BackupRecordDto> {
     this.logger.error(
-      '[BACKUP_RECORD_REJECTED] Manual backup records cannot prove that a PostgreSQL backup artifact exists.',
+      '[BACKUP_RECORD_REJECTED] Manual backup records cannot prove that a MySQL 8.4 backup artifact exists.',
     );
     throw new ServiceUnavailableException(
-      'Create backups with the managed encrypted PostgreSQL backup command. Manual backup records are disabled.',
+      'Create backups with the managed encrypted MySQL 8.4 backup command. Manual backup records are disabled.',
     );
   }
 
@@ -59,10 +59,10 @@ export class BackupService {
   async runDisasterRecoveryDrill(dto?: RunDrillDto): Promise<DisasterRecoveryDrillResultDto> {
     const environment = dto?.environment || process.env.NODE_ENV || 'unknown';
     this.logger.error(
-      `[DR_DRILL_BLOCKED] A real isolated PostgreSQL restore drill is not configured for ${environment}.`,
+      `[DR_DRILL_BLOCKED] A real isolated MySQL 8.4 restore drill is not configured for ${environment}.`,
     );
     throw new ServiceUnavailableException(
-      'Disaster-recovery verification is unavailable until an isolated PostgreSQL restore environment is configured. No drill result was recorded.',
+      'Disaster-recovery verification is unavailable until an isolated MySQL 8.4 restore environment is configured. No drill result was recorded.',
     );
   }
 }
