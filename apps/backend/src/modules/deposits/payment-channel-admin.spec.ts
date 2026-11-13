@@ -172,6 +172,18 @@ describe('Durable payment channel administration and four-eyes review', () => {
     expect(tx.paymentChannelConfig.update.mock.calls[0][0].data).not.toHaveProperty('killSwitchReason', null);
   });
 
+  it('fails closed when production payment channel configuration cannot be read from MySQL', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    prisma.paymentChannelConfig.findMany.mockRejectedValueOnce(new Error('database unavailable'));
+    try {
+      await expect(service.getPaymentChannels()).rejects.toThrow('Verified payment channels are unavailable.');
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   it('reports channels as unverified until independently activated', async () => {
     const result = await service.verifyLegalAccounts();
     expect(result.isValid).toBe(false);
