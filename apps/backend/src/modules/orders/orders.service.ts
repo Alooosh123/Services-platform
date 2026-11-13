@@ -395,10 +395,10 @@ export class OrdersService {
     if (params.status) where.status = params.status;
     if (params.search) {
       where.OR = [
-        { orderNumber: { contains: params.search, mode: 'insensitive' } },
-        { user: { email: { contains: params.search, mode: 'insensitive' } } },
-        { user: { phone: { contains: params.search, mode: 'insensitive' } } },
-        { user: { fullName: { contains: params.search, mode: 'insensitive' } } },
+        { orderNumber: { contains: params.search } },
+        { user: { email: { contains: params.search } } },
+        { user: { phone: { contains: params.search } } },
+        { user: { fullName: { contains: params.search } } },
       ];
     }
 
