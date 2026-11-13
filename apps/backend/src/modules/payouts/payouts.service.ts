@@ -352,7 +352,7 @@ export class PayoutsService {
         await this.prisma.$transaction(async (tx) => {
           const ledger = await this.ledgerService.recordPayoutSettlement({
             payoutId: payout.id, payoutNumber: payout.payoutNumber, userId: payout.userId,
-            walletId: payout.walletId || undefined, currency: payout.currency, amount: payout.amount,
+            walletId: payout.walletId || undefined, currency: payout.currency, amount: payout.amount.toString(),
             channelCode: payout.channelCode, destinationAccount: payout.destinationAccount,
             performedByUserId: staffUserId, notes: `تحويل مؤكد من ${payout.channelCode} بمرجع ${result.externalReference}`,
           }, tx);
@@ -376,7 +376,7 @@ export class PayoutsService {
 
     if (result?.status === 'FAILED') {
       await this.prisma.$transaction(async (tx) => {
-        if (payout.walletId) await this.ledgerService.releaseWalletHold(payout.walletId, payout.amount, tx);
+        if (payout.walletId) await this.ledgerService.releaseWalletHold(payout.walletId, payout.amount.toString(), tx);
         await tx.payoutRequest.update({ where: { id: payout.id }, data: { status: PayoutStatus.FAILED, failureReason: result.message || 'رفض المزود عملية السحب.' } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return { success: false, status: PayoutStatus.FAILED, message: result.message || 'رفض المزود عملية السحب.', payout: await this.getPayoutById(payoutId) };
