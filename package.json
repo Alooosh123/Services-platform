@@ -57,6 +57,30 @@
     "file-type": "21.3.2",
     "tmp": "0.2.7",
     "webpack": "5.111.1",
-    "deepmerge": "4.3.1"
+    "deepmerge": "4.3.1",
+    "express": {
+      "body-parser": "2.4.0",
+      "qs": "6.16.1"
+    },
+    "next": {
+      "postcss": "8.5.32"
+    },
+    "node-emoji": {
+      "lodash": "4.18.1"
+    },
+    "fdir": {
+      "picomatch": "4.0.7"
+    },
+    "tinyglobby": {
+      "picomatch": "4.0.7"
+    },
+    "cosmiconfig": {
+      "js-yaml": "5.5.0"
+    },
+    "@nestjs/cli": {
+      "js-yaml": "5.5.0",
+      "picomatch": "4.0.7",
+      "glob": "14.0.2"
+    }
   }
 }
