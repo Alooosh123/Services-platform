@@ -109,7 +109,7 @@ process.stdout.write(String(item.version));
         [System.IO.File]::WriteAllText(
             $parserPath,
             $parserSource,
-            (New-Object System.Text.UTF8Encoding($false))
+            ([System.Text.UTF8Encoding]::new($false))
         )
         $version = & $node.Source $parserPath $LockPath $PackagePath
         $exitCode = $LASTEXITCODE
