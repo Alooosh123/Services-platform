@@ -153,10 +153,10 @@ export class PinVaultService {
 
     try {
       selectedRows = await client.$queryRaw`
-        SELECT `id`, `pinCodeCiphertext`, `serialNumber`, `encryptionKeyVersion`, `expiresAt`
-        FROM `pin_vault`
-        WHERE `productId` = ${productId} AND `status` = 'AVAILABLE'
-        ORDER BY (`expiresAt` IS NULL) ASC, `expiresAt` ASC, `createdAt` ASC
+        SELECT id, pinCodeCiphertext, serialNumber, encryptionKeyVersion, expiresAt
+        FROM pin_vault
+        WHERE productId = ${productId} AND status = 'AVAILABLE'
+        ORDER BY (expiresAt IS NULL) ASC, expiresAt ASC, createdAt ASC
         LIMIT ${quantity}
         FOR UPDATE SKIP LOCKED;
       `;
