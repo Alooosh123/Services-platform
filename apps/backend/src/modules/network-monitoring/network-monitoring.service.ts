@@ -1,18 +1,52 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { MikroTikReadOnlyClient, RouterSnapshot } from './mikrotik-readonly.client';
 import { NetworkDiagnosisService, NetworkDiagnostic } from './network-diagnosis.service';
 
 @Injectable()
-export class NetworkMonitoringService {
+export class NetworkMonitoringService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NetworkMonitoringService.name);
+  private pollingTimer: NodeJS.Timeout | null = null;
+  private pollInProgress = false;
 
   constructor(
     private readonly client: MikroTikReadOnlyClient,
     private readonly diagnosis: NetworkDiagnosisService,
     private readonly prisma: PrismaService,
   ) {}
+
+  onModuleInit() {
+    if (!this.client.isConfigured()) {
+      this.logger.log('MikroTik monitoring agent is disabled; no RouterOS connection will be attempted.');
+      return;
+    }
+    const configured = Number(process.env.MIKROTIK_POLL_INTERVAL_MS || 60000);
+    const intervalMs = Number.isFinite(configured)
+      ? Math.min(300000, Math.max(15000, Math.floor(configured)))
+      : 60000;
+    this.pollingTimer = setInterval(() => { void this.runScheduledPoll(); }, intervalMs);
+    this.pollingTimer.unref?.();
+    this.logger.log('Read-only MikroTik polling agent enabled; interval=' + intervalMs + 'ms.');
+    void this.runScheduledPoll();
+  }
+
+  onModuleDestroy() {
+    if (this.pollingTimer) clearInterval(this.pollingTimer);
+    this.pollingTimer = null;
+  }
+
+  private async runScheduledPoll() {
+    if (this.pollInProgress || !this.client.isConfigured()) return;
+    this.pollInProgress = true;
+    try {
+      await this.inspect();
+    } catch {
+      this.logger.warn('Scheduled RouterOS observation failed; no network configuration was changed.');
+    } finally {
+      this.pollInProgress = false;
+    }
+  }
 
   async inspect() {
     const observedAt = new Date();
