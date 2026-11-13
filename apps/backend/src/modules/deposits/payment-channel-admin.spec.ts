@@ -89,6 +89,18 @@ describe('Durable payment channel administration and four-eyes review', () => {
   });
 
   it('hides the channel immediately when receiver details are proposed', async () => {
+    tx.paymentChannelConfig.findUnique.mockResolvedValueOnce({
+      ...channel,
+      accountNumber: '770000111',
+      pendingAccountNumber: null,
+      pendingProposedByUserId: null,
+      pendingProposedAt: null,
+      pendingFeePercentage: null,
+      pendingChangeReason: null,
+      financeApprovalRequired: false,
+      verificationStatus: ChannelVerificationStatus.VERIFIED,
+      isActive: true,
+    });
     const result = await service.proposeChannelAccountChange(
       PaymentChannelCode.JAIB, '770009999', 1.5, 'requester-2', 'تغيير رقم الاستقبال بعد تحديث مستند البنك.',
     );
