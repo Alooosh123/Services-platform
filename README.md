@@ -27,10 +27,10 @@
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # Configure unique random secrets in .env before starting.
 .\scripts\start-platform-podman.ps1
-podman compose -f docker/docker-compose.yml ps
+podman compose -f podman/compose.yml ps
 ```
 
-استخدم Podman Desktop على Windows مع Podman Machine وامتداد Compose. لا يتطلب المشروع Docker Desktop أو Docker Engine. ملف `.env.example` يحتوي عناصر نائبة فقط. يمكن تشغيل Adminer اختيارياً بالأمر: `podman compose -f docker/docker-compose.yml --profile tools up -d db-admin`.
+استخدم Podman Desktop على Windows مع Podman Machine وامتداد Compose. لا يتطلب المشروع Docker Desktop أو Docker Engine. ملف `.env.example` يحتوي عناصر نائبة فقط. يمكن تشغيل Adminer اختيارياً بالأمر: `podman compose -f podman/compose.yml --profile tools up -d db-admin`.
 
 * **متجر العميل:** `http://localhost:3000`
 * **لوحة الإدارة:** `http://localhost:3001`
