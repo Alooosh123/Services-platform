@@ -188,8 +188,11 @@ export class PayoutsService {
           );
         }
       }
-    } catch (simErr: any) {
+    } catch (simErr: unknown) {
       if (simErr instanceof BadRequestException) throw simErr;
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر التحقق من فترة الحماية الأمنية لتغيير رقم الهاتف من قاعدة البيانات.');
+      }
     }
 
     // Anti-Fraud Velocity: Max 5 payout requests in 24 hours
@@ -642,6 +645,113 @@ export class PayoutsService {
       throw new BadRequestException('رقم المرجع البنكي الخارجي إلزامي للتأكيد اليدوي');
     }
 
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const current = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+          if (!current) throw new NotFoundException('طلب السحب غير موجود في قاعدة البيانات الدائمة.');
+          if (current.status !== PayoutStatus.APPROVED) {
+            throw new ConflictException('تغيرت حالة طلب السحب؛ أعد تحميل الطلب قبل إثبات التحويل.');
+          }
+          if (!current.approvedByUserId || current.approvedByUserId === staffUserId) {
+            throw new ForbiddenException('يجب أن يكون منفذ التحويل اليدوي مختلفاً عن الموظف الذي اعتمد طلب السحب.');
+          }
+
+          const ledgerResult = await this.ledgerService.recordPayoutSettlement({
+            payoutId: current.id,
+            payoutNumber: current.payoutNumber,
+            userId: current.userId,
+            walletId: current.walletId || undefined,
+            currency: current.currency as CurrencyCode,
+            amount: Number(current.amount),
+            channelCode: current.channelCode as PaymentChannelCode,
+            destinationAccount: current.destinationAccount,
+            performedByUserId: staffUserId,
+            notes: notes || `تحويل يدوي معتمد بموجب سند خارجي ${externalRef.trim()}`,
+          }, tx);
+          const ledgerTxId = (ledgerResult as any)?.transaction?.id;
+          const ledgerStatus = (ledgerResult as any)?.transaction?.status;
+          if (!ledgerTxId || ledgerStatus !== 'POSTED') {
+            throw new ConflictException('لم يرجع دفتر الأستاذ قيداً مرحّلاً مؤكداً للسحب.');
+          }
+
+          const changed = await tx.payoutRequest.updateMany({
+            where: {
+              id: payoutId,
+              status: PayoutStatus.APPROVED,
+              approvedByUserId: { not: staffUserId },
+            },
+            data: {
+              status: PayoutStatus.CONFIRMED,
+              externalReference: externalRef.trim(),
+              ledgerTxId,
+              executedByUserId: staffUserId,
+              executedAt: new Date(),
+              executionNotes: notes || 'تم التحقق من سند التحويل اليدوي وترحيل القيد المزدوج.',
+            },
+          });
+          if (changed.count !== 1) {
+            throw new ConflictException('تغير طلب السحب أثناء التسوية؛ تم التراجع عن قيد الأستاذ وتحرير الحجز.');
+          }
+
+          const updated = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+          if (!updated) throw new ServiceUnavailableException('تعذر استرجاع طلب السحب بعد ترحيل التسوية.');
+          return {
+            success: true,
+            payout: {
+              id: updated.id,
+              payoutNumber: updated.payoutNumber,
+              userId: updated.userId,
+              walletId: updated.walletId,
+              currency: updated.currency as CurrencyCode,
+              amount: Number(updated.amount),
+              feeAmount: Number(updated.feeAmount),
+              channelCode: updated.channelCode as PaymentChannelCode,
+              destinationAccount: updated.destinationAccount,
+              beneficiaryName: updated.beneficiaryName,
+              idempotencyKey: updated.idempotencyKey,
+              status: updated.status as PayoutStatus,
+              approvedByUserId: updated.approvedByUserId,
+              approvalNotes: updated.approvalNotes,
+              externalReference: updated.externalReference,
+              failureReason: updated.failureReason,
+              ledgerTxId: updated.ledgerTxId,
+              executedByUserId: updated.executedByUserId,
+              executedAt: updated.executedAt,
+              executionNotes: updated.executionNotes,
+              createdAt: updated.createdAt,
+              updatedAt: updated.updatedAt,
+            },
+          };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      } catch (error) {
+        if (
+          error instanceof BadRequestException ||
+          error instanceof ConflictException ||
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException
+        ) throw error;
+
+        // An external bank transfer may already have happened. The ledger + payout
+        // status are atomic; after a failed transaction, retain the hold and mark UNKNOWN.
+        const current = await this.getPayoutById(payoutId).catch(() => null);
+        if (current?.status === PayoutStatus.CONFIRMED && current.ledgerTxId) {
+          return { success: true, payout: current };
+        }
+        const uncertain = current || payout;
+        uncertain.status = PayoutStatus.UNKNOWN;
+        uncertain.externalReference = externalRef.trim();
+        uncertain.executedByUserId = staffUserId;
+        uncertain.executedAt = new Date();
+        uncertain.executionNotes = notes || 'تم استلام مرجع التحويل اليدوي؛ يلزم التحقق من نتيجة معاملة القاعدة والدفتر.';
+        uncertain.failureReason = 'تعذر تأكيد معاملة تسوية السحب؛ تم تعليق الطلب للمطابقة دون محاولة تحويل جديدة.';
+        uncertain.updatedAt = new Date();
+        await this.syncPayoutToDb(uncertain);
+        return { success: false, payout: uncertain };
+      }
+    }
+
+    // Test/development compatibility path.
     // The manual transfer may already have happened externally. If ledger posting fails,
     // record UNKNOWN and retain the hold; never write a synthetic transaction ID.
     let ledgerTxId: string | undefined;
