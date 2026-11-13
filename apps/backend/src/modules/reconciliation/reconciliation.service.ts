@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -18,6 +19,7 @@ import {
   ReconciliationBatchSummary,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 export interface InMemoryReconciliationItem {
   id: string;
@@ -149,7 +151,7 @@ export class ReconciliationService {
     const dateStr = dto.statementDate.replace(/-/g, '');
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const batchNumber = `REC-${dateStr}-${randomSuffix}`;
-    const batchId = `rec-${Date.now()}`;
+    const batchId = randomUUID();
 
     const items: InMemoryReconciliationItem[] = [];
     let matchedCount = 0;
@@ -164,7 +166,7 @@ export class ReconciliationService {
         throw new BadRequestException('قيمة المبلغ في كشف الحساب يجب أن تكون رقماً عشرياً موجباً وصالحاً.');
       }
       const currency = stmt.currency;
-      const itemId = `rec-item-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+      const itemId = randomUUID();
 
       // 1. Check Internal Deposits
       const deposit = await this.depositsService.findDepositByReference(ref);
@@ -272,10 +274,11 @@ export class ReconciliationService {
 
     const batchStatus = discrepancyCount > 0 ? 'PENDING_REVIEW' : 'COMPLETED';
 
-    // Store in DB or Memory
+    // The production reconciliation record and item identifiers are durable and are returned to callers.
     try {
       const dbBatch = await this.prisma.reconciliationBatch.create({
         data: {
+          id: batchId,
           batchNumber,
           channelCode: dto.channelCode || null,
           statementDate: new Date(dto.statementDate),
@@ -289,6 +292,7 @@ export class ReconciliationService {
           notes: `مطابقة يومية بتاريخ ${dto.statementDate}`,
           items: {
             create: items.map((i) => ({
+              id: i.id,
               referenceNumber: i.referenceNumber,
               expectedAmount: new Prisma.Decimal(i.expectedAmount),
               actualAmount: new Prisma.Decimal(i.actualAmount),
@@ -301,11 +305,16 @@ export class ReconciliationService {
           },
         },
       });
+      if (dbBatch.id !== batchId) throw new ConflictException('Persisted reconciliation batch identity mismatch.');
     } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error('Unable to persist financial reconciliation batch.');
+        throw new ServiceUnavailableException('تعذر حفظ دفعة المطابقة المالية بصورة دائمة؛ لم يتم اعتماد نتيجة المطابقة.');
+      }
       this.logger.warn(`Prisma offline during runDailyReconciliation (${err?.message})`);
     }
 
-    // Save in memory
+    // Save in memory for isolated tests/development only
     const memBatch: InMemoryReconciliationBatch = {
       id: batchId,
       batchNumber,
@@ -324,7 +333,7 @@ export class ReconciliationService {
       items,
     };
 
-    this.memoryBatches.set(batchId, memBatch);
+    if (process.env.NODE_ENV !== 'production') this.memoryBatches.set(batchId, memBatch);
 
     this.logger.log(
       `[ReconciliationBatchCompleted] Batch ${batchNumber}: ${matchedCount} matched (${totalAmountMatched.toString()}), ${discrepancyCount} discrepancies (${totalAmountDiscrepant.toString()}). Status: ${batchStatus}`,
@@ -363,7 +372,7 @@ export class ReconciliationService {
         orderBy: { statementDate: 'desc' },
         include: { items: true },
       });
-      if (dbBatches && dbBatches.length > 0) {
+      if (process.env.NODE_ENV === 'production' || (dbBatches && dbBatches.length > 0)) {
         return dbBatches.map((b) => ({
           id: b.id,
           batchNumber: b.batchNumber,
@@ -396,10 +405,15 @@ export class ReconciliationService {
           })),
         }));
       }
-    } catch {
-      // fallback
+    } catch (error) {
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error('Unable to read persisted reconciliation batches.');
+        throw new ServiceUnavailableException('تعذر قراءة سجلات المطابقة المالية الدائمة.');
+      }
+      this.logger.warn('Database unavailable while listing reconciliation batches; in-memory data is test/development only.');
     }
 
+    if (process.env.NODE_ENV === 'production') return [];
     return Array.from(this.memoryBatches.values()).sort(
       (a, b) => b.statementDate.getTime() - a.statementDate.getTime(),
     );
