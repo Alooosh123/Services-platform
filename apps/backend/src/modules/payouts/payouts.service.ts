@@ -475,7 +475,7 @@ export class PayoutsService {
       if (current.approvedByUserId && current.approvedByUserId === staffUserId) {
         throw new ForbiddenException('مقدم الموافقة لا يجوز أن يرفض الطلب أو يحرر حجزه منفرداً.');
       }
-      if (current.walletId) await this.ledgerService.releaseWalletHold(current.walletId, Number(current.amount), tx);
+      if (current.walletId) await this.ledgerService.releaseWalletHold(current.walletId, current.amount.toString(), tx);
       const changed = await tx.payoutRequest.updateMany({
         where: { id: payout.id, status: current.status },
         data: { status: PayoutStatus.CANCELLED, failureReason: reason || 'رفض إداري', approvedByUserId: staffUserId },
