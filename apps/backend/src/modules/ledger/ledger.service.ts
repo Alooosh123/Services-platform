@@ -552,43 +552,42 @@ export class LedgerService {
    * Debit: Customer Wallet / Owner Liability Account
    * Credit: Bank / Payment Channel Asset Account
    */
-  async recordPayoutSettlement(params: {
-    payoutId: string;
-    payoutNumber: string;
-    userId: string;
-    walletId?: string;
-    currency: CurrencyCode;
-    amount: number;
-    channelCode: PaymentChannelCode;
-    destinationAccount: string;
-    performedByUserId?: string;
-    notes?: string;
-  }) {
+  async recordPayoutSettlement(
+    params: {
+      payoutId: string;
+      payoutNumber: string;
+      userId: string;
+      walletId?: string;
+      currency: CurrencyCode;
+      amount: number;
+      channelCode: PaymentChannelCode;
+      destinationAccount: string;
+      performedByUserId?: string;
+      notes?: string;
+    },
+    existingTx?: Prisma.TransactionClient,
+  ) {
     if (!Number.isFinite(params.amount) || params.amount <= 0) {
       throw new BadRequestException('Payout amount must be a positive finite number.');
     }
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const channelAccountCode = this.getChannelAccountCode(params.channelCode, params.currency);
-    const txNumber = `LTX-PO-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const execute = async (tx: Prisma.TransactionClient) => {
       const existing = await tx.ledgerTransaction.findUnique({
         where: { idempotencyKey: `PO-SETTLE-${params.payoutNumber}` },
         include: { entries: true },
       });
-      if (existing) {
-        return { isDuplicate: true, transaction: existing };
-      }
+      if (existing) return { isDuplicate: true, transaction: existing };
 
-      // If customer wallet is linked, release hold and deduct balance atomically
+      // Release the wallet hold and post the double-entry transaction in this same DB transaction.
       if (params.walletId) {
         const wallet = await tx.wallet.findUnique({ where: { id: params.walletId } });
-        if (!wallet) {
-          throw new NotFoundException(`Wallet ${params.walletId} not found`);
-        }
+        if (!wallet) throw new NotFoundException(`Wallet ${params.walletId} not found`);
         await this.releaseWalletHold(params.walletId, params.amount, tx);
       }
 
+      const txNumber = `LTX-PO-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
       return this.recordDoubleEntryTransaction(
         {
           txNumber,
@@ -618,6 +617,11 @@ export class LedgerService {
         },
         tx,
       );
+    };
+
+    if (existingTx) return execute(existingTx);
+    return this.prisma.$transaction(execute, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
   }
 
