@@ -1,6 +1,6 @@
 # توثيق قاعدة البيانات (Database Schema Documentation)
-## منصة الشحن والخدمات الرقمية — سوق اليمن (PostgreSQL & Prisma ORM)
-**الإصدار:** 1.0 | **المحرك:** PostgreSQL 15+ | **المخطط الأساسي:** `packages/database/prisma/schema.prisma`
+## منصة الشحن والخدمات الرقمية — سوق اليمن (MySQL 8.4 LTS & Prisma ORM)
+**الإصدار:** 1.0 | **المحرك:** MySQL 8.4 LTS | **المخطط الأساسي:** `packages/database/prisma/schema.prisma`
 
 ---
 
