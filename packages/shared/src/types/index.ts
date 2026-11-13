@@ -89,11 +89,18 @@ export interface OrderSnapshot {
   paymentMethodCode: PaymentChannelCode;
 }
 
+/**
+ * Exact monetary input for internal ledger operations.
+ * Strings preserve PostgreSQL Decimal precision across application boundaries.
+ * Public HTTP DTOs may continue to expose validated JSON numbers.
+ */
+export type MonetaryInput = number | string;
+
 export interface DoubleEntryItem {
   accountCode: string;
   walletId?: string;
-  debitAmount: number;
-  creditAmount: number;
+  debitAmount: MonetaryInput;
+  creditAmount: MonetaryInput;
   currency: CurrencyCode;
   notes?: string;
 }
