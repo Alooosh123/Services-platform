@@ -9,9 +9,9 @@
 | المستودع / المجلد | الوصف التقني | الحالة | التقنيات المستخدمة |
 | :--- | :--- | :---: | :--- |
 | **`apps/backend`** | الخادم الخلفي للنظام (Modular Monolith) بمحركات الدفع، الشحن، المحافظ، الأستاذ العام الصارم، ومراقبة Prometheus. | `PRODUCTION_READY` | NestJS 10, TypeScript, Prisma, Jest (21 Test Suites) |
-| **`apps/web-admin`** | لوحة الإدارة والتحكم المركزي (20 شاشة تشغيلية كاملة بالواجهة العربية وإدارة الكتالوج والعمليات والتسوية والإطلاق). | `PRODUCTION_READY` | Next.js 14, React 18, TailwindCSS, Lucide Icons |
-| **`apps/web-customer`** | متجر شحن الخدمات للعميل PWA (13 صفحة متجاوبة للشحن، المحفظة، الإيداع، ربط الحسابات وتذاكر الدعم). | `PRODUCTION_READY` | Next.js 14, React 18, TailwindCSS, PWA Manifest |
-| **`packages/database`** | طبقة قاعدة البيانات، نماذج الأستاذ العام المزدوج، وسجلات التدقيق المالي. | `PRODUCTION_READY` | Prisma ORM 5.22, PostgreSQL |
+| **`apps/web-admin`** | لوحة الإدارة والتحكم المركزي (20 شاشة تشغيلية كاملة بالواجهة العربية وإدارة الكتالوج والعمليات والتسوية والإطلاق). | `PRODUCTION_READY` | Next.js 15.5, React 18, TailwindCSS, Lucide Icons |
+| **`apps/web-customer`** | متجر شحن الخدمات للعميل PWA (13 صفحة متجاوبة للشحن، المحفظة، الإيداع، ربط الحسابات وتذاكر الدعم). | `PRODUCTION_READY` | Next.js 15.5, React 18, TailwindCSS, PWA Manifest |
+| **`packages/database`** | طبقة قاعدة البيانات، نماذج الأستاذ العام المزدوج، وسجلات التدقيق المالي. | `PRODUCTION_READY` | Prisma ORM 5.22, MySQL 8.4 LTS |
 | **`packages/shared`** | الحزمة المشتركة للأنواع والواجهات والمحددات المحاسبية والأمنية. | `PRODUCTION_READY` | TypeScript 5.3, DTOs & Enums |
 | **`scripts/`** | أدوات التشغيل الآلي، تعمية البيانات، النسخ الاحتياطي، تجارب الاستعادة والتراجع الآمن. | `PRODUCTION_READY` | TypeScript / Node.js Scripts |
 | **`docs/`** | الأرشيف التوثيقي الكامل (39 وثيقة تشمل SRS، نماذج التهديد، أدلة النشر، والتقارير). | `PRODUCTION_READY` | Markdown Documentation |
