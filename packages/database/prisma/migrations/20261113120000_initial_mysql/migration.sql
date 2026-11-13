@@ -724,8 +724,11 @@ CREATE TABLE `payout_requests` (
     `approvedByUserId` VARCHAR(191) NULL,
     `approvalNotes` VARCHAR(191) NULL,
     `externalReference` VARCHAR(191) NULL,
-    `failureReason` VARCHAR(191) NULL,
+    `failureReason` TEXT NULL,
     `ledgerTxId` VARCHAR(191) NULL,
+    `executedByUserId` VARCHAR(191) NULL,
+    `executedAt` DATETIME(3) NULL,
+    `executionNotes` TEXT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
