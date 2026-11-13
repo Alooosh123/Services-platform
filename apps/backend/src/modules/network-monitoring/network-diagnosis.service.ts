@@ -11,10 +11,10 @@ export interface NetworkDiagnostic {
   sources: string[];
 }
 
-const REST_DOC = 'https://help.mikrotik.com/docs/spaces/ROS/pages/47579162/REST+API';
-const USER_DOC = 'https://help.mikrotik.com/docs/spaces/ROS/pages/8978504/User';
-const RESOURCE_DOC = 'https://help.mikrotik.com/docs/spaces/ROS/pages/40992875/Resource';
-const ETHERNET_DOC = 'https://help.mikrotik.com/docs/spaces/ROS/pages/8323191/Ethernet';
+const REST_DOC = 'https://manual.mikrotik.com/docs/developer-guides/rest-api/';
+const USER_DOC = 'https://manual.mikrotik.com/docs/authentication-authorization-accounting/user/';
+const RESOURCE_DOC = 'https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/';
+const ETHERNET_DOC = 'https://manual.mikrotik.com/docs/wired-connections/ethernet/';
 
 @Injectable()
 export class NetworkDiagnosisService {
@@ -25,13 +25,13 @@ export class NetworkDiagnosisService {
       code: 'ROUTER_CPU_CRITICAL', severity: 'CRITICAL', title: 'استهلاك المعالج حرج',
       explanation: 'قراءة CPU الحالية بلغت ' + cpu + '%. هذه عتبة تشغيلية داخل المنصة وليست تصنيفاً رسمياً من MikroTik.',
       recommendedChecks: ['قارن الحمل مع وقت الذروة والمهام المجدولة.', 'راجع سجلات النظام والواجهات لمعرفة النشاط المتزامن.', 'لا توقف الخدمات أو تعِد تشغيل الجهاز تلقائياً.'],
-      sources: [RESOURCE_DOC, 'https://help.mikrotik.com/docs/spaces/ROS/pages/328094/Log'],
+      sources: [RESOURCE_DOC, 'https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/log/'],
     });
     else if (cpu !== null && cpu >= 85) findings.push({
       code: 'ROUTER_CPU_HIGH', severity: 'WARNING', title: 'استهلاك المعالج مرتفع',
       explanation: 'قراءة CPU الحالية بلغت ' + cpu + '%. العتبة تحذيرية داخلية وتحتاج مقارنة زمنية قبل اتخاذ إجراء.',
       recommendedChecks: ['راقب اتجاه CPU خلال عدة عينات.', 'راجع واجهات المرور العالية وسجلات النظام.'],
-      sources: [RESOURCE_DOC, 'https://help.mikrotik.com/docs/spaces/ROS/pages/139526175/Interface+stats+and+monitor-traffic'],
+      sources: [RESOURCE_DOC, 'https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/'],
     });
 
     if (snapshot.freeMemoryBytes !== null && snapshot.totalMemoryBytes && snapshot.totalMemoryBytes > 0) {
