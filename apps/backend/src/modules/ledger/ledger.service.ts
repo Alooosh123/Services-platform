@@ -529,10 +529,11 @@ export class LedgerService {
     orderId: string;
     walletId: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
   }) {
-    if (!Number.isFinite(params.amount) || params.amount <= 0) {
-      throw new BadRequestException('Agent commission must be a positive finite amount.');
+    const amount = this.toMoneyDecimal(params.amount, 'Agent commission');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Agent commission must be greater than zero.');
     }
     return this.recordDoubleEntryTransaction({
       txNumber: `LTX-AGENT-${params.orderId}`,
@@ -544,16 +545,16 @@ export class LedgerService {
       entries: [
         {
           accountCode: `5004-AGENT-COMMISSION-${params.currency}`,
-          debitAmount: params.amount,
-          creditAmount: 0,
+          debitAmount: amount.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Commission expense for reseller ${params.parentAgentId}`,
         },
         {
           accountCode: this.getCustomerAccountCode(params.currency),
           walletId: params.walletId,
-          debitAmount: 0,
-          creditAmount: params.amount,
+          debitAmount: '0',
+          creditAmount: amount.toString(),
           currency: params.currency,
           notes: `Commission credited for order ${params.orderId}`,
         },
@@ -592,14 +593,15 @@ export class LedgerService {
     userId: string;
     walletId?: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
     channelCode: PaymentChannelCode;
     destinationAccount: string;
     performedByUserId?: string;
     notes?: string;
   }, existingTx?: Prisma.TransactionClient) {
-    if (!Number.isFinite(params.amount) || params.amount <= 0) {
-      throw new BadRequestException('Payout amount must be a positive finite number.');
+    const amount = this.toMoneyDecimal(params.amount, 'Payout amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Payout amount must be greater than zero.');
     }
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const channelAccountCode = this.getChannelAccountCode(params.channelCode, params.currency);
@@ -620,7 +622,7 @@ export class LedgerService {
         if (!wallet) {
           throw new NotFoundException(`Wallet ${params.walletId} not found`);
         }
-        await this.releaseWalletHold(params.walletId, params.amount, tx);
+        await this.releaseWalletHold(params.walletId, amount.toString(), tx);
       }
 
       return this.recordDoubleEntryTransaction(
@@ -636,15 +638,15 @@ export class LedgerService {
             {
               accountCode: customerAccountCode,
               walletId: params.walletId,
-              debitAmount: params.amount,
-              creditAmount: 0,
+              debitAmount: amount.toString(),
+              creditAmount: '0',
               currency: params.currency,
               notes: `Debit customer liability (payout ${params.payoutNumber})`,
             },
             {
               accountCode: channelAccountCode,
-              debitAmount: 0,
-              creditAmount: params.amount,
+              debitAmount: '0',
+              creditAmount: amount.toString(),
               currency: params.currency,
               notes: `Credit channel asset (${params.channelCode})`,
             },
