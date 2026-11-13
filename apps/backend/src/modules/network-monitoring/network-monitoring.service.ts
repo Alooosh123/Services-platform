@@ -9,6 +9,7 @@ export class NetworkMonitoringService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NetworkMonitoringService.name);
   private pollingTimer: NodeJS.Timeout | null = null;
   private pollInProgress = false;
+  private lastRetentionCleanupAt = 0;
 
   constructor(
     private readonly client: MikroTikReadOnlyClient,
@@ -92,6 +93,13 @@ export class NetworkMonitoringService implements OnModuleInit, OnModuleDestroy {
           diagnostics: diagnostics as unknown as Prisma.InputJsonValue, observedAt,
         },
       });
+      const nowMs = Date.now();
+      if (nowMs - this.lastRetentionCleanupAt >= 6 * 60 * 60 * 1000 && typeof this.prisma.networkSnapshot.deleteMany === 'function') {
+        const configuredDays = Number(process.env.MIKROTIK_RETENTION_DAYS || 90);
+        const retentionDays = Number.isFinite(configuredDays) ? Math.min(365, Math.max(7, Math.floor(configuredDays))) : 90;
+        await this.prisma.networkSnapshot.deleteMany({ where: { observedAt: { lt: new Date(nowMs - retentionDays * 24 * 60 * 60 * 1000) } } });
+        this.lastRetentionCleanupAt = nowMs;
+      }
     } catch (error) {
       this.logger.warn('Could not persist network observation; live diagnostic response is still available.');
     }
