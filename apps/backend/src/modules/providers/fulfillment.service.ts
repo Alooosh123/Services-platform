@@ -52,8 +52,19 @@ export class FulfillmentService {
       throw new NotFoundException(`Order ${orderId} not found`);
     }
 
-    const retailPriceNumber = Number(order.snapshotRetailPrice);
-    const costPriceNumber = Number(order.snapshotCostPrice);
+    const retailPriceDecimal = new Prisma.Decimal(order.snapshotRetailPrice);
+    const costPriceDecimal = new Prisma.Decimal(order.snapshotCostPrice);
+    if (
+      !retailPriceDecimal.isFinite() ||
+      !costPriceDecimal.isFinite() ||
+      !retailPriceDecimal.greaterThan(0) ||
+      costPriceDecimal.isNegative() ||
+      costPriceDecimal.greaterThan(retailPriceDecimal) ||
+      retailPriceDecimal.decimalPlaces() > 4 ||
+      costPriceDecimal.decimalPlaces() > 4
+    ) {
+      throw new BadRequestException('قيمة تكلفة أو سعر الطلب المخزنة غير صالحة للتسوية المالية.');
+    }
     const currency = order.snapshotCurrency as CurrencyCode;
 
     // Find the user's wallet for this currency
@@ -98,14 +109,14 @@ export class FulfillmentService {
 
     // P05 Fulfillment Gating: Verify commercial balance & credit limit at provider.
     let supplierAccountType: SupplierAccountType | undefined;
-    if (!this.supplierBalanceService && costPriceNumber > 0) {
+    if (!this.supplierBalanceService && costPriceDecimal.greaterThan(0)) {
       const reason = 'خدمة رصيد المورد غير متاحة؛ تم تعليق الطلب للمراجعة.';
       await this.moveProcessingOrderToManualReview(order.id, reason);
       return { success: false, status: OrderStatus.ManualReview, orderNumber: order.orderNumber, message: reason };
     }
     if (this.supplierBalanceService) {
       try {
-        const gating = await this.supplierBalanceService.checkFulfillmentGating(providerCode, currency, costPriceNumber);
+        const gating = await this.supplierBalanceService.checkFulfillmentGating(providerCode, currency, costPriceDecimal.toString());
         supplierAccountType = gating.accountType;
         if (!gating.allowed) {
           await this.moveProcessingOrderToManualReview(order.id, gating.message || 'رصيد المورد غير كافٍ.');
@@ -138,7 +149,7 @@ export class FulfillmentService {
         orderNumber: order.orderNumber,
         providerSku: order.product.sku,
         playerFields: order.snapshotBeneficiaryFields as Record<string, string>,
-        amount: retailPriceNumber,
+        amount: retailPriceDecimal.toNumber(),
         currency,
       });
     } catch (err: any) {
@@ -178,7 +189,7 @@ export class FulfillmentService {
             throw new BadRequestException('لم يتم إنشاء قيد دفتر الأستاذ؛ لا يمكن إكمال الطلب.');
           }
 
-          if (costPriceNumber > 0) {
+          if (costPriceDecimal.greaterThan(0)) {
             if (!this.supplierBalanceService) {
               throw new BadRequestException('خدمة رصيد المورد غير متاحة؛ لا يمكن تسوية تكلفة الشحن.');
             }
@@ -186,7 +197,7 @@ export class FulfillmentService {
               order.orderNumber,
               providerCode,
               currency,
-              costPriceNumber,
+              costPriceDecimal.toString(),
               tx,
             );
           }
@@ -298,10 +309,21 @@ export class FulfillmentService {
     const wallet = order.user.wallets.find((item) => item.currency === currency);
     if (!wallet) throw new NotFoundException(`Customer wallet not found for currency ${currency}`);
 
-    const retailPriceNumber = Number(order.snapshotRetailPrice);
-    const costPriceNumber = Number(order.snapshotCostPrice);
+    const retailPriceDecimal = new Prisma.Decimal(order.snapshotRetailPrice);
+    const costPriceDecimal = new Prisma.Decimal(order.snapshotCostPrice);
+    if (
+      !retailPriceDecimal.isFinite() ||
+      !costPriceDecimal.isFinite() ||
+      !retailPriceDecimal.greaterThan(0) ||
+      costPriceDecimal.isNegative() ||
+      costPriceDecimal.greaterThan(retailPriceDecimal) ||
+      retailPriceDecimal.decimalPlaces() > 4 ||
+      costPriceDecimal.decimalPlaces() > 4
+    ) {
+      throw new BadRequestException('قيمة تكلفة أو سعر الطلب المخزنة غير صالحة للتسوية المالية.');
+    }
     let manualSupplierAccountType: SupplierAccountType | undefined;
-    if (costPriceNumber > 0) {
+    if (costPriceDecimal.greaterThan(0)) {
       if (!this.supplierBalanceService) {
         throw new BadRequestException('رصيد المورد الدائم غير متاح؛ لا يمكن ترحيل تنفيذ يدوي بتكلفة غير معتمدة.');
       }
@@ -320,8 +342,8 @@ export class FulfillmentService {
         walletId: wallet.id,
         orderId: order.orderNumber,
         currency,
-        retailPrice: retailPriceNumber,
-        costPrice: costPriceNumber,
+        retailPrice: retailPriceDecimal.toString(),
+        costPrice: costPriceDecimal.toString(),
         serviceName: order.snapshotServiceName,
         providerCode: 'MANUAL',
         supplierAccountType: manualSupplierAccountType,
@@ -329,7 +351,7 @@ export class FulfillmentService {
       const ledgerTxId = ledgerResult?.transaction?.id || ledgerResult?.transaction?.txNumber;
       if (!ledgerTxId) throw new BadRequestException('لم يتم إنشاء قيد دفتر الأستاذ؛ بقي الطلب في المراجعة.');
 
-      if (costPriceNumber > 0) {
+      if (costPriceDecimal.greaterThan(0)) {
         if (!this.supplierBalanceService) {
           throw new BadRequestException('خدمة رصيد المورد غير متاحة؛ لا يمكن تسوية تكلفة الشحن اليدوي.');
         }
@@ -337,7 +359,7 @@ export class FulfillmentService {
           order.orderNumber,
           'MANUAL',
           currency,
-          costPriceNumber,
+          costPriceDecimal.toString(),
           tx,
         );
       }
@@ -426,12 +448,23 @@ export class FulfillmentService {
       throw new NotFoundException(`Customer wallet not found for currency ${currency}`);
     }
 
-    const retailPriceNumber = Number(order.snapshotRetailPrice);
-    const costPriceNumber = Number(order.snapshotCostPrice);
+    const retailPriceDecimal = new Prisma.Decimal(order.snapshotRetailPrice);
+    const costPriceDecimal = new Prisma.Decimal(order.snapshotCostPrice);
+    if (
+      !retailPriceDecimal.isFinite() ||
+      !costPriceDecimal.isFinite() ||
+      !retailPriceDecimal.greaterThan(0) ||
+      costPriceDecimal.isNegative() ||
+      costPriceDecimal.greaterThan(retailPriceDecimal) ||
+      retailPriceDecimal.decimalPlaces() > 4 ||
+      costPriceDecimal.decimalPlaces() > 4
+    ) {
+      throw new BadRequestException('قيمة تكلفة أو سعر الطلب المخزنة غير صالحة للاسترداد المالي.');
+    }
 
     if (order.status === OrderStatus.Completed) {
       // Order was settled: perform full double-entry reversal
-      if (order.agentParentUserId && Number(order.agentCommissionAmount) > 0) {
+      if (order.agentParentUserId && new Prisma.Decimal(order.agentCommissionAmount || 0).greaterThan(0)) {
         await this.ledgerService.reverseAgentCommission({
           orderId: order.orderNumber,
           performedByUserId: staffId,
@@ -443,14 +476,14 @@ export class FulfillmentService {
         walletId: wallet.id,
         orderId: order.orderNumber,
         currency,
-        amount: retailPriceNumber,
-        costPrice: costPriceNumber,
+        amount: retailPriceDecimal.toString(),
+        costPrice: costPriceDecimal.toString(),
         reason: dto.reason,
         performedByUserId: staffId,
       });
     } else {
       // Order was NOT settled yet (funds still held in lockedBalance): release hold
-      await this.ledgerService.releaseWalletHold(wallet.id, retailPriceNumber);
+      await this.ledgerService.releaseWalletHold(wallet.id, retailPriceDecimal.toString());
     }
 
     // Update order status to Refunded
@@ -482,7 +515,8 @@ export class FulfillmentService {
         agentCommissionAmount: true,
       },
     });
-    if (!order?.agentParentUserId || Number(order.agentCommissionAmount) <= 0) {
+    const commissionAmount = new Prisma.Decimal(order?.agentCommissionAmount || 0);
+    if (!order?.agentParentUserId || !commissionAmount.greaterThan(0)) {
       return;
     }
 
@@ -508,7 +542,7 @@ export class FulfillmentService {
         orderId: order.orderNumber,
         walletId: wallet.id,
         currency,
-        amount: Number(order.agentCommissionAmount),
+        amount: commissionAmount.toString(),
       });
     } catch (error) {
       this.logger.error(
