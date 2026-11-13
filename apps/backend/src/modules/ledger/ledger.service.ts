@@ -664,11 +664,12 @@ export class LedgerService {
    */
   async holdWalletBalance(
     walletId: string,
-    amount: number,
+    amountInput: MonetaryInput,
     existingTx?: Prisma.TransactionClient,
   ) {
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('Wallet hold amount must be a positive finite number.');
+    const amount = this.toMoneyDecimal(amountInput, 'Wallet hold amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Wallet hold amount must be greater than zero.');
     }
 
     const execute = async (tx: Prisma.TransactionClient) => {
@@ -683,14 +684,14 @@ export class LedgerService {
       const available = new Prisma.Decimal(wallet.balance).sub(wallet.lockedBalance || 0);
       if (available.lessThan(amount)) {
         throw new BadRequestException(
-          `الرصيد المتاح غير كافٍ بالعملة ${wallet.currency}. المطلوب: ${amount}، المتاح: ${available.toString()}`,
+          `الرصيد المتاح غير كافٍ بالعملة ${wallet.currency}. المطلوب: ${amount.toString()}، المتاح: ${available.toString()}`,
         );
       }
 
       const updated = await tx.wallet.updateMany({
         where: { id: walletId, version: wallet.version ?? 0, isFrozen: false },
         data: {
-          lockedBalance: { increment: new Prisma.Decimal(amount) },
+          lockedBalance: { increment: amount },
           version: { increment: 1 },
         },
       });
@@ -711,11 +712,12 @@ export class LedgerService {
    */
   async releaseWalletHold(
     walletId: string,
-    amount: number,
+    amountInput: MonetaryInput,
     existingTx?: Prisma.TransactionClient,
   ) {
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('Wallet hold release amount must be a positive finite number.');
+    const amount = this.toMoneyDecimal(amountInput, 'Wallet hold release amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Wallet hold release amount must be greater than zero.');
     }
 
     const execute = async (tx: Prisma.TransactionClient) => {
@@ -727,7 +729,7 @@ export class LedgerService {
       const updated = await tx.wallet.updateMany({
         where: { id: walletId, version: wallet.version ?? 0 },
         data: {
-          lockedBalance: { decrement: new Prisma.Decimal(amount) },
+          lockedBalance: { decrement: amount },
           version: { increment: 1 },
         },
       });
@@ -789,7 +791,7 @@ export class LedgerService {
     }
 
     // 1. Release the exact reservation in the same transaction as settlement.
-    await this.releaseWalletHold(params.walletId, params.retailPrice, tx);
+    await this.releaseWalletHold(params.walletId, retailPrice.toString(), tx);
 
       // 2. Prepare Double-Entry entries
       const entries: DoubleEntryItem[] = [
@@ -901,49 +903,53 @@ export class LedgerService {
     walletId: string;
     orderId: string;
     currency: CurrencyCode;
-    amount: number;
-    costPrice?: number;
+    amount: MonetaryInput;
+    costPrice?: MonetaryInput;
     reason: string;
     performedByUserId?: string;
   }) {
+    const amount = this.toMoneyDecimal(params.amount, 'Order refund amount');
+    const costPrice = this.toMoneyDecimal(params.costPrice ?? '0', 'Order refund cost');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Order refund amount must be greater than zero.');
+    }
+
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const revenueAccountCode = this.getRevenueAccountCode(params.currency);
     const cogsAccountCode = this.getCogsAccountCode(params.currency);
     const providerAccountCode = this.getProviderClearingAccountCode(params.currency);
 
-    const costPrice = Math.max(0, params.costPrice || 0);
-
     const entries: DoubleEntryItem[] = [
       {
         accountCode: revenueAccountCode,
-        debitAmount: params.amount,
-        creditAmount: 0,
+        debitAmount: amount.toString(),
+        creditAmount: '0',
         currency: params.currency,
         notes: `Sales revenue reversed for refund: ${params.reason}`,
       },
       {
         accountCode: customerAccountCode,
         walletId: params.walletId,
-        debitAmount: 0,
-        creditAmount: params.amount,
+        debitAmount: '0',
+        creditAmount: amount.toString(),
         currency: params.currency,
         notes: `Customer wallet refunded for order ${params.orderId}`,
       },
     ];
 
-    if (costPrice > 0) {
+    if (costPrice.greaterThan(0)) {
       entries.push(
         {
           accountCode: providerAccountCode,
-          debitAmount: costPrice,
-          creditAmount: 0,
+          debitAmount: costPrice.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Reversal of provider clearing payable for refund ${params.orderId}`,
         },
         {
           accountCode: cogsAccountCode,
-          debitAmount: 0,
-          creditAmount: costPrice,
+          debitAmount: '0',
+          creditAmount: costPrice.toString(),
           currency: params.currency,
           notes: `Reversal of COGS for refund ${params.orderId}`,
         },
