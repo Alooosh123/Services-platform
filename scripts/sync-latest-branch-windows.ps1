@@ -66,6 +66,31 @@ Write-Host "Verified source lock: Next.js $nextLock / React $reactLock / ReactDO
 Copy-Item -LiteralPath (Join-Path $ProjectPath 'package.json') -Destination (Join-Path $backup 'package.json')
 Copy-Item -LiteralPath (Join-Path $ProjectPath 'package-lock.json') -Destination (Join-Path $backup 'package-lock.json')
 
+$sourceBackup = Join-Path $backup 'project-source'
+New-Item -ItemType Directory -Force -Path $sourceBackup | Out-Null
+Write-Host 'Creating a source-file backup before overlay...'
+$backupArgs = @(
+    $ProjectPath,
+    $sourceBackup,
+    '/E',
+    '/COPY:DAT',
+    '/DCOPY:DAT',
+    '/R:2',
+    '/W:1',
+    '/NP',
+    '/NFL',
+    '/NDL',
+    '/NJH',
+    '/NJS',
+    '/XD', '.git', 'node_modules', '.next', 'dist', 'coverage', '.local-run', '.dart_tool', 'build',
+    '/XF', '.env', 'docker-compose.yml'
+)
+& robocopy @backupArgs
+$backupCode = $LASTEXITCODE
+if ($backupCode -ge 8) {
+    throw "Source backup failed with Robocopy code $backupCode. No source overlay was started."
+}
+
 Write-Host ''
 Write-Host 'Updating tracked source files while preserving local state...' -ForegroundColor Cyan
 Write-Host 'Preserved: .env, docker/docker-compose.yml, .local-run, node_modules, build caches, and any existing Git metadata.'
