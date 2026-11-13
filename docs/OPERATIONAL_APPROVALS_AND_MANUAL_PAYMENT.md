@@ -17,11 +17,11 @@ Seed channel records now start inactive and pending finance verification. A chan
 
 ## Four-eyes approval API
 
-`POST /api/operational-approvals` creates a durable request for either `NETWORK_CHANGE` or `FINANCIAL_RECONCILIATION`. A request must state an allowed target, action and reason. An independent approver decides it through `POST /api/operational-approvals/:id/decision`.
+`POST /api/operational-approvals` creates a durable request for `NETWORK_CHANGE` or `FINANCIAL_RECONCILIATION`. Financial targets include `RECONCILIATION_ITEM` and `DEPOSIT_REQUEST`; a verified manual deposit uses action `CREDIT_VERIFIED_DEPOSIT`. A request must state an allowed target, action and reason. An independent approver decides it through `POST /api/operational-approvals/:id/decision`.
 
 Network change approvals require a different OWNER or GENERAL_MANAGER. Financial reconciliation approvals require a different FINANCE_MANAGER, GENERAL_MANAGER or OWNER. Self-approval is rejected, and the status transition is atomic to prevent two competing decisions.
 
-`APPROVED_PENDING_EXECUTION` is deliberately not an execution signal. No MikroTik write operation and no ledger mutation is performed by this API. An operator must complete a separately reviewed change/runbook step; financial corrections must go through the existing balanced ledger service and independent evidence check.
+`APPROVED_PENDING_EXECUTION` is not itself a ledger command. For a verified manual deposit, the user who approved the request submits its approval ID in `POST /api/admin/deposits/:id/approve`; the service validates requester/approver separation and atomically credits through the double-entry ledger while changing the approval to `EXECUTED`. Reconciliation-item exceptions remain pending execution until a separately reviewed correction is performed. Network approvals remain manual and do not invoke MikroTik write operations.
 
 ## Required audit evidence
 

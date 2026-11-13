@@ -127,19 +127,18 @@ describe('DepositsService (Phase 2)', () => {
     ledgerService = module.get<LedgerService>(LedgerService);
   });
 
-  it('should list all 5 active Yemeni payment channels with instructions', async () => {
+  it('does not expose external channels until genuine beneficiary details are independently verified', async () => {
     const channels = await service.getPaymentChannels();
-    expect(channels.length).toBeGreaterThanOrEqual(5);
-    const codes = channels.map((c) => c.code);
-    expect(codes).toContain(PaymentChannelCode.JAIB);
-    expect(codes).toContain(PaymentChannelCode.JAWALI);
-    expect(codes).toContain(PaymentChannelCode.CASH);
-    expect(codes).toContain(PaymentChannelCode.ONE_CASH);
-    expect(codes).toContain(PaymentChannelCode.EASY);
-
-    const jaib = channels.find((c) => c.code === PaymentChannelCode.JAIB);
-    expect(jaib?.accountNumber).toBe('770123456');
-    expect(jaib?.accountHolderName).toContain('منصة الشحن والخدمات الرقمية');
+    const externalCodes = [
+      PaymentChannelCode.JAIB,
+      PaymentChannelCode.JAWALI,
+      PaymentChannelCode.CASH,
+      PaymentChannelCode.ONE_CASH,
+      PaymentChannelCode.EASY,
+    ];
+    for (const code of externalCodes) {
+      expect(channels.some((channel) => channel.code === code)).toBe(false);
+    }
   });
 
   it('should create deposit request in PENDING status without crediting wallet', async () => {

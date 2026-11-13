@@ -13,9 +13,10 @@ import {
 } from './adapters/yemen-payment.adapters';
 import { LedgerModule } from '../ledger/ledger.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { OperationalApprovalsModule } from '../operational-approvals/operational-approvals.module';
 
 @Module({
-  imports: [LedgerModule, WalletModule],
+  imports: [LedgerModule, WalletModule, OperationalApprovalsModule],
   controllers: [DepositsController, AdminDepositsController],
   providers: [
     DepositsService,
