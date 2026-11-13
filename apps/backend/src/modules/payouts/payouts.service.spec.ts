@@ -73,6 +73,16 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
     payoutsService = module.get<PayoutsService>(PayoutsService);
     adapterRegistry = module.get<PaymentAdapterRegistry>(PaymentAdapterRegistry);
     ledgerService = module.get<LedgerService>(LedgerService);
+    // Explicitly simulate a manually verified receiver for this unit-test fixture only.
+    // The runtime default remains disabled until a real beneficiary account is approved in MySQL.
+    const jaib = adapterRegistry.getAdapter(PaymentChannelCode.JAIB)!;
+    const jaibInfo = jaib.getInfo();
+    jest.spyOn(jaib, 'getInfo').mockReturnValue({
+      ...jaibInfo,
+      accountNumber: '770123456',
+      isActive: true,
+      isVerifiedLegal: true,
+    });
   });
 
   describe('AT-18: Outbound Payout Idempotency', () => {
