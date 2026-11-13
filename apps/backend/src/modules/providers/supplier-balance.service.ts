@@ -12,6 +12,7 @@ import {
   CurrencyCode,
   SupplierAccountType,
   SupplierDepositDto,
+  MonetaryInput,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
@@ -52,6 +53,24 @@ export class SupplierBalanceService {
 
   private assertDatabaseForFinancialOperation(): never {
     throw new ServiceUnavailableException('Supplier commercial balances require a durable database record.');
+  }
+
+  private toMoneyDecimal(value: MonetaryInput, label: string): Prisma.Decimal {
+    let amount: Prisma.Decimal;
+    try {
+      amount = new Prisma.Decimal(value);
+    } catch {
+      throw new BadRequestException(`${label} is not a valid decimal amount.`);
+    }
+    if (
+      !amount.isFinite() ||
+      amount.isNegative() ||
+      amount.decimalPlaces() > 4 ||
+      amount.greaterThan('99999999999999.9999')
+    ) {
+      throw new BadRequestException(`${label} must be non-negative and fit DECIMAL(18,4).`);
+    }
+    return amount;
   }
 
   async getAllSupplierAccounts(): Promise<InMemorySupplierAccount[]> {
@@ -108,40 +127,54 @@ export class SupplierBalanceService {
   async checkFulfillmentGating(
     providerCode: string,
     currency: CurrencyCode,
-    costPrice: number,
+    costPrice: MonetaryInput,
   ): Promise<{ allowed: boolean; availableBalance: number; requiredAmount: number; accountType?: SupplierAccountType; message?: string }> {
-    if (!Number.isFinite(costPrice) || costPrice < 0) {
-      return {
-        allowed: false,
-        availableBalance: 0,
-        requiredAmount: costPrice,
-        message: 'Invalid supplier cost.',
-      };
-    }
-    if (costPrice === 0) {
+    const required = this.toMoneyDecimal(costPrice, 'Supplier fulfillment cost');
+    if (required.isZero()) {
       return { allowed: true, availableBalance: 0, requiredAmount: 0 };
     }
 
-    const { available, balance, accountType } = await this.getSupplierBalance(providerCode, currency);
-    if (available < costPrice) {
+    const tenantId = getCurrentTenantId();
+    const provider = await this.prisma.provider.findUnique({
+      where: { code: providerCode.toUpperCase() },
+    });
+    if (!provider) throw new NotFoundException(`Provider ${providerCode} was not found`);
+
+    const account = await this.prisma.supplierAccount.findFirst({
+      where: { providerId: provider.id, currency, tenantId: tenantId || null },
+    });
+    if (!account) {
+      throw new ServiceUnavailableException('لا يوجد حساب مورد تجاري دائم لهذه العملة؛ تم إيقاف التنفيذ.');
+    }
+
+    const balance = new Prisma.Decimal(account.balance);
+    const creditLimit = new Prisma.Decimal(account.creditLimit);
+    const available = balance.plus(creditLimit);
+    if (available.lessThan(required)) {
       this.logger.warn(
-        `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode} in tenant ${getCurrentTenantId() || 'platform'}.`,
+        `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode} in tenant ${tenantId || 'platform'}.`,
       );
       return {
         allowed: false,
-        availableBalance: balance,
-        requiredAmount: costPrice,
-        message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ. المتاح: ${available} ${currency}، المطلوب: ${costPrice} ${currency}.`,
+        availableBalance: available.toNumber(),
+        requiredAmount: required.toNumber(),
+        message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ. المتاح: ${available.toString()} ${currency}، المطلوب: ${required.toString()} ${currency}.`,
       };
     }
-    return { allowed: true, availableBalance: balance, requiredAmount: costPrice, accountType };
+    return {
+      allowed: true,
+      availableBalance: available.toNumber(),
+      requiredAmount: required.toNumber(),
+      accountType: account.accountType as SupplierAccountType,
+    };
   }
 
   async fundSupplierBalance(
     staffUserId: string,
     dto: SupplierDepositDto,
   ): Promise<{ success: boolean; newBalance: number; ledgerTxId: string; transaction: any }> {
-    if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
+    const fundingAmount = this.toMoneyDecimal(String(dto.amount), 'Supplier funding amount');
+    if (!fundingAmount.greaterThan(0)) {
       throw new BadRequestException('مبلغ التغذية يجب أن يكون أكبر من صفر');
     }
 
@@ -162,7 +195,7 @@ export class SupplierBalanceService {
         const balanceBeforeDecimal = existing
           ? new Prisma.Decimal(existing.balance)
           : new Prisma.Decimal(0);
-        const balanceAfterDecimal = balanceBeforeDecimal.plus(new Prisma.Decimal(dto.amount));
+        const balanceAfterDecimal = balanceBeforeDecimal.plus(fundingAmount);
 
         const account = existing
           ? await tx.supplierAccount.update({
@@ -178,13 +211,11 @@ export class SupplierBalanceService {
                 accountType: SupplierAccountType.PREPAID,
               },
             });
-        const balanceBefore = balanceBeforeDecimal.toNumber();
-        const balanceAfter = balanceAfterDecimal.toNumber();
 
         const ledgerResult = await this.ledgerService.recordSupplierFunding({
           providerCode: actualProviderCode,
           currency: dto.currency,
-          amount: dto.amount,
+          amount: fundingAmount.toString(),
           referenceNumber: dto.referenceNumber,
           channelCode: undefined,
           performedByUserId: staffUserId,
@@ -199,16 +230,16 @@ export class SupplierBalanceService {
             accountId: account.id,
             type: 'PREPAID_TOPUP',
             currency: dto.currency,
-            amount: new Prisma.Decimal(dto.amount),
-            balanceBefore,
-            balanceAfter,
+            amount: fundingAmount,
+            balanceBefore: balanceBeforeDecimal,
+            balanceAfter: balanceAfterDecimal,
             referenceId: dto.referenceNumber,
             ledgerTxId,
             notes: dto.notes || `تغذية رصيد تجاري عبر السند ${dto.referenceNumber}`,
           },
         });
 
-        return { account, transaction, ledgerTxId, balanceAfter };
+        return { account, transaction, ledgerTxId, balanceAfter: balanceAfterDecimal.toNumber() };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
@@ -233,13 +264,11 @@ export class SupplierBalanceService {
     orderId: string,
     providerCode: string,
     currency: CurrencyCode,
-    costPrice: number,
+    costPriceInput: MonetaryInput,
     existingTx?: Prisma.TransactionClient,
   ): Promise<{ success: boolean; newBalance: number }> {
-    if (!Number.isFinite(costPrice) || costPrice < 0) {
-      throw new BadRequestException('Supplier fulfillment cost is invalid.');
-    }
-    if (costPrice === 0) return { success: true, newBalance: 0 };
+    const costPrice = this.toMoneyDecimal(costPriceInput, 'Supplier fulfillment cost');
+    if (costPrice.isZero()) return { success: true, newBalance: 0 };
 
     const tenantId = getCurrentTenantId();
     try {
@@ -267,7 +296,7 @@ export class SupplierBalanceService {
         if (previousCharge) {
           if (
             previousCharge.currency !== currency ||
-            !new Prisma.Decimal(previousCharge.amount).equals(new Prisma.Decimal(costPrice))
+            !new Prisma.Decimal(previousCharge.amount).equals(costPrice)
           ) {
             throw new ConflictException('يوجد خصم سابق لنفس الطلب بقيمة أو عملة مختلفة؛ يتطلب الأمر مطابقة يدوية.');
           }
@@ -275,7 +304,7 @@ export class SupplierBalanceService {
         }
 
         const balanceBefore = new Prisma.Decimal(account.balance);
-        const balanceAfter = balanceBefore.minus(new Prisma.Decimal(costPrice));
+        const balanceAfter = balanceBefore.minus(costPrice);
         const creditLimit = new Prisma.Decimal(account.creditLimit);
         if (balanceAfter.plus(creditLimit).isNegative()) {
           throw new BadRequestException('Supplier commercial balance and credit limit are insufficient.');
@@ -297,7 +326,7 @@ export class SupplierBalanceService {
             accountId: account.id,
             type: 'ORDER_FULFILLMENT',
             currency,
-            amount: new Prisma.Decimal(costPrice),
+            amount: costPrice,
             balanceBefore: new Prisma.Decimal(balanceBefore),
             balanceAfter: new Prisma.Decimal(balanceAfter),
             referenceId: orderId,
