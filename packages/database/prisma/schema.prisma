@@ -1070,8 +1070,11 @@ model PayoutRequest {
   approvedByUserId   String?
   approvalNotes      String?
   externalReference  String?
-  failureReason      String?
+  failureReason      String?            @db.Text
   ledgerTxId         String?
+  executedByUserId   String?
+  executedAt         DateTime?
+  executionNotes     String?            @db.Text
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
