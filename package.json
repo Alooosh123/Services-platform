@@ -42,17 +42,19 @@
   "license": "UNLICENSED",
   "overrides": {
     "ajv": "8.17.2",
-    "body-parser": "2.4.0",
+    "body-parser": "1.20.9",
     "fast-uri": "3.1.9",
     "glob": "14.0.2",
     "js-yaml": "4.3.2",
     "lodash": "4.18.1",
     "minimatch": "11.0.1",
-    "multer": "2.3.0",
+    "multer": "2.5.0",
     "picomatch": "4.0.7",
     "postcss": "8.5.23",
     "postcss-selector-parser": "6.1.5",
     "qs": "6.16.1",
-    "tar": "7.5.3"
+    "tar": "7.5.22",
+    "file-type": "21.3.2",
+    "tmp": "0.2.7"
   }
 }
