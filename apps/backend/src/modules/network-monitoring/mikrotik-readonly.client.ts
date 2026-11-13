@@ -36,7 +36,8 @@ export class MikroTikReadOnlyClient {
   private readonly maxResponseBytes = 1024 * 1024;
 
   isConfigured(): boolean {
-    return Boolean(process.env.MIKROTIK_BASE_URL && process.env.MIKROTIK_USERNAME && process.env.MIKROTIK_PASSWORD);
+    return process.env.MIKROTIK_MONITORING_ENABLED === 'true' &&
+      Boolean(process.env.MIKROTIK_BASE_URL && process.env.MIKROTIK_USERNAME && process.env.MIKROTIK_PASSWORD);
   }
 
   async fetchSnapshot(): Promise<RouterSnapshot> {
