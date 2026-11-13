@@ -72,17 +72,17 @@ export class MonitoringService {
       dbStatus = HealthStatus.UNHEALTHY;
     }
 
-    // Check DB locks if Postgres
+    // Check currently waiting InnoDB row-lock requests (MySQL performance_schema).
     try {
       const lockResult: any = await this.prisma.$queryRaw`
-        SELECT count(*)::int as count FROM pg_locks WHERE NOT granted;
+        SELECT COUNT(*) AS count FROM performance_schema.data_lock_waits;
       `;
       if (lockResult && lockResult[0]) {
         activeLocks = lockResult[0].count || 0;
       }
     } catch (e) {
       locksStatus = HealthStatus.DEGRADED;
-      this.logger.warn('Unable to read PostgreSQL lock metrics.');
+      this.logger.warn('Unable to read MySQL InnoDB lock-wait metrics.');
     }
 
     let redisStatus = HealthStatus.HEALTHY;
@@ -231,24 +231,24 @@ export class MonitoringService {
     startOfDay.setHours(0, 0, 0, 0);
     const [unbalanced, lockRows, queueRows, varianceRows, latestReconciliation] = await Promise.all([
       this.prisma.$queryRaw<Array<{ transactionId: string }>>`
-        SELECT "transactionId"
-        FROM "ledger_entries"
-        GROUP BY "transactionId"
-        HAVING ABS(SUM("debitAmount") - SUM("creditAmount")) > 0.0001;
+        SELECT `transactionId`
+        FROM `ledger_entries`
+        GROUP BY `transactionId`
+        HAVING ABS(SUM(`debitAmount`) - SUM(`creditAmount`)) > 0.0001;
       `,
       this.prisma.$queryRaw<Array<{ count: number }>>`
-        SELECT count(*)::int AS count FROM pg_locks WHERE NOT granted;
+        SELECT COUNT(*) AS count FROM performance_schema.data_lock_waits;
       `,
       this.prisma.$queryRaw<Array<{ lagSeconds: number | null }>>`
-        SELECT EXTRACT(EPOCH FROM (NOW() - MIN("createdAt")))::int AS "lagSeconds"
-        FROM "orders"
-        WHERE "status" IN ('Queued', 'Processing');
+        SELECT TIMESTAMPDIFF(SECOND, MIN(`createdAt`), CURRENT_TIMESTAMP) AS lagSeconds
+        FROM `orders`
+        WHERE `status` IN ('Queued', 'Processing');
       `,
       this.prisma.$queryRaw<Array<{ currency: string; variance: number }>>`
-        SELECT "currency", COALESCE(SUM(ABS("expectedAmount" - "actualAmount")), 0)::float AS variance
-        FROM "reconciliation_items"
-        WHERE "createdAt" >= ${startOfDay} AND "status" = 'PENDING_REVIEW'
-        GROUP BY "currency";
+        SELECT `currency`, COALESCE(SUM(ABS(`expectedAmount` - `actualAmount`)), 0) AS variance
+        FROM `reconciliation_items`
+        WHERE `createdAt` >= ${startOfDay} AND `status` = 'PENDING_REVIEW'
+        GROUP BY `currency`;
       `,
       this.prisma.reconciliationBatch.findFirst({
         orderBy: { createdAt: 'desc' },

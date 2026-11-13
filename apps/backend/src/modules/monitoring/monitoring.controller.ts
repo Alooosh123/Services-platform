@@ -26,12 +26,18 @@ export class MonitoringController {
   constructor(private readonly monitoringService: MonitoringService) {}
 
   @Get('metrics')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.AUDITOR, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get operational telemetry metrics in JSON format' })
   async getMetrics() {
     return this.monitoringService.getTelemetryMetrics();
   }
 
   @Get('metrics/prometheus')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.AUDITOR, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
   @Header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
   @ApiOperation({ summary: 'Get metrics in standard Prometheus exposition format' })
   async getPrometheusMetrics(@Res() res: Response) {

@@ -142,7 +142,7 @@ export class PinVaultService {
       throw new ConflictException('Requested dispense quantity must be at least 1.');
     }
 
-    // Atomically select and lock available PINs using PostgreSQL SKIP LOCKED
+    // Atomically select and lock available PINs using MySQL SKIP LOCKED
     let selectedRows: Array<{
       id: string;
       pinCodeCiphertext: string;
@@ -153,10 +153,10 @@ export class PinVaultService {
 
     try {
       selectedRows = await client.$queryRaw`
-        SELECT id, "pinCodeCiphertext", "serialNumber", "encryptionKeyVersion", "expiresAt"
-        FROM pin_vault
-        WHERE "productId" = ${productId} AND status = 'AVAILABLE'
-        ORDER BY "expiresAt" ASC NULLS LAST, "createdAt" ASC
+        SELECT `id`, `pinCodeCiphertext`, `serialNumber`, `encryptionKeyVersion`, `expiresAt`
+        FROM `pin_vault`
+        WHERE `productId` = ${productId} AND `status` = 'AVAILABLE'
+        ORDER BY (`expiresAt` IS NULL) ASC, `expiresAt` ASC, `createdAt` ASC
         LIMIT ${quantity}
         FOR UPDATE SKIP LOCKED;
       `;

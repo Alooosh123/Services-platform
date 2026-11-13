@@ -1,4 +1,8 @@
-name: Yemen TopUp Platform - CI/CD Pipeline & Quality Gate (Phase 10)
+name: Yemen TopUp Platform - CI/CD Pipeline & Quality Gate
+
+permissions:
+  contents: read
+  pull-requests: read
 
 on:
   push:
@@ -32,8 +36,14 @@ jobs:
       - name: Monorepo Type Check
         run: npm run build --workspace=packages/shared && npm run build --workspace=packages/database
 
-      - name: Security Vulnerability Audit
-        run: npm audit --audit-level=high || true
+      - name: Security Vulnerability Audit (high and critical findings fail the build)
+        run: npm audit --audit-level=high
+
+      - name: Review dependency changes on pull requests
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
 
   # -------------------------------------------------------------
   # Job 2: Unit, Integration & Security Tests
@@ -43,19 +53,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: quality-gate
     services:
-      postgres:
-        image: postgres:16-alpine
+      mysql:
+        image: mysql:8.4
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgrespassword
-          POSTGRES_DB: digital_topup_test_db
+          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_DATABASE: digital_topup_test_db
+          MYSQL_USER: ci_user
+          MYSQL_PASSWORD: ci-user-password
         ports:
-          - 5432:5432
+          - 3306:3306
         options: >-
-          --health-cmd pg_isready
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-password --silent"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
       redis:
         image: redis:7-alpine
@@ -68,11 +79,13 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: "postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public"
+      DATABASE_URL: "mysql://ci_user:ci-user-password@127.0.0.1:3306/digital_topup_test_db"
       REDIS_URL: "redis://localhost:6379"
       JWT_SECRET: "test-jwt-access-token-secret-for-ci-pipeline-minimum-32-chars-long"
       JWT_REFRESH_SECRET: "test-jwt-refresh-token-secret-for-ci-pipeline-minimum-32-chars-long"
       NODE_ENV: test
+      SEED_SUPER_ADMIN_EMAIL: ci-admin@example.invalid
+      SEED_SUPER_ADMIN_PASSWORD: ci-only-bootstrap-password-at-least-20-chars
 
     steps:
       - name: Checkout Code
@@ -116,8 +129,26 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Prisma Schema Validation
+      - name: Prisma Schema Validation (MySQL)
         run: npx prisma validate --schema=packages/database/prisma/schema.prisma
+
+      - name: Generate fresh MySQL baseline migration
+        run: |
+          mkdir -p packages/database/prisma/migrations/20261113120000_initial_mysql
+          npx prisma migrate diff --from-empty --to-schema-datamodel packages/database/prisma/schema.prisma --script --output=packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
+
+      - name: Apply baseline to empty isolated MySQL 8.4 database
+        run: |
+          npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+          npx prisma migrate status --schema=packages/database/prisma/schema.prisma
+
+      - name: Upload generated MySQL baseline for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-initial-migration
+          path: packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
+          if-no-files-found: error
+          retention-days: 7
 
   # -------------------------------------------------------------
   # Job 4: Build Monorepo Production Artifacts
@@ -151,14 +182,10 @@ jobs:
     needs: build-production
     if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
     steps:
-      - name: Staging Deployment Notice
-        run: echo "Deploying release candidate to Staging Environment (staging-api.yementopup.com)..."
-
-      - name: Execute Health Probe
-        run: echo "Verifying GET /api/health and /api/health/ready probes..."
-
-      - name: Execute AT-20 Restore Drill
-        run: echo "Verifying SHA-256 backup restore and ledger conservation..."
+      - name: Fail closed until real staging deployment and restore-drill evidence exists
+        run: |
+          echo "::error::Staging deployment, live health probes, backup restore, and ledger-conservation checks are not executable yet. Promotion is blocked."
+          exit 1
 
   # -------------------------------------------------------------
   # Job 6: Gated Production Deployment with Rollback Trigger
@@ -172,7 +199,7 @@ jobs:
       name: production
       url: https://yementopup.com
     steps:
-      - name: Production Gate Check
+      - name: Fail closed until production deployment and live smoke tests are configured
         run: |
-          echo "Production release gate passed."
-          echo "Rollback Trigger: If /api/health reports UNHEALTHY or 5xx > 1%, trigger scripts/rollback.ts."
+          echo "::error::No production deployment adapter or live smoke-test credentials are configured. A successful CI build is not production approval."
+          exit 1

@@ -8,7 +8,7 @@ enum AgentPricingMode {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -358,7 +358,7 @@ model MerchantApiCredential {
   userId      String    @unique
   apiKeyHash  String    @unique
   secretHash  String
-  ipWhitelist String[]  @default([])
+  ipWhitelist Json     @default("[]")
   webhookUrl  String?
   isActive    Boolean   @default(true)
   lastUsedAt  DateTime?
