@@ -699,7 +699,13 @@ export class DepositsService {
             requestedByUserId: { not: staffUserId },
             decidedByUserId: staffUserId,
           },
-          data: { status: 'EXECUTED' },
+          data: {
+            status: 'EXECUTED',
+            executionReference: ledgerTxId,
+            executionNotes: notes,
+            executedByUserId: staffUserId,
+            executedAt: new Date(),
+          },
         });
         if (executed.count !== 1) {
           throw new ConflictException('تعذر إغلاق موافقة الإيداع ذرياً؛ تم التراجع عن تحديث الإيداع وقيود دفتر الأستاذ.');
