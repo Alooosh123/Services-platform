@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -38,6 +39,9 @@ export interface InMemoryPayout {
   externalReference?: string | null;
   failureReason?: string | null;
   ledgerTxId?: string | null;
+  executedByUserId?: string | null;
+  executedAt?: Date | null;
+  executionNotes?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,6 +61,7 @@ export class PayoutsService {
   }
 
   private seedDefaultPayouts() {
+    if (process.env.NODE_ENV === 'production') return;
     const po1: InMemoryPayout = {
       id: 'po-seed-001',
       payoutNumber: 'PO-20261010-0001',
@@ -114,7 +119,44 @@ export class PayoutsService {
       throw new BadRequestException(`قناة السحب ${dto.channelCode} غير مدعومة`);
     }
 
-    const channelInfo = adapter.getInfo();
+    let channelInfo = adapter.getInfo();
+    if (process.env.NODE_ENV === 'production') {
+      if (dto.channelCode === PaymentChannelCode.WALLET) {
+        throw new BadRequestException('قناة Sandbox/Wallet غير مسموح بها في عمليات السحب الإنتاجية.');
+      }
+      let durableChannel: any;
+      try {
+        durableChannel = await this.prisma.paymentChannelConfig.findUnique({ where: { code: dto.channelCode } });
+      } catch {
+        throw new ServiceUnavailableException('تعذر التحقق من إعداد قناة السحب المعتمد في MySQL.');
+      }
+      const currencies = Array.isArray(durableChannel?.supportedCurrencies)
+        ? durableChannel.supportedCurrencies
+        : [];
+      if (
+        !durableChannel ||
+        !durableChannel.isActive ||
+        durableChannel.verificationStatus !== 'VERIFIED' ||
+        durableChannel.financeApprovalRequired ||
+        durableChannel.mode !== PaymentChannelMode.MANUAL ||
+        !durableChannel.accountNumber ||
+        durableChannel.accountNumber === 'NOT_CONFIGURED' ||
+        durableChannel.killSwitchReason ||
+        !currencies.includes(dto.currency)
+      ) {
+        throw new BadRequestException('قناة السحب غير معتمدة مالياً أو غير مهيأة للتحويل اليدوي بهذه العملة.');
+      }
+      // Production outflows are manual only; no built-in sandbox or unverified API adapter is trusted.
+      channelInfo = {
+        ...channelInfo,
+        isActive: true,
+        mode: PaymentChannelMode.MANUAL,
+        minAmount: Number(durableChannel.minAmount),
+        maxAmount: Number(durableChannel.maxAmount),
+        accountNumber: durableChannel.accountNumber,
+        capabilities: { depositConfirm: false, transactionLookup: false, payout: false, balance: false, reconcile: false },
+      };
+    }
     if (!channelInfo.isActive) {
       throw new BadRequestException(`قناة السحب ${dto.channelCode} غير مفعلة حالياً`);
     }
@@ -151,9 +193,20 @@ export class PayoutsService {
     }
 
     // Anti-Fraud Velocity: Max 5 payout requests in 24 hours
-    const recentPayoutsCount = Array.from(this.memoryPayouts.values()).filter(
-      (p) => p.userId === userId && Date.now() - new Date(p.createdAt).getTime() < 24 * 3600 * 1000,
-    ).length;
+    let recentPayoutsCount: number;
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        recentPayoutsCount = await this.prisma.payoutRequest.count({
+          where: { userId, createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } },
+        });
+      } catch {
+        throw new ServiceUnavailableException('تعذر التحقق من حد السحوبات اليومي من قاعدة البيانات الدائمة.');
+      }
+    } else {
+      recentPayoutsCount = Array.from(this.memoryPayouts.values()).filter(
+        (p) => p.userId === userId && Date.now() - new Date(p.createdAt).getTime() < 24 * 3600 * 1000,
+      ).length;
+    }
     if (recentPayoutsCount >= 5) {
       throw new BadRequestException(
         'تم تجاوز الحد الأقصى لعدد طلبات السحب اليومية (5 طلبات خلال 24 ساعة). يرجى الانتظار لحين اكتمال الطلبات السابقة.',
@@ -221,6 +274,13 @@ export class PayoutsService {
         },
       };
     } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        // The wallet hold has already been posted. A failed/ambiguous insert must not
+        // become an in-memory success or release funds blindly; finance reconciles the idempotency key.
+        throw new ServiceUnavailableException(
+          'تعذر تأكيد حفظ طلب السحب في MySQL بعد حجز المبلغ. بقي الحجز قائماً لمنع الصرف المزدوج، ويلزم فحص مفتاح idempotency قبل أي إعادة محاولة.',
+        );
+      }
       this.logger.warn(`Prisma offline during createPayoutRequest (${err?.message})`);
     }
 
@@ -277,7 +337,10 @@ export class PayoutsService {
         },
       });
     } catch {
-      // memory fallback
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر حفظ اعتماد طلب السحب في قاعدة البيانات الدائمة.');
+      }
+      // isolated test/development fallback
     }
 
     payout.status = PayoutStatus.APPROVED;
@@ -301,8 +364,19 @@ export class PayoutsService {
   ): Promise<{ success: boolean; status: PayoutStatus; message: string; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
-    if (payout.status !== PayoutStatus.APPROVED && payout.status !== PayoutStatus.REQUESTED) {
-      throw new BadRequestException(`طلب السحب ليس في حالة جاهزة للإرسال (${payout.status})`);
+    if (payout.status !== PayoutStatus.APPROVED) {
+      throw new BadRequestException(`طلب السحب ليس معتمداً وجاهزاً للإرسال (${payout.status})`);
+    }
+    if (payout.approvedByUserId === staffUserId) {
+      throw new ForbiddenException('يجب أن ينفذ/يراجع السحب موظف مستقل عن الموظف الذي اعتمده.');
+    }
+    if (process.env.NODE_ENV === 'production' || payout.channelCode === PaymentChannelCode.WALLET) {
+      return {
+        success: false,
+        status: PayoutStatus.APPROVED,
+        message: 'لا يوجد مزود سحب آلي حقيقي معتمد. يجب تنفيذ التحويل يدوياً من الحساب المعتمد وإرفاق مرجع البنك عبر مسار Manual SOP.',
+        payout,
+      };
     }
 
     const adapter = this.adapterRegistry.getAdapter(payout.channelCode);
@@ -356,8 +430,9 @@ export class PayoutsService {
 
     // 3. Handle Payout Result
     if (result.status === 'CONFIRMED') {
-      // SETTLEMENT: Confirmed success -> Post ledger transaction and release hold
-      let ledgerTxId = `LTX-PO-${Date.now()}`;
+      // External success without a posted ledger entry is UNKNOWN, never falsely CONFIRMED.
+      let ledgerTxId: string | undefined;
+      let settlementError: unknown;
       try {
         const ledgerRes = await this.ledgerService.recordPayoutSettlement({
           payoutId: payout.id,
@@ -371,16 +446,33 @@ export class PayoutsService {
           performedByUserId: staffUserId,
           notes: `تحويل مؤكد عبر ${payout.channelCode} (Ref: ${result.externalReference})`,
         });
-        ledgerTxId = (ledgerRes as any)?.transaction?.id || ledgerTxId;
-      } catch (lErr: any) {
-        this.logger.error(`Ledger payout settlement error: ${lErr?.message}`);
+        ledgerTxId = (ledgerRes as any)?.transaction?.id;
+        if (!ledgerTxId) throw new Error('Ledger settlement did not return a posted transaction ID.');
+      } catch (lErr: unknown) {
+        settlementError = lErr;
+        this.logger.error('Ledger payout settlement failed after external success; funds remain reserved for reconciliation.');
+      }
+
+      payout.externalReference = result.externalReference || null;
+      payout.updatedAt = new Date();
+      if (!ledgerTxId) {
+        payout.status = PayoutStatus.UNKNOWN;
+        payout.failureReason = 'نجح/أُكد التحويل خارجياً لكن تعذر إثبات قيد الأستاذ. الحجز المالي باقٍ للمطابقة اليدوية. ' +
+          (settlementError instanceof Error ? settlementError.message : '');
+        await this.syncPayoutToDb(payout);
+        return {
+          success: false,
+          status: PayoutStatus.UNKNOWN,
+          message: 'وصل تأكيد التحويل الخارجي لكن لم يُسجل قيد الأستاذ. لم يتم إعلان السحب مكتملاً، والمبلغ محفوظ للمطابقة دون إعادة إرسال تلقائي.',
+          payout,
+        };
       }
 
       payout.status = PayoutStatus.CONFIRMED;
-      payout.externalReference = result.externalReference || `EXT-${Date.now()}`;
       payout.ledgerTxId = ledgerTxId;
-      payout.updatedAt = new Date();
-
+      payout.executedByUserId = staffUserId;
+      payout.executedAt = new Date();
+      payout.executionNotes = 'اكتمل التحويل مع قيد الأستاذ ' + ledgerTxId;
       await this.syncPayoutToDb(payout);
 
       return {
@@ -446,19 +538,21 @@ export class PayoutsService {
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
-    if (
-      payout.status === PayoutStatus.CONFIRMED ||
-      payout.status === PayoutStatus.FAILED
-    ) {
-      throw new BadRequestException(`لا يمكن تعديل طلب سحب بالحالة: ${payout.status}`);
+    if (payout.status !== PayoutStatus.APPROVED) {
+      throw new BadRequestException('يجب اعتماد طلب السحب مالياً قبل تسجيل التحويل اليدوي.');
+    }
+    if (!payout.approvedByUserId || payout.approvedByUserId === staffUserId) {
+      throw new ForbiddenException('يجب أن يكون منفذ التحويل اليدوي مختلفاً عن الموظف الذي اعتمد طلب السحب.');
     }
 
     if (!externalRef || externalRef.trim().length === 0) {
       throw new BadRequestException('رقم المرجع البنكي الخارجي إلزامي للتأكيد اليدوي');
     }
 
-    // Post double-entry settlement
-    let ledgerTxId = `LTX-PO-MAN-${Date.now()}`;
+    // The manual transfer may already have happened externally. If ledger posting fails,
+    // record UNKNOWN and retain the hold; never write a synthetic transaction ID.
+    let ledgerTxId: string | undefined;
+    let settlementError: unknown;
     try {
       const ledgerRes = await this.ledgerService.recordPayoutSettlement({
         payoutId: payout.id,
@@ -472,20 +566,32 @@ export class PayoutsService {
         performedByUserId: staffUserId,
         notes: notes || `تحويل يدوي معتمد بموجب سند خارجي ${externalRef}`,
       });
-      ledgerTxId = (ledgerRes as any)?.transaction?.id || ledgerTxId;
-    } catch (lErr: any) {
-      this.logger.error(`Ledger manual payout settlement error: ${lErr?.message}`);
+      ledgerTxId = (ledgerRes as any)?.transaction?.id;
+      if (!ledgerTxId) throw new Error('Ledger settlement did not return a posted transaction ID.');
+    } catch (lErr: unknown) {
+      settlementError = lErr;
+      this.logger.error('Ledger manual payout settlement failed; request remains UNKNOWN for reconciliation.');
+    }
+
+    payout.externalReference = externalRef.trim();
+    payout.executedByUserId = staffUserId;
+    payout.executedAt = new Date();
+    payout.executionNotes = notes || 'تم استلام مرجع التحويل اليدوي؛ ينتظر إثبات قيد الأستاذ.';
+    payout.updatedAt = new Date();
+    if (!ledgerTxId) {
+      payout.status = PayoutStatus.UNKNOWN;
+      payout.failureReason = 'تم تسجيل دليل التحويل اليدوي لكن تعذر إثبات قيد الأستاذ؛ الحجز باقٍ للمطابقة. ' +
+        (settlementError instanceof Error ? settlementError.message : '');
+      await this.syncPayoutToDb(payout);
+      return { success: false, payout };
     }
 
     payout.status = PayoutStatus.CONFIRMED;
-    payout.externalReference = externalRef.trim();
     payout.ledgerTxId = ledgerTxId;
-    payout.approvedByUserId = staffUserId;
-    payout.approvalNotes = notes || 'تم التحويل اليدوي ومطابقة الإشعار البنكي';
+    payout.executionNotes = notes || 'تم التحويل اليدوي ومطابقة الإشعار البنكي';
     payout.updatedAt = new Date();
 
     await this.syncPayoutToDb(payout);
-
     return { success: true, payout };
   }
 
@@ -541,14 +647,21 @@ export class PayoutsService {
           externalReference: db.externalReference,
           failureReason: db.failureReason,
           ledgerTxId: db.ledgerTxId,
+          executedByUserId: db.executedByUserId,
+          executedAt: db.executedAt,
+          executionNotes: db.executionNotes,
           createdAt: db.createdAt,
           updatedAt: db.updatedAt,
         };
       }
     } catch {
-      // fallback
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة طلب السحب من قاعدة البيانات الدائمة.');
+      }
+      // test/development fallback
     }
 
+    if (process.env.NODE_ENV === 'production') throw new NotFoundException(`طلب السحب ${payoutId} غير موجود`);
     const mem = this.memoryPayouts.get(payoutId);
     if (!mem) {
       throw new NotFoundException(`طلب السحب ${payoutId} غير موجود`);
@@ -575,14 +688,21 @@ export class PayoutsService {
           beneficiaryName: db.beneficiaryName,
           idempotencyKey: db.idempotencyKey,
           status: db.status as PayoutStatus,
+          executedByUserId: db.executedByUserId,
+          executedAt: db.executedAt,
+          executionNotes: db.executionNotes,
           createdAt: db.createdAt,
           updatedAt: db.updatedAt,
         };
       }
     } catch {
-      // fallback
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر التحقق من idempotency لطلب السحب في قاعدة البيانات.');
+      }
+      // test/development fallback
     }
 
+    if (process.env.NODE_ENV === 'production') return null;
     for (const p of this.memoryPayouts.values()) {
       if (p.idempotencyKey === key) return p;
     }
@@ -600,7 +720,7 @@ export class PayoutsService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (db && db.length > 0) {
+      if (process.env.NODE_ENV === 'production' || (db && db.length > 0)) {
         return db.map((p) => ({
           id: p.id,
           payoutNumber: p.payoutNumber,
@@ -624,9 +744,13 @@ export class PayoutsService {
         }));
       }
     } catch {
-      // fallback
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة طلبات السحب من قاعدة البيانات الدائمة.');
+      }
+      // test/development fallback
     }
 
+    if (process.env.NODE_ENV === 'production') return [];
     let results = Array.from(this.memoryPayouts.values());
     if (filters?.status) results = results.filter((p) => p.status === filters.status);
     if (filters?.userId) results = results.filter((p) => p.userId === filters.userId);
@@ -644,10 +768,16 @@ export class PayoutsService {
           externalReference: payout.externalReference,
           failureReason: payout.failureReason,
           ledgerTxId: payout.ledgerTxId,
+          executedByUserId: payout.executedByUserId || null,
+          executedAt: payout.executedAt || null,
+          executionNotes: payout.executionNotes || null,
         },
       });
     } catch {
-      // memory only
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر حفظ تحديث السحب في قاعدة البيانات الدائمة.');
+      }
+      // test/development memory fallback
     }
   }
 }
