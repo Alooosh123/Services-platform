@@ -332,12 +332,16 @@ export class LedgerService {
     userId: string;
     walletId: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
     paymentChannel: PaymentChannelCode;
     referenceId: string;
     performedByUserId?: string;
     notes?: string;
   }, existingTx?: Prisma.TransactionClient) {
+    const amount = this.toMoneyDecimal(params.amount, 'Top-up amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Top-up amount must be greater than zero.');
+    }
     const clearingAccountCode = this.getChannelAccountCode(params.paymentChannel, params.currency);
 
     const customerAccountCode =
@@ -358,16 +362,16 @@ export class LedgerService {
       entries: [
         {
           accountCode: clearingAccountCode,
-          debitAmount: params.amount,
-          creditAmount: 0,
+          debitAmount: amount.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Funds received through ${params.paymentChannel}`,
         },
         {
           accountCode: customerAccountCode,
           walletId: params.walletId,
-          debitAmount: 0,
-          creditAmount: params.amount,
+          debitAmount: '0',
+          creditAmount: amount.toString(),
           currency: params.currency,
           notes: `Customer balance credited`,
         },
