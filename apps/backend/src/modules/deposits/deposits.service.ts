@@ -1049,59 +1049,305 @@ export class DepositsService {
     };
   }
 
-  /**
-   * Admin: Switch channel mode safely (MANUAL, API, BLOCKED_EXTERNAL, DISABLED)
-   */
-  switchChannelMode(channelCode: PaymentChannelCode, mode: PaymentChannelMode) {
-    return this.adapterRegistry.switchChannelMode(channelCode, mode);
+  private maskChannelAccount(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const normalized = value.trim();
+    if (normalized.length <= 4) return '****';
+    return '*'.repeat(Math.min(12, normalized.length - 4)) + normalized.slice(-4);
+  }
+
+  private async recordChannelAudit(
+    tx: Prisma.TransactionClient,
+    actorUserId: string,
+    action: string,
+    configId: string,
+    oldValues: Record<string, unknown>,
+    newValues: Record<string, unknown>,
+  ) {
+    await tx.auditLog.create({
+      data: {
+        userId: actorUserId,
+        action,
+        entityName: 'PAYMENT_CHANNEL_CONFIG',
+        entityId: configId,
+        oldValues: oldValues as Prisma.InputJsonValue,
+        newValues: newValues as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private channelConfigView(config: any) {
+    return {
+      id: config.id,
+      code: config.code,
+      name: config.name,
+      nameAr: config.nameAr,
+      accountNumber: config.accountNumber,
+      accountHolderName: config.accountHolderName,
+      instructionsAr: config.instructionsAr,
+      supportedCurrencies: config.supportedCurrencies,
+      minAmount: Number(config.minAmount),
+      maxAmount: Number(config.maxAmount),
+      feePercentage: Number(config.feePercentage || 0),
+      mode: config.mode,
+      verificationStatus: config.verificationStatus,
+      verifiedByFinanceUserId: config.verifiedByFinanceUserId,
+      verifiedAt: config.verifiedAt,
+      financeApprovalRequired: config.financeApprovalRequired,
+      pendingAccountNumber: config.pendingAccountNumber,
+      pendingFeePercentage: config.pendingFeePercentage === null ? null : Number(config.pendingFeePercentage),
+      pendingProposedByUserId: config.pendingProposedByUserId,
+      pendingProposedAt: config.pendingProposedAt,
+      pendingChangeReason: config.pendingChangeReason,
+      killSwitchReason: config.killSwitchReason,
+      killSwitchAt: config.killSwitchAt,
+      isActive: config.isActive,
+      createdAt: config.createdAt,
+      updatedAt: config.updatedAt,
+    };
   }
 
   /**
-   * Admin: Safe failover when network/channel anomaly occurs
+   * Change payment channel mode using durable MySQL state.
+   * Real external channels cannot be switched to API until an authenticated provider adapter exists.
    */
-  failoverChannel(channelCode: PaymentChannelCode, reason?: string) {
-    return this.adapterRegistry.failoverChannel(channelCode, reason);
+  async switchChannelMode(channelCode: PaymentChannelCode, mode: PaymentChannelMode, actorUserId: string) {
+    if (mode === PaymentChannelMode.API) {
+      throw new BadRequestException('لا يمكن تفعيل API لقناة يمنية قبل تنفيذ محول مزود حقيقي واختباره بعقد ومفاتيح موثقة. استخدم MANUAL.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findUnique({ where: { code: channelCode } });
+      if (!current) throw new NotFoundException('Payment channel configuration was not found.');
+      const isActive = mode === PaymentChannelMode.MANUAL &&
+        current.verificationStatus === ChannelVerificationStatus.VERIFIED &&
+        !current.financeApprovalRequired &&
+        !current.killSwitchReason;
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: {
+          mode,
+          isActive: mode === PaymentChannelMode.MANUAL ? isActive : false,
+        },
+      });
+      await this.recordChannelAudit(tx, actorUserId, 'PAYMENT_CHANNEL_MODE_CHANGED', current.id,
+        { mode: current.mode, isActive: current.isActive },
+        { mode: updated.mode, isActive: updated.isActive });
+      return {
+        success: true,
+        message: updated.isActive ? 'تم تحويل القناة إلى التحقق اليدوي.' : 'تم حظر القناة أو تعطيلها؛ لن تظهر للعملاء.',
+        channel: this.channelConfigView(updated),
+      };
+    });
   }
 
   /**
-   * Admin: Verify legal status of payment channels
+   * Fail closed to MANUAL mode; this does not claim an API recovery or confirm any transfer.
    */
-  verifyLegalAccounts() {
-    return this.adapterRegistry.verifyLegalAccounts();
+  async failoverChannel(channelCode: PaymentChannelCode, reason: string | undefined, actorUserId: string) {
+    if (!reason || reason.trim().length < 8) throw new BadRequestException('سبب التحويل الآمن إلى الوضع اليدوي مطلوب.');
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findUnique({ where: { code: channelCode } });
+      if (!current) throw new NotFoundException('Payment channel configuration was not found.');
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: { mode: PaymentChannelMode.MANUAL, killSwitchReason: null,
+          isActive: current.verificationStatus === ChannelVerificationStatus.VERIFIED && !current.financeApprovalRequired },
+      });
+      await this.recordChannelAudit(tx, actorUserId, 'PAYMENT_CHANNEL_SAFE_FAILOVER', current.id,
+        { mode: current.mode, isActive: current.isActive },
+        { mode: updated.mode, isActive: updated.isActive, reason: reason.trim() });
+      return { success: true, mode: updated.mode, message: 'تم التحويل إلى التحقق اليدوي. لا يوجد تأكيد آلي لأي حوالة.', channel: this.channelConfigView(updated) };
+    });
   }
 
   /**
-   * Admin: Get all channels including pending and unverified
+   * Return status from durable configuration, not volatile adapter memory.
    */
-  getAllChannelsForAdmin() {
-    return this.adapterRegistry.getAllChannels();
+  async verifyLegalAccounts() {
+    const rows = await this.prisma.paymentChannelConfig.findMany({ orderBy: { code: 'asc' } });
+    const unverified = rows.filter((c) =>
+      !c.isActive ||
+      c.verificationStatus !== ChannelVerificationStatus.VERIFIED ||
+      c.financeApprovalRequired ||
+      !c.accountNumber ||
+      c.accountNumber === 'NOT_CONFIGURED',
+    ).map((c) => c.code);
+    return { isValid: unverified.length === 0, unverified, totalConfigured: rows.length };
+  }
+
+  async getAllChannelsForAdmin() {
+    const rows = await this.prisma.paymentChannelConfig.findMany({ orderBy: { code: 'asc' } });
+    return rows.map((row) => this.channelConfigView(row));
   }
 
   /**
-   * Admin: Create a new dynamic payment channel
+   * Create a disabled channel and stage the receiver details for independent verification.
+   * No channel becomes customer-visible through creation alone.
    */
-  createDynamicChannel(dto: CreateDynamicChannelDto) {
-    return this.adapterRegistry.createDynamicChannel(dto);
+  async createDynamicChannel(dto: CreateDynamicChannelDto, actorUserId: string) {
+    if (dto.minAmount <= 0 || dto.maxAmount < dto.minAmount) {
+      throw new BadRequestException('حدود المبالغ غير صحيحة.');
+    }
+    if (!dto.accountNumber || dto.accountNumber.trim().length < 5 || dto.accountNumber === 'NOT_CONFIGURED') {
+      throw new BadRequestException('رقم حساب المستفيد الحقيقي مطلوب، وسيظل معلّقاً حتى الاعتماد المالي.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.paymentChannelConfig.findUnique({ where: { code: dto.code } });
+      if (existing) throw new ConflictException('رمز قناة الدفع موجود مسبقاً؛ استخدم طلب تغيير الحساب بدلاً من إنشاء قناة مكررة.');
+      const created = await tx.paymentChannelConfig.create({
+        data: {
+          code: dto.code,
+          name: dto.name,
+          nameAr: dto.nameAr,
+          accountNumber: 'NOT_CONFIGURED',
+          accountHolderName: dto.accountHolderName,
+          instructionsAr: 'القناة غير مفعلة. تنتظر التحقق من حساب الاستقبال والموافقة المالية المستقلة.',
+          supportedCurrencies: dto.supportedCurrencies as unknown as Prisma.InputJsonValue,
+          minAmount: new Prisma.Decimal(dto.minAmount),
+          maxAmount: new Prisma.Decimal(dto.maxAmount),
+          mode: PaymentChannelMode.MANUAL,
+          verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+          financeApprovalRequired: true,
+          pendingAccountNumber: dto.accountNumber.trim(),
+          pendingProposedByUserId: actorUserId,
+          pendingProposedAt: new Date(),
+          pendingChangeReason: 'إنشاء قناة جديدة يتطلب تحققاً مالياً مستقلاً.',
+          isActive: false,
+        },
+      });
+      await this.recordChannelAudit(tx, actorUserId, 'PAYMENT_CHANNEL_CREATED_PENDING_REVIEW', created.id,
+        {},
+        { code: dto.code, accountNumber: this.maskChannelAccount(dto.accountNumber), status: 'PENDING_REVIEW', isActive: false });
+      return { success: true, message: 'تم إنشاء إعداد القناة كمسودة معطلة. لا تظهر للعملاء حتى يراجعها مسؤول مالي مستقل.', channel: this.channelConfigView(created) };
+    });
   }
 
   /**
-   * Admin: Propose account number change (triggers Four-Eyes Principle / Finance Review)
+   * Propose receiver details; immediately hide the channel until an independent finance review.
    */
-  proposeChannelAccountChange(channelCode: PaymentChannelCode, newAccountNumber: string, feePercentage?: number) {
-    return this.adapterRegistry.proposeChannelAccountChange(channelCode, newAccountNumber, feePercentage);
+  async proposeChannelAccountChange(
+    channelCode: PaymentChannelCode,
+    newAccountNumber: string,
+    feePercentage: number | undefined,
+    proposedByUserId: string,
+    reason: string,
+  ) {
+    const account = (newAccountNumber || '').trim();
+    if (account.length < 5 || account.length > 64 || account === 'NOT_CONFIGURED') {
+      throw new BadRequestException('رقم حساب المستفيد غير صالح.');
+    }
+    if (feePercentage !== undefined && (!Number.isFinite(feePercentage) || feePercentage < 0 || feePercentage > 100)) {
+      throw new BadRequestException('نسبة الرسوم يجب أن تكون بين 0 و100.');
+    }
+    if (!reason || reason.trim().length < 12) throw new BadRequestException('سبب طلب تغيير الحساب مطلوب.');
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findUnique({ where: { code: channelCode } });
+      if (!current) throw new NotFoundException('Payment channel configuration was not found.');
+      if (current.pendingProposedByUserId) throw new ConflictException('يوجد تغيير آخر ينتظر المراجعة المالية لهذه القناة.');
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: {
+          pendingAccountNumber: account,
+          pendingFeePercentage: feePercentage === undefined ? null : new Prisma.Decimal(feePercentage),
+          pendingProposedByUserId: proposedByUserId,
+          pendingProposedAt: new Date(),
+          pendingChangeReason: reason.trim(),
+          financeApprovalRequired: true,
+          verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+          isActive: false,
+          mode: PaymentChannelMode.MANUAL,
+        },
+      });
+      await this.recordChannelAudit(tx, proposedByUserId, 'PAYMENT_CHANNEL_CHANGE_PROPOSED', current.id,
+        { accountNumber: this.maskChannelAccount(current.accountNumber), isActive: current.isActive, mode: current.mode },
+        { pendingAccountNumber: this.maskChannelAccount(account), feePercentage: feePercentage ?? null, reason: reason.trim(), status: 'PENDING_REVIEW' });
+      return { success: true, message: 'تم تعليق القناة وإرسال التغيير للمراجعة المالية المستقلة. لن تُعرض للعملاء أثناء المراجعة.', channel: this.channelConfigView(updated) };
+    });
   }
 
   /**
-   * Finance Manager: Dual Approval for channel account change (AT-15)
+   * Four-eyes approval is durable, rejects self-approval, and keeps real channels MANUAL.
    */
-  approveChannelFinanceReview(adminUserId: string, channelCode: PaymentChannelCode, dto: ApproveChannelChangeDto) {
-    return this.adapterRegistry.approveChannelFinanceReview(adminUserId, channelCode, dto);
+  async approveChannelFinanceReview(
+    adminUserId: string,
+    channelCode: PaymentChannelCode,
+    dto: ApproveChannelChangeDto,
+  ) {
+    if (typeof dto.approved !== 'boolean') throw new BadRequestException('قرار الاعتماد المالي مطلوب.');
+    if (dto.approved && (!dto.financeNotes || dto.financeNotes.trim().length < 8)) {
+      throw new BadRequestException('ملاحظات التحقق المالي مطلوبة قبل الاعتماد.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findUnique({ where: { code: channelCode } });
+      if (!current) throw new NotFoundException('Payment channel configuration was not found.');
+      if (!current.pendingProposedByUserId || !current.pendingAccountNumber || !current.financeApprovalRequired) {
+        throw new ConflictException('لا يوجد تغيير حساب معلق للمراجعة.');
+      }
+      if (current.pendingProposedByUserId === adminUserId) {
+        throw new ConflictException('لا يمكن لمقدم طلب تغيير الحساب اعتماد طلبه بنفسه.');
+      }
+      const approved = dto.approved;
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: approved ? {
+          accountNumber: current.pendingAccountNumber,
+          feePercentage: current.pendingFeePercentage ?? current.feePercentage,
+          verificationStatus: ChannelVerificationStatus.VERIFIED,
+          verifiedByFinanceUserId: adminUserId,
+          verifiedAt: new Date(),
+          financeApprovalRequired: false,
+          isActive: true,
+          mode: PaymentChannelMode.MANUAL,
+          pendingAccountNumber: null,
+          pendingFeePercentage: null,
+          pendingProposedByUserId: null,
+          pendingProposedAt: null,
+          pendingChangeReason: null,
+          killSwitchReason: null,
+          killSwitchAt: null,
+        } : {
+          verificationStatus: ChannelVerificationStatus.REJECTED,
+          verifiedByFinanceUserId: adminUserId,
+          verifiedAt: new Date(),
+          financeApprovalRequired: false,
+          isActive: false,
+          mode: PaymentChannelMode.DISABLED,
+          pendingAccountNumber: null,
+          pendingFeePercentage: null,
+          pendingProposedByUserId: null,
+          pendingProposedAt: null,
+          pendingChangeReason: null,
+        },
+      });
+      await this.recordChannelAudit(tx, adminUserId, approved ? 'PAYMENT_CHANNEL_CHANGE_APPROVED' : 'PAYMENT_CHANNEL_CHANGE_REJECTED', current.id,
+        { pendingAccountNumber: this.maskChannelAccount(current.pendingAccountNumber), requestedByUserId: current.pendingProposedByUserId, isActive: current.isActive },
+        { accountNumber: approved ? this.maskChannelAccount(updated.accountNumber) : this.maskChannelAccount(current.accountNumber), isActive: updated.isActive, mode: updated.mode, financeNotes: dto.financeNotes?.trim() || null });
+      return {
+        success: true,
+        message: approved
+          ? 'تم اعتماد بيانات المستفيد من شخص مستقل وتفعيل القناة في وضع MANUAL فقط. لا يوجد تكامل API آلي.'
+          : 'تم رفض التغيير وإبقاء القناة معطلة.',
+        channel: this.channelConfigView(updated),
+      };
+    });
   }
 
   /**
-   * Admin: Emergency Kill Switch for payment channel (AT-24)
+   * Emergency kill switch immediately hides channel and disables further deposits.
    */
-  triggerChannelKillSwitch(adminUserId: string, channelCode: PaymentChannelCode, reason: string) {
-    return this.adapterRegistry.triggerChannelKillSwitch(adminUserId, channelCode, reason);
+  async triggerChannelKillSwitch(adminUserId: string, channelCode: PaymentChannelCode, reason: string) {
+    if (!reason || reason.trim().length < 12) throw new BadRequestException('سبب الإيقاف الطارئ مطلوب.');
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.paymentChannelConfig.findUnique({ where: { code: channelCode } });
+      if (!current) throw new NotFoundException('Payment channel configuration was not found.');
+      const updated = await tx.paymentChannelConfig.update({
+        where: { id: current.id },
+        data: { mode: PaymentChannelMode.DISABLED, isActive: false, killSwitchReason: reason.trim(), killSwitchAt: new Date() },
+      });
+      await this.recordChannelAudit(tx, adminUserId, 'PAYMENT_CHANNEL_KILL_SWITCH', current.id,
+        { mode: current.mode, isActive: current.isActive },
+        { mode: updated.mode, isActive: false, reason: reason.trim() });
+      return { success: true, message: 'تم إيقاف القناة فوراً وحجبها عن العملاء.', channel: this.channelConfigView(updated) };
+    });
   }
 }
