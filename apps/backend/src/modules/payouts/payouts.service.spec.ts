@@ -217,7 +217,7 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
       const adapter = adapterRegistry.getAdapter(PaymentChannelCode.WALLET)!;
       jest.spyOn(adapter, 'payout').mockRejectedValueOnce(new Error('Gateway Timeout / Socket Hangup'));
 
-      const dispatchResult = await payoutsService.dispatchPayout('user-finance-002', req.payout.id);
+      const dispatchResult = await payoutsService.dispatchPayout('user-finance-003', req.payout.id);
 
       expect(dispatchResult.status).toBe(PayoutStatus.UNKNOWN);
       expect(dispatchResult.message).toContain('حالة التحويل غير مؤكدة لدى المزود');
@@ -228,6 +228,9 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
       expect(mockLedgerService.releaseWalletHold).not.toHaveBeenCalled();
       // 2. Settlement was NOT called (funds not marked credited to bank)
       expect(mockLedgerService.recordPayoutSettlement).not.toHaveBeenCalled();
+      await expect(payoutsService.rejectPayout('user-finance-004', req.payout.id, 'رفض بعد حالة غير مؤكدة'))
+        .rejects.toThrow('بدأ تنفيذه أو أصبحت نتيجته غير مؤكدة');
+      expect(mockLedgerService.releaseWalletHold).not.toHaveBeenCalled();
     });
     it('keeps a manually transferred payout UNKNOWN when double-entry posting fails', async () => {
       const req = await payoutsService.createPayoutRequest('user-customer-003', {
