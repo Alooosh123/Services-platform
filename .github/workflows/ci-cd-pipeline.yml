@@ -170,7 +170,7 @@ jobs:
       RESTORE_DATABASE_URL: "mysql://root:ci-root-password@127.0.0.1:3306/digital_topup_restore_test"
       MYSQL_ROOT_PASSWORD: ci-root-password
       BACKUP_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-      BACKUP_DIR: ./backups
+      BACKUP_DIR: ${{ github.workspace }}/backups
       NODE_ENV: test
     steps:
       - name: Checkout Code
