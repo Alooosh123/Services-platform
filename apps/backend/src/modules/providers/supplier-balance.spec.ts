@@ -123,7 +123,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         expect.objectContaining({
           providerCode: 'MOCK',
           currency: CurrencyCode.USD,
-          amount: 2500.0,
+          amount: '2500',
           referenceNumber: 'WIRE-CAC-998877',
         }),
         mockPrisma,
