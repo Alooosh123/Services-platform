@@ -177,6 +177,20 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
       expect(mockAdapter.submitOrder).not.toHaveBeenCalled();
     });
 
+    it('compares supplier limits with exact Decimal precision beyond JavaScript safe integers', async () => {
+      supplierAccountRecord.balance = new Prisma.Decimal('90071992547409.9999');
+      supplierAccountRecord.creditLimit = new Prisma.Decimal(0);
+
+      const result = await supplierBalanceService.checkFulfillmentGating(
+        'MOCK',
+        CurrencyCode.USD,
+        '90071992547410.0000',
+      );
+
+      expect(result.allowed).toBe(false);
+      expect(result.message).toContain('غير كافٍ');
+    });
+
     it('AT-16: successfully dispatches order and deducts provider commercial balance when balance is sufficient', async () => {
       const mockOrder = {
         id: 'ord-gating-success-1',
