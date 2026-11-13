@@ -1628,6 +1628,10 @@ model OperationalApproval {
   status            String   @default("PENDING")
   decision          String?
   decisionNotes     String?
+  executionReference String?
+  executionNotes    String?
+  executedByUserId  String?
+  executedAt        DateTime?
   requestedAt       DateTime @default(now())
   decidedAt         DateTime?
   createdAt         DateTime @default(now())
