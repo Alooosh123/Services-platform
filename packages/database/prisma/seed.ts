@@ -323,21 +323,9 @@ async function main() {
     await prisma.paymentChannelConfig.upsert({
       where: { code: cfg.code },
       create: cfg,
-      // Reseeding intentionally disables previous example/external channels.
-      update: {
-        name: cfg.name,
-        nameAr: cfg.nameAr,
-        accountNumber: 'NOT_CONFIGURED',
-        accountHolderName: 'غير مهيأ',
-        instructionsAr: cfg.instructionsAr,
-        supportedCurrencies: cfg.supportedCurrencies,
-        mode: PaymentChannelMode.MANUAL,
-        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
-        financeApprovalRequired: true,
-        minAmount: cfg.minAmount,
-        maxAmount: cfg.maxAmount,
-        isActive: false,
-      },
+      // Never overwrite a receiver account or finance approval during a routine re-seed.
+      // New channels are created disabled and pending review; verified configuration is preserved.
+      update: {},
     });
   }
 
