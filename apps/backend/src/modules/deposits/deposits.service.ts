@@ -1134,6 +1134,7 @@ export class DepositsService {
       verifiedAt: config.verifiedAt,
       financeApprovalRequired: config.financeApprovalRequired,
       pendingAccountNumber: config.pendingAccountNumber,
+      pendingInstructionsAr: config.pendingInstructionsAr,
       pendingFeePercentage: config.pendingFeePercentage === null ? null : Number(config.pendingFeePercentage),
       pendingProposedByUserId: config.pendingProposedByUserId,
       pendingProposedAt: config.pendingProposedAt,
