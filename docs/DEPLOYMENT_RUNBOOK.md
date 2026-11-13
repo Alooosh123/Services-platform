@@ -8,12 +8,12 @@
 1. **التحقق من متغيرات البيئة (`.env.production`):**
    - التأكد من عدم استخدام أي أسرار افتراضية أو تجريبية.
    - `JWT_SECRET` مشفر بطول 32 خانة على الأقل.
-   - `DATABASE_URL` يشير إلى خادم PostgreSQL المؤمن مع شهادة SSL.
+   - `DATABASE_URL` يشير إلى خادم MySQL 8.4 LTS المؤمن مع شهادة SSL.
    - `REDIS_URL` مفعل بنظام التشفير وكلمة المرور.
 2. **فحص سلامة المهاجرات (Migration Dry-Run):**
-   - تشغيل `npm run db:push` أو فحص التوافق دون حذف أي بيانات سابقة.
+   - تشغيل `npm run db:migrate:deploy` أو فحص التوافق دون حذف أي بيانات سابقة.
 3. **أخذ نسخة احتياطية فورية قبل النشر (Pre-Release Backup):**
-   - تنفيذ `npm run backup` أو عبر مسار `/api/backups`.
+   - تنفيذ `npm run db:backup` أو عبر مسار `/api/backups`.
    - التأكد من تسجيل بصمة SHA-256 في جدول `backup_records`.
 
 ---
