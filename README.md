@@ -10,9 +10,9 @@
 | المكون | التقنية | الوظيفة |
 | :--- | :--- | :--- |
 | **Backend REST API** | NestJS + TypeScript | المحرك المركزي، المصادقة RBAC، دورة الطلبات، المزودات، والـ Ledger |
-| **قاعدة البيانات** | PostgreSQL + Prisma ORM | جداول علائقية عالية الدقة لبيانات العملاء والألعاب والقيود المحاسبية |
+| **قاعدة البيانات** | MySQL 8.4 LTS + Prisma ORM | جداول علائقية عالية الدقة لبيانات العملاء والألعاب والقيود المحاسبية |
 | **الكاش وقوائم الانتظار** | Redis | التخزين المؤقت، Rate Limiting، ومزامنة العمليات |
-| **لوحة الإدارة (Web Admin)** | Next.js 14 + Tailwind CSS | الإدارة المركزية، متابعة الطلبات، إضافة الألعاب ديناميكياً، والتدقيق المالي |
+| **لوحة الإدارة (Web Admin)** | Next.js 15.5 LTS + Tailwind CSS | الإدارة المركزية، متابعة الطلبات، إضافة الألعاب ديناميكياً، والتدقيق المالي |
 | **متجر العميل (Web Customer)** | Next.js 14 + Tailwind CSS | متجر سريع ومتجاوب، التحقق الفوري من معرف اللاعب، والمحفظة الرقمية |
 | **تطبيق الهاتف (Customer Mobile)** | Flutter (iOS & Android) | تطبيق عميل بنمط Clean Architecture للشحن المباشر والمحفظة |
 | **التوثيق التفاعلي** | Swagger OpenAPI | توثيق كافة مسارات الـ API واختبارها |
@@ -28,6 +28,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # Configure unique random secrets in .env before starting.
 .\scripts\start-platform-podman.ps1
 podman compose -f podman/compose.yml ps
+
 ```
 
 استخدم Podman Desktop على Windows مع Podman Machine وامتداد Compose. لا يتطلب المشروع Docker Desktop أو Docker Engine. ملف `.env.example` يحتوي عناصر نائبة فقط. يمكن تشغيل Adminer اختيارياً بالأمر: `podman compose -f podman/compose.yml --profile tools up -d db-admin`.
@@ -35,6 +36,7 @@ podman compose -f podman/compose.yml ps
 * **متجر العميل:** `http://localhost:3000`
 * **لوحة الإدارة:** `http://localhost:3001`
 * **توثيق Swagger:** `http://localhost:4000/api/docs`
+* **MikroTik read-only status:** `http://localhost:4000/api/network-monitoring/status` (بعد تهيئة HTTPS وحساب القراءة فقط)
 
 ### 2. التشغيل اليدوي (Local Development)
 ```bash
