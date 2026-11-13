@@ -1,6 +1,7 @@
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsNumber,
   IsOptional,
@@ -72,6 +73,7 @@ export class ProposePaymentChannelAccountDto {
 }
 
 export class ApprovePaymentChannelChangeDto {
+  @IsBoolean()
   approved!: boolean;
 
   @IsOptional()
