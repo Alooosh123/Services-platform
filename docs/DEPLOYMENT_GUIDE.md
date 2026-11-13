@@ -56,10 +56,7 @@ npm run db:migrate:deploy
 npm run db:seed
 ```
 
-> **حسابات التجربة الأولية المنشأة تلقائيًا:**
-> * **المدير العام (Super Admin):** `admin@digitaltopup.com` | كلمة المرور: `Admin@123456`
-> * **المدير المالي (Finance Officer):** `finance@digitaltopup.com` | كلمة المرور: `Finance@123456`
-> * **العميل التجريبي (Customer):** `customer@gmail.com` | كلمة المرور: `Customer@123456` (رصيد محفظة: $100.00)
+> **الأمان:** لا توجد حسابات أو كلمات مرور افتراضية في seed. أنشئ مدير التهيئة بمتغيرات `SEED_SUPER_ADMIN_EMAIL` و`SEED_SUPER_ADMIN_PASSWORD` السرية داخل `.env`. يجب أن تكون كلمة المرور فريدة ولا تقل عن 20 حرفاً. لا تضع أسراراً حقيقية في هذا الدليل أو Git.
 
 ### الخطوة 3: تشغيل الخدمات
 ```bash
@@ -78,10 +75,10 @@ npm run dev:customer
 ## 3. نشر بيئة الإنتاج على VPS (Production Deployment)
 
 ### المواصفات الموصى بها للخادم
-* المعالج: 2 vCPU
-* الذاكرة: 4GB RAM أو أكثر
-* التخزين: 40GB SSD / NVMe
-* نظام التشغيل: Ubuntu 22.04 LTS
+* المعالج: 4 vCPU (أو أكثر وفق حجم الطلبات)
+* الذاكرة: 8GB RAM (والحد الأدنى للتطوير 4GB)
+* التخزين: 80GB SSD / NVMe مع مساحة نسخ احتياطي مستقلة
+* نظام التشغيل: Ubuntu 24.04 LTS
 
 ### إعداد الخادم
 ```bash
@@ -89,8 +86,9 @@ npm run dev:customer
 sudo apt update && sudo apt upgrade -y
 
 # تثبيت Podman و Podman Compose
-sudo apt install -y docker.io docker-compose-plugin
-sudo systemctl enable --now docker
+sudo apt install -y podman podman-compose
+podman info
+podman compose version
 
 # تثبيت Nginx و Certbot لتأمين شهادات SSL
 sudo apt install -y nginx certbot python3-certbot-nginx
