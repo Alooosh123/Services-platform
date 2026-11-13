@@ -1219,6 +1219,51 @@ CREATE TABLE `saas_invoices` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+-- CreateTable
+CREATE TABLE `network_snapshots` (
+    `id` VARCHAR(191) NOT NULL,
+    `status` VARCHAR(191) NOT NULL,
+    `deviceIdentity` VARCHAR(191) NULL,
+    `routerOsVersion` VARCHAR(191) NULL,
+    `cpuLoadPercent` INTEGER NULL,
+    `freeMemoryBytes` BIGINT NULL,
+    `totalMemoryBytes` BIGINT NULL,
+    `uptime` VARCHAR(191) NULL,
+    `interfaceCount` INTEGER NOT NULL DEFAULT 0,
+    `interfaces` JSON NOT NULL,
+    `diagnostics` JSON NOT NULL,
+    `observedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `network_snapshots_observedAt_idx`(`observedAt`),
+    INDEX `network_snapshots_status_observedAt_idx`(`status`, `observedAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `operational_approvals` (
+    `id` VARCHAR(191) NOT NULL,
+    `approvalType` VARCHAR(191) NOT NULL,
+    `targetType` VARCHAR(191) NOT NULL,
+    `targetId` VARCHAR(191) NULL,
+    `action` VARCHAR(191) NOT NULL,
+    `reason` VARCHAR(191) NOT NULL,
+    `requesterRole` VARCHAR(191) NOT NULL,
+    `requestedByUserId` VARCHAR(191) NOT NULL,
+    `decidedByUserId` VARCHAR(191) NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'PENDING',
+    `decision` VARCHAR(191) NULL,
+    `decisionNotes` VARCHAR(191) NULL,
+    `requestedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `decidedAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `operational_approvals_approvalType_status_requestedAt_idx`(`approvalType`, `status`, `requestedAt`),
+    INDEX `operational_approvals_targetType_targetId_idx`(`targetType`, `targetId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- AddForeignKey
 ALTER TABLE `agent_product_prices` ADD CONSTRAINT `agent_product_prices_subAgentUserId_fkey` FOREIGN KEY (`subAgentUserId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -1407,3 +1452,9 @@ ALTER TABLE `saas_invoices` ADD CONSTRAINT `saas_invoices_tenantId_fkey` FOREIGN
 
 -- AddForeignKey
 ALTER TABLE `saas_invoices` ADD CONSTRAINT `saas_invoices_subscriptionId_fkey` FOREIGN KEY (`subscriptionId`) REFERENCES `saas_subscriptions`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `operational_approvals` ADD CONSTRAINT `operational_approvals_requestedByUserId_fkey` FOREIGN KEY (`requestedByUserId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `operational_approvals` ADD CONSTRAINT `operational_approvals_decidedByUserId_fkey` FOREIGN KEY (`decidedByUserId`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
