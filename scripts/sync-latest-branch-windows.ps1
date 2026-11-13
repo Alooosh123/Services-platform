@@ -84,15 +84,43 @@ function Get-LockPackageVersion {
         [Parameter(Mandatory = $true)][string]$LockPath,
         [Parameter(Mandatory = $true)][string]$PackagePath
     )
+
     $node = Get-Command node.exe -ErrorAction SilentlyContinue
     if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }
     if (-not $node) { throw 'Node.js is required to validate package-lock.json. No project source files were changed.' }
-    $parser = 'const fs=require("fs"); const lock=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const item=lock.packages && lock.packages[process.argv[2]]; if(!item || !item.version){process.exit(2)}; process.stdout.write(String(item.version));'
-    $version = & $node.Source -e $parser $LockPath $PackagePath
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($version -join ''))) {
-        throw "Could not read locked version for $PackagePath from $LockPath. No project source files were changed."
+
+    # Run a temporary CommonJS file instead of node -e. PowerShell can strip
+    # quotes from native -e arguments on Windows PowerShell 5.x.
+    $parserPath = Join-Path ([System.IO.Path]::GetTempPath()) ('read-lock-version-' + [guid]::NewGuid().ToString('N') + '.cjs')
+    $parserSource = @'
+const fs = require("node:fs");
+const lockPath = process.argv[2];
+const packagePath = process.argv[3];
+const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+const item = lock.packages && lock.packages[packagePath];
+if (!item || !item.version) {
+  console.error("Package version not found: " + packagePath);
+  process.exit(2);
+}
+process.stdout.write(String(item.version));
+'@
+
+    try {
+        [System.IO.File]::WriteAllText(
+            $parserPath,
+            $parserSource,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        $version = & $node.Source $parserPath $LockPath $PackagePath
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($version -join ''))) {
+            throw "Could not read locked version for $PackagePath from $LockPath. No project source files were changed."
+        }
+        return ($version -join '').Trim()
     }
-    return ($version -join '').Trim()
+    finally {
+        Remove-Item -LiteralPath $parserPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $sourceLockPath = Join-Path $sourceRoot 'package-lock.json'
