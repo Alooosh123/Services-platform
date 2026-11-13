@@ -207,6 +207,7 @@ export class DepositsService {
           supportedCurrencies: c.supportedCurrencies as CurrencyCode[],
           minAmount: Number(c.minAmount),
           maxAmount: Number(c.maxAmount),
+          feePercentage: Number(c.feePercentage || 0),
           isActive: c.isActive,
           mode: c.mode as PaymentChannelMode,
           isVerifiedLegal: c.verificationStatus === ChannelVerificationStatus.VERIFIED,
@@ -1202,6 +1203,7 @@ export class DepositsService {
           accountNumber: 'NOT_CONFIGURED',
           accountHolderName: dto.accountHolderName,
           instructionsAr: 'القناة غير مفعلة. تنتظر التحقق من حساب الاستقبال والموافقة المالية المستقلة.',
+          pendingInstructionsAr: dto.instructionsAr,
           supportedCurrencies: dto.supportedCurrencies as unknown as Prisma.InputJsonValue,
           minAmount: new Prisma.Decimal(dto.minAmount),
           maxAmount: new Prisma.Decimal(dto.maxAmount),
@@ -1274,8 +1276,8 @@ export class DepositsService {
     dto: ApproveChannelChangeDto,
   ) {
     if (typeof dto.approved !== 'boolean') throw new BadRequestException('قرار الاعتماد المالي مطلوب.');
-    if (dto.approved && (!dto.financeNotes || dto.financeNotes.trim().length < 8)) {
-      throw new BadRequestException('ملاحظات التحقق المالي مطلوبة قبل الاعتماد.');
+    if (!dto.financeNotes || dto.financeNotes.trim().length < 8) {
+      throw new BadRequestException('ملاحظات أو سبب قرار المراجعة المالية مطلوب.');
     }
     return this.prisma.$transaction(async (tx) => {
       const current = await tx.paymentChannelConfig.findUnique({ where: { code: channelCode } });
@@ -1291,6 +1293,7 @@ export class DepositsService {
         where: { id: current.id },
         data: approved ? {
           accountNumber: current.pendingAccountNumber,
+          instructionsAr: current.pendingInstructionsAr || current.instructionsAr,
           feePercentage: current.pendingFeePercentage ?? current.feePercentage,
           verificationStatus: ChannelVerificationStatus.VERIFIED,
           verifiedByFinanceUserId: adminUserId,
@@ -1299,6 +1302,7 @@ export class DepositsService {
           isActive: true,
           mode: PaymentChannelMode.MANUAL,
           pendingAccountNumber: null,
+          pendingInstructionsAr: null,
           pendingFeePercentage: null,
           pendingProposedByUserId: null,
           pendingProposedAt: null,
