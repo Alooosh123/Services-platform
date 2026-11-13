@@ -223,7 +223,100 @@ export class PayoutsService {
       );
     }
 
-    // 4. Hold Wallet Balance atomically to prevent double-spending
+    // In production, the wallet hold and the payout request are one serializable transaction.
+    // A unique idempotency key is checked again under the transaction to close concurrent-submit races.
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const duplicate = await tx.payoutRequest.findUnique({
+            where: { idempotencyKey: dto.idempotencyKey },
+          });
+          if (duplicate) {
+            return {
+              success: true,
+              payout: {
+                id: duplicate.id,
+                payoutNumber: duplicate.payoutNumber,
+                userId: duplicate.userId,
+                walletId: duplicate.walletId,
+                currency: duplicate.currency as CurrencyCode,
+                amount: Number(duplicate.amount),
+                feeAmount: Number(duplicate.feeAmount),
+                channelCode: duplicate.channelCode as PaymentChannelCode,
+                destinationAccount: duplicate.destinationAccount,
+                beneficiaryName: duplicate.beneficiaryName,
+                idempotencyKey: duplicate.idempotencyKey,
+                status: duplicate.status as PayoutStatus,
+                approvedByUserId: duplicate.approvedByUserId,
+                approvalNotes: duplicate.approvalNotes,
+                externalReference: duplicate.externalReference,
+                failureReason: duplicate.failureReason,
+                ledgerTxId: duplicate.ledgerTxId,
+                executedByUserId: duplicate.executedByUserId,
+                executedAt: duplicate.executedAt,
+                executionNotes: duplicate.executionNotes,
+                createdAt: duplicate.createdAt,
+                updatedAt: duplicate.updatedAt,
+              },
+            };
+          }
+
+          await this.ledgerService.holdWalletBalance(wallet.id, dto.amount, tx);
+          const now = new Date();
+          const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+          const payoutNumber = `PO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+          const created = await tx.payoutRequest.create({
+            data: {
+              payoutNumber,
+              userId,
+              walletId: wallet.id,
+              currency: dto.currency,
+              amount: new Prisma.Decimal(dto.amount),
+              feeAmount: new Prisma.Decimal(0),
+              channelCode: dto.channelCode,
+              destinationAccount: dto.destinationAccount,
+              beneficiaryName: dto.beneficiaryName,
+              idempotencyKey: dto.idempotencyKey,
+              status: PayoutStatus.REQUESTED,
+            },
+          });
+          return {
+            success: true,
+            payout: {
+              id: created.id,
+              payoutNumber: created.payoutNumber,
+              userId: created.userId,
+              walletId: created.walletId,
+              currency: created.currency as CurrencyCode,
+              amount: Number(created.amount),
+              feeAmount: Number(created.feeAmount),
+              channelCode: created.channelCode as PaymentChannelCode,
+              destinationAccount: created.destinationAccount,
+              beneficiaryName: created.beneficiaryName,
+              idempotencyKey: created.idempotencyKey,
+              status: created.status as PayoutStatus,
+              createdAt: created.createdAt,
+              updatedAt: created.updatedAt,
+            },
+          };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      } catch (error) {
+        // If the client lost the response after the DB commit, query the unique key before
+        // reporting failure. A retry must never create a second hold or payout.
+        try {
+          const committed = await this.findByIdempotencyKey(dto.idempotencyKey);
+          if (committed) return { success: true, payout: committed };
+        } catch {
+          // Database still unavailable: fail closed and require finance reconciliation.
+        }
+        if (error instanceof BadRequestException) throw error;
+        throw new ServiceUnavailableException(
+          'تعذر تأكيد إنشاء طلب السحب وحجز الرصيد ذرياً في MySQL. افحص idempotencyKey قبل إعادة المحاولة.',
+        );
+      }
+    }
+
+    // Test/development compatibility path; production never uses the in-memory fallback below.
     try {
       await this.ledgerService.holdWalletBalance(wallet.id, dto.amount);
     } catch (holdErr: any) {
