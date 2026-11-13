@@ -234,6 +234,70 @@ describe('LedgerService (Strict Double-Entry)', () => {
       'does not have enough locked funds',
     );
   });
+  it('preserves DECIMAL(18,4) precision beyond JavaScript safe integers', async () => {
+    const preciseAmount = '90071992547409.9999';
+    mockPrismaService.ledgerTransaction.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'tx-precise', txNumber: 'LTX-PRECISE', entries: [] });
+    mockPrismaService.ledgerAccount.findUnique.mockImplementation(({ where }) => {
+      if (where.code === '1001-CASH-JAIB') return Promise.resolve(mockAccountCash);
+      if (where.code === '2001-CUSTOMER-WALLETS-YER') return Promise.resolve(mockAccountCustomer);
+      return Promise.resolve(null);
+    });
+    mockPrismaService.ledgerTransaction.create.mockResolvedValue({ id: 'tx-precise' });
+    mockPrismaService.ledgerEntry.create.mockResolvedValue({ id: 'entry-precise' });
+
+    await service.recordDoubleEntryTransaction({
+      txNumber: 'LTX-PRECISE',
+      type: LedgerTransactionType.TOPUP,
+      referenceType: 'TEST',
+      referenceId: 'PRECISION-TEST',
+      entries: [
+        {
+          accountCode: '1001-CASH-JAIB',
+          debitAmount: preciseAmount,
+          creditAmount: '0',
+          currency: CurrencyCode.YER,
+        },
+        {
+          accountCode: '2001-CUSTOMER-WALLETS-YER',
+          debitAmount: '0',
+          creditAmount: preciseAmount,
+          currency: CurrencyCode.YER,
+        },
+      ],
+    });
+
+    const posted = mockPrismaService.ledgerEntry.create.mock.calls.map(([call]) => call.data);
+    expect(posted[0].debitAmount.toString()).toBe(preciseAmount);
+    expect(posted[1].creditAmount.toString()).toBe(preciseAmount);
+  });
+
+  it('rejects ledger values with more than four decimal places', async () => {
+    await expect(
+      service.recordDoubleEntryTransaction({
+        txNumber: 'LTX-EXCESS-SCALE',
+        type: LedgerTransactionType.TOPUP,
+        referenceType: 'TEST',
+        referenceId: 'SCALE-TEST',
+        entries: [
+          {
+            accountCode: '1001-CASH-JAIB',
+            debitAmount: '0.00001',
+            creditAmount: '0',
+            currency: CurrencyCode.YER,
+          },
+          {
+            accountCode: '2001-CUSTOMER-WALLETS-YER',
+            debitAmount: '0',
+            creditAmount: '0.00001',
+            currency: CurrencyCode.YER,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/DECIMAL\\(18,4\\)/);
+  });
+
   it('routes top-up clearing accounts by currency before channel', () => {
     expect(service.getChannelAccountCode(PaymentChannelCode.JAIB, CurrencyCode.YER))
       .toBe('1001-CASH-JAIB');
