@@ -16,6 +16,7 @@ import {
   CurrencyCode,
   PaymentChannelCode,
   PayoutStatus,
+  UserRole,
 } from '@digital-topup/shared';
 
 describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () => {
@@ -82,6 +83,47 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
       accountNumber: '770123456',
       isActive: true,
       isVerifiedLegal: true,
+    });
+  });
+
+  describe('Payout ownership isolation', () => {
+    it('prevents a customer from reading another customer payout by ID', async () => {
+      const created = await payoutsService.createPayoutRequest('customer-a', {
+        currency: CurrencyCode.YER,
+        amount: 5000,
+        channelCode: PaymentChannelCode.JAIB,
+        destinationAccount: '770123456',
+        beneficiaryName: 'Test beneficiary',
+        idempotencyKey: 'IDEMP-PAYOUT-BOLA-001',
+      });
+      await expect(payoutsService.getPayoutByIdForUser(
+        created.payout.id,
+        'customer-b',
+        UserRole.CUSTOMER,
+      )).rejects.toThrow('طلب السحب غير موجود');
+    });
+
+    it('allows the owner to read their own payout and finance staff to review other payout requests', async () => {
+      const created = await payoutsService.createPayoutRequest('customer-a', {
+        currency: CurrencyCode.YER,
+        amount: 5000,
+        channelCode: PaymentChannelCode.JAIB,
+        destinationAccount: '770123123',
+        beneficiaryName: 'Test beneficiary',
+        idempotencyKey: 'IDEMP-PAYOUT-BOLA-002',
+      });
+      const ownerRead = await payoutsService.getPayoutByIdForUser(
+        created.payout.id,
+        'customer-a',
+        UserRole.CUSTOMER,
+      );
+      const financeRead = await payoutsService.getPayoutByIdForUser(
+        created.payout.id,
+        'finance-a',
+        UserRole.FINANCE_MANAGER,
+      );
+      expect(ownerRead.id).toBe(created.payout.id);
+      expect(financeRead.id).toBe(created.payout.id);
     });
   });
 
