@@ -1,46 +1,51 @@
-version: '3.8'
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: topup_postgres
-    restart: always
+  mysql:
+    image: mysql:8.4
+    container_name: topup_mysql
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
-      POSTGRES_DB: ${POSTGRES_DB:-digital_topup_db}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in .env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-digital_topup_db}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d digital_topup_db"]
-      interval: 5s
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
 
   redis:
     image: redis:7-alpine
     container_name: topup_redis
-    restart: always
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
   db-admin:
-    image: adminer:latest
+    image: adminer:4.8.1
     container_name: topup_adminer
-    restart: always
+    profiles: [tools]
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
 
   backend:
@@ -48,18 +53,18 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.backend
     container_name: topup_backend
-    restart: always
+    restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 4000
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-digital_topup_db}?schema=public"
-      REDIS_URL: "redis://redis:6379"
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in the root .env file}
+      DATABASE_URL: "mysql://${MYSQL_USER:?Set MYSQL_USER}:${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-digital_topup_db}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env}
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -71,11 +76,11 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api}
     container_name: topup_web_admin
-    restart: always
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: "http://localhost:4000/api"
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     depends_on:
       - backend
 
@@ -86,14 +91,14 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api}
     container_name: topup_web_customer
-    restart: always
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: "http://localhost:4000/api"
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - backend
 
 volumes:
-  postgres_data:
+  mysql_data:
   redis_data:
