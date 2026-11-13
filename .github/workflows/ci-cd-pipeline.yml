@@ -30,21 +30,10 @@ jobs:
           cache: 'npm'
 
       - name: Resolve patched lockfile without forcing major framework upgrades
-        run: npm install --package-lock-only --ignore-scripts
+        run: rm -f package-lock.json && npm install --package-lock-only --ignore-scripts
 
       - name: Install Monorepo Dependencies
         run: npm ci
-
-      - name: Persist reviewed lockfile updates on release branches
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(security): refresh patched npm dependency lockfile"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
 
       - name: Generate Prisma Client
         run: npm run db:generate
@@ -54,21 +43,31 @@ jobs:
           mkdir -p packages/database/prisma/migrations/20261113120000_initial_mysql
           npx prisma migrate diff --from-empty --to-schema-datamodel packages/database/prisma/schema.prisma --script --output=packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
 
-      - name: Persist reviewed lockfile and MySQL baseline on release branch
+      - name: Persist generated lockfile and MySQL baseline only if this run is still at branch tip
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(db): commit generated MySQL baseline and patched lockfile"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+          if git diff --cached --quiet; then
+            echo "No generated artifact changes."
+            exit 0
           fi
+          REMOTE_HEAD="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | awk '{print $1}')"
+          if [ "$REMOTE_HEAD" != "$GITHUB_SHA" ]; then
+            echo "A newer branch commit exists; this run will not race it. The newest run will persist the generated artifacts."
+            exit 0
+          fi
+          git commit -m "chore(db): commit refreshed dependency lockfile and MySQL baseline"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Monorepo Type Check
         run: npm run build --workspace=packages/shared && npm run build --workspace=packages/database
 
-      - name: Security Vulnerability Audit (high and critical findings fail the build)
+      - name: Production dependency audit (high and critical findings fail the build)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Full dependency audit (high and critical findings fail the build)
         run: npm audit --audit-level=high
 
       - name: Review dependency changes on pull requests
