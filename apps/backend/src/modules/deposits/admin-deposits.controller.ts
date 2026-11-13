@@ -10,13 +10,25 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  DepositStatus,
+  UserRole,
+  PaymentChannelCode,
+  PaymentChannelMode,
+} from '@digital-topup/shared';
 import { DepositsService } from './deposits.service';
 import { ReviewDepositDto, RejectDepositDto } from './dto/review-deposit.dto';
+import {
+  ApprovePaymentChannelChangeDto,
+  CreatePaymentChannelDto,
+  KillPaymentChannelDto,
+  ProposePaymentChannelAccountDto,
+  SwitchPaymentChannelModeDto,
+} from './dto/payment-channel-admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { DepositStatus, UserRole, PaymentChannelCode, PaymentChannelMode } from '@digital-topup/shared';
 
 @ApiTags('Deposits (Admin Financial Operations)')
 @Controller('admin/deposits')
@@ -63,9 +75,8 @@ export class AdminDepositsController {
 
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Admin/Finance: Approve and credit deposit via strict double-entry ledger',
-  })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.FINANCE)
+  @ApiOperation({ summary: 'Approve and credit a manually verified deposit with independent approval and double-entry ledger' })
   async approveAndCredit(
     @CurrentUser('id') staffId: string,
     @Param('id') id: string,
@@ -87,62 +98,75 @@ export class AdminDepositsController {
 
   @Post('channels/:channel/switch-mode')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin/Finance: Switch channel mode safely (MANUAL, API, BLOCKED_EXTERNAL, DISABLED)' })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Persist a safe payment channel mode; API mode is blocked until a real provider adapter is certified' })
   async switchChannelMode(
+    @CurrentUser('id') staffId: string,
     @Param('channel') channel: string,
-    @Body('mode') mode: PaymentChannelMode,
+    @Body() dto: SwitchPaymentChannelModeDto,
   ) {
-    return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, mode);
+    return this.depositsService.switchChannelMode(channel.toUpperCase() as PaymentChannelCode, dto.mode, staffId);
   }
 
   @Post('channels/:channel/failover')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin/Finance: Trigger emergency safe failover of payment channel to MANUAL' })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Persist safe failover to MANUAL mode with audit reason' })
   async failoverChannel(
+    @CurrentUser('id') staffId: string,
     @Param('channel') channel: string,
-    @Body('reason') reason?: string,
+    @Body() dto: KillPaymentChannelDto,
   ) {
-    return this.depositsService.failoverChannel(channel.toUpperCase() as PaymentChannelCode, reason);
+    return this.depositsService.failoverChannel(channel.toUpperCase() as PaymentChannelCode, dto.reason, staffId);
   }
 
   @Get('channels/legal-verification')
-  @ApiOperation({ summary: 'Admin/Audit: Verify legal status of payment channels accounts (BR-06)' })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.AUDITOR)
+  @ApiOperation({ summary: 'Verify durable legal/finance status of configured payment channels' })
   async verifyLegalAccounts() {
     return this.depositsService.verifyLegalAccounts();
   }
 
   @Get('channels/all')
-  @ApiOperation({ summary: 'Admin: Get all channels including pending and unverified' })
+  @ApiOperation({ summary: 'List all durable channels including disabled and pending channels' })
   async getAllChannels() {
     return this.depositsService.getAllChannelsForAdmin();
   }
 
   @Post('channels')
-  @ApiOperation({ summary: 'Admin: Create a new dynamic payment channel' })
-  async createChannel(@Body() dto: any) {
-    return this.depositsService.createDynamicChannel(dto);
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Create a disabled draft payment channel; financial review is required before customer exposure' })
+  async createChannel(
+    @CurrentUser('id') staffId: string,
+    @Body() dto: CreatePaymentChannelDto,
+  ) {
+    return this.depositsService.createDynamicChannel(dto, staffId);
   }
 
   @Post('channels/:channel/propose-account')
-  @ApiOperation({ summary: 'Admin: Propose new receiver account (requires finance approval)' })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Propose receiver account/fee change; channel is hidden pending independent review' })
   async proposeAccount(
+    @CurrentUser('id') staffId: string,
     @Param('channel') channel: string,
-    @Body('accountNumber') accountNumber: string,
-    @Body('feePercentage') feePercentage?: number,
+    @Body() dto: ProposePaymentChannelAccountDto,
   ) {
     return this.depositsService.proposeChannelAccountChange(
       channel.toUpperCase() as PaymentChannelCode,
-      accountNumber,
-      feePercentage,
+      dto.accountNumber,
+      dto.feePercentage,
+      staffId,
+      dto.reason,
     );
   }
 
   @Post('channels/:channel/finance-approval')
-  @ApiOperation({ summary: 'Finance Manager: Dual control approval for channel account change (AT-15)' })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER)
+  @ApiOperation({ summary: 'Independent four-eyes review; approved channels remain MANUAL and are never API-enabled' })
   async approveChannelFinance(
     @CurrentUser('id') adminUserId: string,
     @Param('channel') channel: string,
-    @Body() dto: any,
+    @Body() dto: ApprovePaymentChannelChangeDto,
   ) {
     return this.depositsService.approveChannelFinanceReview(
       adminUserId,
@@ -152,16 +176,17 @@ export class AdminDepositsController {
   }
 
   @Post('channels/:channel/kill-switch')
-  @ApiOperation({ summary: 'Admin: Emergency Kill Switch for payment channel (AT-24)' })
+  @Roles(UserRole.OWNER, UserRole.GENERAL_MANAGER, UserRole.FINANCE_MANAGER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Durable emergency kill switch with immutable audit event' })
   async killSwitchChannel(
     @CurrentUser('id') adminUserId: string,
     @Param('channel') channel: string,
-    @Body('reason') reason: string,
+    @Body() dto: KillPaymentChannelDto,
   ) {
     return this.depositsService.triggerChannelKillSwitch(
       adminUserId,
       channel.toUpperCase() as PaymentChannelCode,
-      reason,
+      dto.reason,
     );
   }
 }
