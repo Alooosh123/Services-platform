@@ -504,7 +504,7 @@ export class WalletService {
         userId: topup.userId,
         walletId: topup.walletId,
         currency: topup.currency as CurrencyCode,
-        amount: Number(topup.amount),
+        amount: topup.amount.toString(),
         paymentChannel: topup.paymentMethod.code as PaymentChannelCode,
         referenceId: topup.id,
         performedByUserId: staffUserId,
