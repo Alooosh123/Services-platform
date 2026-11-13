@@ -21,10 +21,26 @@ export class OperationalApprovalsService {
       if (dto.targetType !== 'RECONCILIATION_ITEM' || !dto.targetId || !['CONFIRM_MATCH', 'REJECT_EXTERNAL', 'REQUEST_ADJUSTMENT'].includes(dto.action)) {
         throw new BadRequestException('Unsupported financial reconciliation approval request.');
       }
-      const item = await this.prisma.reconciliationItem.findUnique({ where: { id: dto.targetId } });
-      if (!item) throw new NotFoundException('Reconciliation item was not found.');
-      if (!['DISCREPANCY', 'UNKNOWN_EXTERNAL', 'UNKNOWN_INTERNAL', 'PENDING_REVIEW'].includes(String(item.status))) {
-        throw new ConflictException('Only unresolved reconciliation items can be submitted for approval.');
+      if (dto.targetType === 'RECONCILIATION_ITEM') {
+        if (!dto.targetId || !['CONFIRM_MATCH', 'REJECT_EXTERNAL', 'REQUEST_ADJUSTMENT'].includes(dto.action)) {
+          throw new BadRequestException('Unsupported reconciliation approval action.');
+        }
+        const item = await this.prisma.reconciliationItem.findUnique({ where: { id: dto.targetId } });
+        if (!item) throw new NotFoundException('Reconciliation item was not found.');
+        if (!['DISCREPANCY', 'UNKNOWN_EXTERNAL', 'UNKNOWN_INTERNAL', 'PENDING_REVIEW'].includes(String(item.status))) {
+          throw new ConflictException('Only unresolved reconciliation items can be submitted for approval.');
+        }
+      } else if (dto.targetType === 'DEPOSIT_REQUEST') {
+        if (!dto.targetId || dto.action !== 'CREDIT_VERIFIED_DEPOSIT') {
+          throw new BadRequestException('A deposit credit approval must target one deposit and use CREDIT_VERIFIED_DEPOSIT.');
+        }
+        const deposit = await this.prisma.depositRequest.findUnique({ where: { id: dto.targetId } });
+        if (!deposit) throw new NotFoundException('Deposit request was not found.');
+        if (!['PENDING', 'UNDER_REVIEW'].includes(String(deposit.status))) {
+          throw new ConflictException('Only a pending or under-review deposit can be submitted for credit approval.');
+        }
+      } else {
+        throw new BadRequestException('Unsupported financial approval target.');
       }
     }
 
@@ -37,7 +53,7 @@ export class OperationalApprovalsService {
   }
 
   async list(status?: string) {
-    const allowed = ['PENDING', 'APPROVED_PENDING_EXECUTION', 'REJECTED'];
+    const allowed = ['PENDING', 'APPROVED_PENDING_EXECUTION', 'REJECTED', 'EXECUTED'];
     if (status && !allowed.includes(status)) throw new BadRequestException('Unsupported approval status filter.');
     return this.prisma.operationalApproval.findMany({
       where: status ? { status } : undefined,

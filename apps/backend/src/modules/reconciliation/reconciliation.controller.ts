@@ -2,7 +2,6 @@ import {
   Controller,
   Get,
   Post,
-  Body,
   Param,
   UseGuards,
   HttpCode,
@@ -46,15 +45,4 @@ export class ReconciliationController {
     return this.reconciliationService.runDailyReconciliation(staffId, dto);
   }
 
-  @Post('resolve-discrepancy/:itemId')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin/Finance: Manually resolve reconciliation discrepancy or dispute' })
-  async resolveDiscrepancy(
-    @CurrentUser('id') staffId: string,
-    @Param('itemId') itemId: string,
-    @Body('notes') notes: string,
-    @Body('action') action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
-  ) {
-    return this.reconciliationService.resolveDiscrepancy(staffId, itemId, notes, action || 'ADJUST_LEDGER');
-  }
 }

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConflictException } from '@nestjs/common';
 import { ReconciliationService } from './reconciliation.service';
 import { DepositsService } from '../deposits/deposits.service';
 import { PayoutsService } from '../payouts/payouts.service';
@@ -141,28 +142,26 @@ describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', (
       expect(unknownItem?.status).toBe(ReconciliationStatus.UNKNOWN_EXTERNAL);
     });
 
-    it('allows finance manager to manually resolve an exception item and update batch status', async () => {
-      // Get the default seeded batch
+    it('blocks direct one-person discrepancy resolution pending an independent approval', async () => {
       const batches = await reconciliationService.listBatches();
       expect(batches.length).toBeGreaterThan(0);
-
       const seedBatch = batches[0];
       const discrepancyItem = seedBatch.items.find((i) => i.status === ReconciliationStatus.DISCREPANCY);
       expect(discrepancyItem).toBeDefined();
 
-      const resolveRes = await reconciliationService.resolveDiscrepancy(
-        'user-finance-002',
-        discrepancyItem!.id,
-        'تم التواصل مع البنك وتأكيد قيد فارق العمولة 500 ريال',
-        'ADJUST_LEDGER',
-      );
+      await expect(
+        reconciliationService.resolveDiscrepancy(
+          'user-finance-002',
+          discrepancyItem!.id,
+          'تم التواصل مع البنك والتحقق من الكشف',
+          'ADJUST_LEDGER',
+        ),
+      ).rejects.toThrow(ConflictException);
 
-      expect(resolveRes.success).toBe(true);
-
-      const updatedBatch = await reconciliationService.getBatchById(seedBatch.id);
-      const updatedItem = updatedBatch.items.find((i) => i.id === discrepancyItem!.id);
-      expect(updatedItem?.status).toBe(ReconciliationStatus.RESOLVED_MANUAL);
-      expect(updatedBatch.status).toBe('RESOLVED');
+      const unchangedBatch = await reconciliationService.getBatchById(seedBatch.id);
+      const unchangedItem = unchangedBatch.items.find((i) => i.id === discrepancyItem!.id);
+      expect(unchangedItem?.status).toBe(ReconciliationStatus.DISCREPANCY);
+      expect(unchangedBatch.status).toBe('PENDING_REVIEW');
     });
   });
 });

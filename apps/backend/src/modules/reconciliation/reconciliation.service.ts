@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
@@ -63,7 +64,7 @@ export class ReconciliationService {
     private depositsService: DepositsService,
     private payoutsService: PayoutsService,
   ) {
-    this.seedDefaultBatch();
+    if (process.env.NODE_ENV === 'test') this.seedDefaultBatch();
   }
 
   private seedDefaultBatch() {
@@ -153,31 +154,34 @@ export class ReconciliationService {
     const items: InMemoryReconciliationItem[] = [];
     let matchedCount = 0;
     let discrepancyCount = 0;
-    let totalAmountMatched = 0;
-    let totalAmountDiscrepant = 0;
+    let totalAmountMatched = new Prisma.Decimal(0);
+    let totalAmountDiscrepant = new Prisma.Decimal(0);
 
     for (const stmt of dto.externalStatements) {
       const ref = stmt.referenceNumber.trim();
-      const actualAmount = Number(stmt.amount);
+      const actualAmount = new Prisma.Decimal(String(stmt.amount));
+      if (!actualAmount.isFinite() || actualAmount.lte(0)) {
+        throw new BadRequestException('قيمة المبلغ في كشف الحساب يجب أن تكون رقماً عشرياً موجباً وصالحاً.');
+      }
       const currency = stmt.currency;
       const itemId = `rec-item-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
       // 1. Check Internal Deposits
       const deposit = await this.depositsService.findDepositByReference(ref);
       if (deposit) {
-        const expectedAmount = Number(deposit.amount);
+        const expectedAmount = new Prisma.Decimal(deposit.amount.toString());
         const expectedCurrency = deposit.currency;
 
-        if (Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === expectedCurrency) {
+        if (actualAmount.minus(expectedAmount).abs().lessThan(new Prisma.Decimal('0.0001')) && currency === expectedCurrency) {
           // PERFECT MATCH
           matchedCount++;
-          totalAmountMatched += actualAmount;
+          totalAmountMatched = totalAmountMatched.plus(actualAmount);
           items.push({
             id: itemId,
             batchId,
             referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
+            expectedAmount: expectedAmount.toNumber(),
+            actualAmount: actualAmount.toNumber(),
             currency,
             status: ReconciliationStatus.MATCHED,
             internalTxId: deposit.depositNumber,
@@ -187,7 +191,7 @@ export class ReconciliationService {
         } else {
           // DISCREPANCY: Amount or Currency mismatch
           discrepancyCount++;
-          totalAmountDiscrepant += actualAmount;
+          totalAmountDiscrepant = totalAmountDiscrepant.plus(actualAmount);
           const discType =
             currency !== expectedCurrency
               ? DiscrepancyType.CURRENCY_MISMATCH
@@ -197,8 +201,8 @@ export class ReconciliationService {
             id: itemId,
             batchId,
             referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
+            expectedAmount: expectedAmount.toNumber(),
+            actualAmount: actualAmount.toNumber(),
             currency,
             status: ReconciliationStatus.DISCREPANCY,
             discrepancyType: discType,
@@ -213,16 +217,16 @@ export class ReconciliationService {
       // 2. Check Internal Payouts
       const payout = await this.payoutsService.findByIdempotencyKey(ref);
       if (payout) {
-        const expectedAmount = Number(payout.amount);
-        if (Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === payout.currency) {
+        const expectedAmount = new Prisma.Decimal(payout.amount.toString());
+        if (actualAmount.minus(expectedAmount).abs().lessThan(new Prisma.Decimal('0.0001')) && currency === payout.currency) {
           matchedCount++;
-          totalAmountMatched += actualAmount;
+          totalAmountMatched = totalAmountMatched.plus(actualAmount);
           items.push({
             id: itemId,
             batchId,
             referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
+            expectedAmount: expectedAmount.toNumber(),
+            actualAmount: actualAmount.toNumber(),
             currency,
             status: ReconciliationStatus.MATCHED,
             internalTxId: payout.payoutNumber,
@@ -231,13 +235,13 @@ export class ReconciliationService {
           });
         } else {
           discrepancyCount++;
-          totalAmountDiscrepant += actualAmount;
+          totalAmountDiscrepant = totalAmountDiscrepant.plus(actualAmount);
           items.push({
             id: itemId,
             batchId,
             referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
+            expectedAmount: expectedAmount.toNumber(),
+            actualAmount: actualAmount.toNumber(),
             currency,
             status: ReconciliationStatus.DISCREPANCY,
             discrepancyType: DiscrepancyType.AMOUNT_MISMATCH,
@@ -251,13 +255,13 @@ export class ReconciliationService {
 
       // 3. Not Found Internally -> UNKNOWN EXTERNAL (Missing in platform)
       discrepancyCount++;
-      totalAmountDiscrepant += actualAmount;
+      totalAmountDiscrepant = totalAmountDiscrepant.plus(actualAmount);
       items.push({
         id: itemId,
         batchId,
         referenceNumber: ref,
         expectedAmount: 0,
-        actualAmount,
+        actualAmount: actualAmount.toNumber(),
         currency,
         status: ReconciliationStatus.UNKNOWN_EXTERNAL,
         discrepancyType: DiscrepancyType.MISSING_IN_INTERNAL,
@@ -278,8 +282,8 @@ export class ReconciliationService {
           totalRecords: dto.externalStatements.length,
           matchedCount,
           discrepancyCount,
-          totalAmountMatched: new Prisma.Decimal(totalAmountMatched),
-          totalAmountDiscrepant: new Prisma.Decimal(totalAmountDiscrepant),
+          totalAmountMatched,
+          totalAmountDiscrepant,
           status: batchStatus,
           reconciledByUserId: staffUserId,
           notes: `مطابقة يومية بتاريخ ${dto.statementDate}`,
@@ -310,8 +314,8 @@ export class ReconciliationService {
       totalRecords: dto.externalStatements.length,
       matchedCount,
       discrepancyCount,
-      totalAmountMatched,
-      totalAmountDiscrepant,
+      totalAmountMatched: totalAmountMatched.toNumber(),
+      totalAmountDiscrepant: totalAmountDiscrepant.toNumber(),
       status: batchStatus,
       reconciledByUserId: staffUserId,
       notes: `مطابقة يومية بتاريخ ${dto.statementDate}`,
@@ -323,7 +327,7 @@ export class ReconciliationService {
     this.memoryBatches.set(batchId, memBatch);
 
     this.logger.log(
-      `[ReconciliationBatchCompleted] Batch ${batchNumber}: ${matchedCount} matched (${totalAmountMatched}), ${discrepancyCount} discrepancies (${totalAmountDiscrepant}). Status: ${batchStatus}`,
+      `[ReconciliationBatchCompleted] Batch ${batchNumber}: ${matchedCount} matched (${totalAmountMatched.toString()}), ${discrepancyCount} discrepancies (${totalAmountDiscrepant.toString()}). Status: ${batchStatus}`,
     );
 
     return {
@@ -333,8 +337,8 @@ export class ReconciliationService {
       totalRecords: dto.externalStatements.length,
       matchedCount,
       discrepancyCount,
-      totalAmountMatched,
-      totalAmountDiscrepant,
+      totalAmountMatched: totalAmountMatched.toNumber(),
+      totalAmountDiscrepant: totalAmountDiscrepant.toNumber(),
       discrepancies: items
         .filter((i) => i.status !== ReconciliationStatus.MATCHED)
         .map((i) => ({
@@ -418,39 +422,13 @@ export class ReconciliationService {
    * Finance officer resolves an exception or dispute after reviewing bank statement proof.
    */
   async resolveDiscrepancy(
-    staffUserId: string,
-    itemId: string,
-    notes: string,
-    action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
+    _staffUserId: string,
+    _itemId: string,
+    _notes: string,
+    _action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
   ): Promise<{ success: boolean; message: string }> {
-    for (const batch of this.memoryBatches.values()) {
-      const item = batch.items.find((i) => i.id === itemId);
-      if (item) {
-        item.status = ReconciliationStatus.RESOLVED_MANUAL;
-        item.resolvedAt = new Date();
-        item.resolvedByUserId = staffUserId;
-        item.notes = `${item.notes || ''} | تمت المعالجة بواسطة ${staffUserId}: ${notes} (الإجراء: ${action})`;
-
-        // Check if all discrepancies in batch are resolved
-        const remainingDiscrepancies = batch.items.filter(
-          (i) =>
-            i.status === ReconciliationStatus.DISCREPANCY ||
-            i.status === ReconciliationStatus.UNKNOWN_EXTERNAL ||
-            i.status === ReconciliationStatus.UNKNOWN_INTERNAL,
-        );
-
-        if (remainingDiscrepancies.length === 0) {
-          batch.status = 'RESOLVED';
-          batch.updatedAt = new Date();
-        }
-
-        return {
-          success: true,
-          message: 'تمت معالجة الفارق المالي وتحديث سجل المطابقة بنجاح.',
-        };
-      }
-    }
-
-    throw new NotFoundException(`عنصر المطابقة ${itemId} غير موجود`);
+    throw new ConflictException(
+      'المعالجة المباشرة لفروق المطابقة معطلة. أنشئ طلب موافقة مستقلة عبر /api/operational-approvals أولاً.',
+    );
   }
 }
