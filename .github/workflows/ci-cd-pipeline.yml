@@ -150,6 +150,11 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "mysql://ci_user:ci-user-password@127.0.0.1:3306/digital_topup_migration_test"
+      RESTORE_DATABASE_URL: "mysql://root:ci-root-password@127.0.0.1:3306/digital_topup_restore_test"
+      MYSQL_ROOT_PASSWORD: ci-root-password
+      BACKUP_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      BACKUP_DIR: ./backups
+      NODE_ENV: test
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -160,8 +165,14 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Resolve lockfile using pinned security overrides
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install Dependencies
         run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
 
       - name: Prisma Schema Validation (MySQL)
         run: npx prisma validate --schema=packages/database/prisma/schema.prisma
@@ -176,11 +187,39 @@ jobs:
           npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
           npx prisma migrate status --schema=packages/database/prisma/schema.prisma
 
-      - name: Upload generated MySQL baseline for review
+      - name: Install MySQL client tools for backup/restore drill
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+      - name: Create isolated empty restore target
+        run: |
+          MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --execute "CREATE DATABASE digital_topup_restore_test"
+
+      - name: Execute encrypted MySQL backup
+        run: npm run db:backup
+
+      - name: Restore encrypted backup to the empty isolated MySQL target
+        run: |
+          BACKUP_FILE="$(find backups -maxdepth 1 -type f -name 'mysql_*.dump' -print -quit)"
+          test -n "$BACKUP_FILE"
+          npm run db:restore -- --file "$BACKUP_FILE" --confirm-restore
+
+      - name: Verify restored schema and double-entry totals
+        run: |
+          TABLE_COUNT="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()")"
+          test "$TABLE_COUNT" -gt 0
+          BALANCE_CHECK="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT IF(ABS(COALESCE(SUM(debitAmount),0)-COALESCE(SUM(creditAmount),0)) <= 0.0001, 'PASS', 'FAIL') FROM ledger_entries")"
+          test "$BALANCE_CHECK" = "PASS"
+
+      - name: Upload generated MySQL baseline and encrypted backup evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mysql-initial-migration
-          path: packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
+          name: mysql-migration-backup-restore-evidence
+          path: |
+            packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
+            backups/*.dump
+            backups/*.dump.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -200,6 +239,9 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+
+      - name: Resolve lockfile using pinned security overrides
+        run: npm install --package-lock-only --ignore-scripts
 
       - name: Install Dependencies
         run: npm ci
