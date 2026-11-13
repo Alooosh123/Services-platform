@@ -484,12 +484,16 @@ export class LedgerService {
   async recordSupplierFunding(params: {
     providerCode: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
     referenceNumber: string;
     channelCode?: PaymentChannelCode;
     performedByUserId?: string;
     notes?: string;
   }, existingTx?: Prisma.TransactionClient) {
+    const amount = this.toMoneyDecimal(params.amount, 'Supplier funding amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Supplier funding amount must be greater than zero.');
+    }
     const prepaidAccountCode = this.getSupplierPrepaidAccountCode(params.currency);
     const channelAccountCode = params.channelCode
       ? this.getChannelAccountCode(params.channelCode, params.currency)
@@ -508,15 +512,15 @@ export class LedgerService {
       entries: [
         {
           accountCode: prepaidAccountCode,
-          debitAmount: params.amount,
-          creditAmount: 0,
+          debitAmount: amount.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Debit supplier prepaid asset (${params.providerCode})`,
         },
         {
           accountCode: channelAccountCode,
-          debitAmount: 0,
-          creditAmount: params.amount,
+          debitAmount: '0',
+          creditAmount: amount.toString(),
           currency: params.currency,
           notes: `Credit cash/bank account for provider funding`,
         },
