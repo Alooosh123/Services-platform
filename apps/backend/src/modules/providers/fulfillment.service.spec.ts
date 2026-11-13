@@ -123,8 +123,8 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       expect(mockLedgerService.recordOrderSettlement).toHaveBeenCalledWith(
         expect.objectContaining({
           orderId: mockOrder.orderNumber,
-          retailPrice: 550,
-          costPrice: 495,
+          retailPrice: '550',
+          costPrice: '495',
         }),
         expect.anything(),
       );
@@ -151,7 +151,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           }),
         }),
       );
-      expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith('wallet-yer-1', 550, expect.anything());
+      expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith('wallet-yer-1', '550', expect.anything());
     });
 
     it('3. should move order to ManualReview and preserve balance hold on timeout', async () => {
@@ -192,7 +192,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           parentAgentId: 'reseller-1',
           orderId: commissionOrder.orderNumber,
           walletId: 'reseller-wallet-1',
-          amount: 5,
+          amount: '5',
         }),
       );
     });
@@ -250,7 +250,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       expect(mockLedgerService.recordOrderRefund).toHaveBeenCalledWith(
         expect.objectContaining({
           orderId: mockOrder.orderNumber,
-          amount: 550,
+          amount: '550',
           reason: 'استرجاع بناء على شكوى العميل',
         }),
       );
