@@ -86,6 +86,26 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
     ledgerService = module.get<LedgerService>(LedgerService);
   });
 
+  it('blocks every production webhook until a real provider adapter has been certified', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const result = await depositsService.handleInboundWebhook(PaymentChannelCode.JAIB, {
+        channelCode: PaymentChannelCode.JAIB,
+        transactionReference: 'PROD-UNCERTIFIED-001',
+        amount: 1000,
+        currency: CurrencyCode.YER,
+        beneficiaryAccount: '770123456',
+      });
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('REJECTED');
+      expect(mockLedgerService.recordTopup).not.toHaveBeenCalled();
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   describe('P05 Acceptance Criteria: Duplicate Webhook Idempotency', () => {
     it('مكرر webhook لا يضيف رصيدًا مرتين: Duplicate webhook notification does NOT credit wallet or ledger twice', async () => {
       // Create a customer deposit first
