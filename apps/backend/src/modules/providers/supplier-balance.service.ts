@@ -111,9 +111,14 @@ export class SupplierBalanceService {
         where: { providerId: provider.id, currency, tenantId: tenantId || null },
       });
       if (account) {
-        const balance = Number(account.balance);
-        const creditLimit = Number(account.creditLimit);
-        return { balance, creditLimit, available: balance + creditLimit, accountType: account.accountType as SupplierAccountType };
+        const balanceDecimal = new Prisma.Decimal(account.balance);
+        const creditLimitDecimal = new Prisma.Decimal(account.creditLimit);
+        return {
+          balance: balanceDecimal.toNumber(),
+          creditLimit: creditLimitDecimal.toNumber(),
+          available: balanceDecimal.plus(creditLimitDecimal).toNumber(),
+          accountType: account.accountType as SupplierAccountType,
+        };
       }
 
       throw new ServiceUnavailableException('لا يوجد حساب مورد تجاري دائم لهذه العملة؛ تم إيقاف التنفيذ.');
