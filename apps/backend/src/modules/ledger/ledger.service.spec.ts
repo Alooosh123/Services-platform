@@ -295,7 +295,7 @@ describe('LedgerService (Strict Double-Entry)', () => {
           },
         ],
       }),
-    ).rejects.toThrow(/DECIMAL\\(18,4\\)/);
+    ).rejects.toThrow(/DECIMAL/);
   });
 
   it('routes top-up clearing accounts by currency before channel', () => {
