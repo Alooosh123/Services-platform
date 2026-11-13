@@ -21,14 +21,16 @@
 
 ## ⚡ التشغيل السريع (Quickstart)
 
-### 1. عبر Docker Compose (أمر واحد لكامل المنظومة)
+### 1. عبر Podman Desktop + Podman Compose
 ```powershell
+.\scripts\setup-podman.ps1
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-docker compose -f docker/docker-compose.yml up -d --build
-docker compose -f docker/docker-compose.yml ps
+# Configure unique random secrets in .env before starting.
+.\scripts\start-platform-podman.ps1
+podman compose -f docker/docker-compose.yml ps
 ```
 
-يجب تثبيت Docker Desktop وتشغيله أولاً. ملف `.env.example` مخصص للتطوير المحلي فقط؛ لا تستخدم القيم الافتراضية أو أسرار المثال في الإنتاج.
+استخدم Podman Desktop على Windows مع Podman Machine وامتداد Compose. لا يتطلب المشروع Docker Desktop أو Docker Engine. ملف `.env.example` يحتوي عناصر نائبة فقط. يمكن تشغيل Adminer اختيارياً بالأمر: `podman compose -f docker/docker-compose.yml --profile tools up -d db-admin`.
 
 * **متجر العميل:** `http://localhost:3000`
 * **لوحة الإدارة:** `http://localhost:3001`
@@ -56,17 +58,13 @@ npm run dev:customer
 ```
 
 أمر `npm run db:seed` لا يمسح بيانات قاعدة موجودة. إعادة ضبط بيانات التطوير بشكل صريح تتطلب تعيين `RESET_DATABASE_SEED=true`، وهو أمر هدّام ولا يعمل في بيئة الإنتاج.
-يمكن تغيير حساب المدير الأول عبر `SEED_SUPER_ADMIN_EMAIL` و`SEED_SUPER_ADMIN_PASSWORD` في `.env`. ملف التهجير الأول يمثل مخطط قاعدة جديدة؛ إذا كانت قاعدة قائمة قد أُنشئت سابقاً باستخدام `db push`، فيجب تسجيل خط الأساس كمنفذ قبل استخدام `migrate deploy`، وعدم تطبيقه على قاعدة تحتوي الجداول نفسها مباشرة.
+يتطلب إنشاء مدير التهيئة ضبط `SEED_SUPER_ADMIN_EMAIL` وكلمة مرور فريدة لا تقل عن 20 حرفاً في `.env`. لا توجد بيانات دخول افتراضية أو حسابات مدير منشورة. ملف التهجير الأول يمثل مخطط قاعدة جديدة؛ إذا كانت قاعدة قائمة قد أُنشئت سابقاً باستخدام `db push`، فيجب تسجيل خط الأساس كمنفذ قبل استخدام `migrate deploy`، وعدم تطبيقه على قاعدة تحتوي الجداول نفسها مباشرة.
 
 ---
 
-## 🔐 حسابات التجربة المعدة مسبقاً (Default Seed Accounts)
+## 🔐 حسابات الدخول
 
-| الحساب | البريد الإلكتروني | كلمة المرور | الدور والصلاحيات |
-| :--- | :--- | :--- | :--- |
-| **Super Admin** | `admin@digitaltopup.com` | `Admin@123456` | التحكم الكامل بجميع وحدات المنظومة |
-| **Finance Officer** | `finance@digitaltopup.com` | `Finance@123456` | التدقيق المالي والتعديل الإداري المسبب |
-| **Test Customer** | `customer@gmail.com` | `Customer@123456` | عميل تجريبي مع محفظة ممولة بـ **$100.00** |
+لا يوفر المستودع كلمات مرور افتراضية أو حسابات تجربة عامة. تُنشأ هوية المدير محلياً بكلمة مرور خاصة، وتُعطّل هويات seed الاصطناعية غير القابلة للدخول.
 
 ---
 
