@@ -8,11 +8,11 @@
 ## 1. التشغيل المحلي السريع (Local Development & Demo Mode)
 
 ### المتطلبات الأساسية
-* Node.js (v20 أو v24)
-* Docker & Docker Compose (اختياري للتشغيل عبر الحاويات)
-* PostgreSQL 15+ و Redis 7+
+* Node.js 22 LTS
+* Podman Desktop + Podman Compose
+* MySQL 8.4 LTS و Redis 7+
 
-### التشغيل عبر Docker Compose (أمر واحد)
+### التشغيل عبر Podman Compose (أمر واحد)
 
 للتشغيل الفوري لكامل مكونات المنصة (قاعدة البيانات، الكاش، الـ Backend، لوحة الإدارة، ومتجر العميل):
 
@@ -21,7 +21,7 @@
 cp .env.example .env
 
 # 2. تشغيل الحاويات
-docker compose -f docker/docker-compose.yml up -d --build
+podman compose -f podman/compose.yml up -d --build
 ```
 
 بعد اكتمال التشغيل، ستكون الروابط متاحة كالتالي:
@@ -33,7 +33,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 
 ---
 
-## 2. التشغيل اليدوي (بدون Docker)
+## 2. التشغيل اليدوي (بدون Podman)
 
 ### الخطوة 1: تثبيت الاعتماديات وبناء الحزم المشتركة
 ```bash
@@ -44,13 +44,13 @@ npm install
 npm run build --workspace=packages/shared
 ```
 
-### الخطوة 2: تهيئة وتغذية قاعدة البيانات (Migrations & Seeders)
+### الخطوة 2: تهيئة وتغذية قاعدة MySQL 8.4 (Migrations & Seeders)
 ```bash
 # توليد عميل Prisma
 npm run db:generate
 
-# مزامنة الجداول مع PostgreSQL
-npm run db:push
+# تطبيق ترحيلات MySQL المعتمدة
+npm run db:migrate:deploy
 
 # إدخال البيانات التجريبية الأولية (Seed Data)
 npm run db:seed
@@ -88,7 +88,7 @@ npm run dev:customer
 # تحديث الحزم
 sudo apt update && sudo apt upgrade -y
 
-# تثبيت Docker و Docker Compose
+# تثبيت Podman و Podman Compose
 sudo apt install -y docker.io docker-compose-plugin
 sudo systemctl enable --now docker
 
