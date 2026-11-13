@@ -9,7 +9,9 @@
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "backup": "ts-node --project ../../scripts/tsconfig.json ../../scripts/backup-db.ts",
+    "backup:postgres": "ts-node --project ../../scripts/tsconfig.json ../../scripts/backup-postgres.ts",
     "restore": "ts-node --project ../../scripts/tsconfig.json ../../scripts/restore-db.ts",
+    "restore:postgres": "ts-node --project ../../scripts/tsconfig.json ../../scripts/restore-postgres.ts",
     "seed": "ts-node prisma/seed.ts",
     "build": "tsc"
   },
