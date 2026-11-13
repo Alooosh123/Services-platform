@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, PrismaClient, UserRole } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { UserRole as SharedUserRole } from '@digital-topup/shared';
 import {
