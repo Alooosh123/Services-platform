@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY package*.json ./
 COPY packages/ ./packages/
-COPY apps/web-admin/ ./apps/web-admin/
+COPY apps/ ./apps/
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
@@ -22,6 +22,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/web-admin/.next ./apps/web-admin/.next
 COPY --from=builder /app/apps/web-admin/public ./apps/web-admin/public
 COPY --from=builder /app/apps/web-admin/package.json ./apps/web-admin/package.json
+COPY --from=builder /app/apps/web-admin/node_modules ./apps/web-admin/node_modules
 
 EXPOSE 3000
 
