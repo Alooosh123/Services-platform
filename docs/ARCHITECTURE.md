@@ -1,6 +1,6 @@
 # المعمارية التقنية للمنصة (System Architecture)
 ## منصة الشحن والخدمات الرقمية — سوق اليمن (Digital TopUp Platform)
-**الإصدار:** 1.0 | **النمط:** Modular Monolith Architecture | **بيئة التشغيل:** Node.js / NestJS / PostgreSQL
+**الإصدار:** 1.0 | **النمط:** Modular Monolith Architecture | **بيئة التشغيل:** Node.js / NestJS / MySQL 8.4 LTS
 
 ---
 
@@ -12,7 +12,7 @@
 +-----------------------------------------------------------------------------------+
 |                                 CLIENT APPLICATIONS                               |
 |  +---------------------------+   +----------------------------+   +-------------+ |
-|  | Web Customer (Next.js 14) |   | Web Admin (Next.js 14 RTL) |   | Mobile (App)| |
+|  | Web Customer (Next.js 15.5) |   | Web Admin (Next.js 15.5 RTL) |   | Mobile (App)| |
 |  | Port 3000                 |   | Port 3001                  |   | (Flutter)   | |
 |  +-------------+-------------+   +-------------+--------------+   +------+------+ |
 +----------------|-------------------------------|-------------------------|--------+
@@ -42,7 +42,7 @@
 +-----------------------------------------------------------------------------------+
 |                           STORAGE & PERSISTENCE LAYER                             |
 |  +-----------------------------------------------------------------------------+  |
-|  |                          PostgreSQL Relational Database                     |  |
+|  |                          MySQL 8.4 LTS Relational Database                     |  |
 |  |  * Strict Double-Entry Ledger (Accounts, Transactions, Entries)             |  |
 |  |  * Multi-Currency Wallets (YER, USD, SAR)                                   |  |
 |  |  * Dynamic Catalog (Categories, Services, ServiceFields, Products, Prices)  |  |
