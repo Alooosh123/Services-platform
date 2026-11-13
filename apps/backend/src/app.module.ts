@@ -25,6 +25,8 @@ import { SaasModule } from './modules/saas/saas.module';
 import { SecurityCoreModule } from './security/security-core.module';
 import { UsersAndAgentsModule } from './modules/users-and-agents/users-and-agents.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { NetworkMonitoringModule } from './modules/network-monitoring/network-monitoring.module';
+import { OperationalApprovalsModule } from './modules/operational-approvals/operational-approvals.module';
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { PaymentsModule } from './modules/payments/payments.module';
     SecurityCoreModule,
     UsersAndAgentsModule,
     PaymentsModule,
+    NetworkMonitoringModule,
+    OperationalApprovalsModule,
     AuthModule,
     ProductsModule,
     OrdersModule,
