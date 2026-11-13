@@ -7,9 +7,11 @@ describe('MikroTikReadOnlyClient transport guardrails', () => {
     username: process.env.MIKROTIK_USERNAME,
     password: process.env.MIKROTIK_PASSWORD,
     nodeEnv: process.env.NODE_ENV,
+    enabled: process.env.MIKROTIK_MONITORING_ENABLED,
   };
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
+    process.env.MIKROTIK_MONITORING_ENABLED = 'false';
     process.env.MIKROTIK_USERNAME = 'monitor-api';
     process.env.MIKROTIK_PASSWORD = 'test-only-long-password';
   });
@@ -18,10 +20,17 @@ describe('MikroTikReadOnlyClient transport guardrails', () => {
     if (previous.username === undefined) delete process.env.MIKROTIK_USERNAME; else process.env.MIKROTIK_USERNAME = previous.username;
     if (previous.password === undefined) delete process.env.MIKROTIK_PASSWORD; else process.env.MIKROTIK_PASSWORD = previous.password;
     if (previous.nodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous.nodeEnv;
+    if (previous.enabled === undefined) delete process.env.MIKROTIK_MONITORING_ENABLED; else process.env.MIKROTIK_MONITORING_ENABLED = previous.enabled;
   });
   it('reports not configured without a base URL or credentials', () => {
     delete process.env.MIKROTIK_BASE_URL;
     expect(client.isConfigured()).toBe(false);
+  });
+  it('requires explicit opt-in in addition to endpoint and credentials', () => {
+    process.env.MIKROTIK_BASE_URL = 'https://192.168.88.1';
+    expect(client.isConfigured()).toBe(false);
+    process.env.MIKROTIK_MONITORING_ENABLED = 'true';
+    expect(client.isConfigured()).toBe(true);
   });
   it('rejects plaintext HTTP before making a network request', async () => {
     process.env.MIKROTIK_BASE_URL = 'http://192.168.88.1';
