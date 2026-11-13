@@ -26,6 +26,12 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
   let depositsService: DepositsService;
   let adapterRegistry: PaymentAdapterRegistry;
   let ledgerService: LedgerService;
+  const originalWebhookSecret = process.env.WEBHOOK_HMAC_SECRET;
+
+  afterAll(() => {
+    if (originalWebhookSecret === undefined) delete process.env.WEBHOOK_HMAC_SECRET;
+    else process.env.WEBHOOK_HMAC_SECRET = originalWebhookSecret;
+  });
 
   const mockPrisma = {
     paymentChannelConfig: { findMany: jest.fn().mockResolvedValue([]) },
@@ -63,6 +69,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    delete process.env.WEBHOOK_HMAC_SECRET;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -84,6 +91,14 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
     depositsService = module.get<DepositsService>(DepositsService);
     adapterRegistry = module.get<PaymentAdapterRegistry>(PaymentAdapterRegistry);
     ledgerService = module.get<LedgerService>(LedgerService);
+    const jaibAdapter = adapterRegistry.getAdapter(PaymentChannelCode.JAIB)!;
+    const originalInfo = jaibAdapter.getInfo();
+    jest.spyOn(jaibAdapter, 'getInfo').mockReturnValue({
+      ...originalInfo,
+      accountNumber: '770123456',
+      isActive: true,
+      isVerifiedLegal: true,
+    });
   });
 
   it('blocks every production webhook until a real provider adapter has been certified', async () => {
@@ -153,14 +168,8 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
   });
 
   describe('Timestamped webhook signature verification', () => {
-    const originalSecret = process.env.WEBHOOK_HMAC_SECRET;
-
-    afterAll(() => {
-      if (originalSecret === undefined) {
-        delete process.env.WEBHOOK_HMAC_SECRET;
-      } else {
-        process.env.WEBHOOK_HMAC_SECRET = originalSecret;
-      }
+    afterEach(() => {
+      delete process.env.WEBHOOK_HMAC_SECRET;
     });
 
     it('rejects missing signatures when webhook signing is configured', async () => {
