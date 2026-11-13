@@ -31,3 +31,19 @@ export class DecideOperationalApprovalDto {
   @MaxLength(1000)
   notes?: string;
 }
+
+export class CloseoutOperationalApprovalDto {
+  @IsString()
+  @MinLength(4)
+  @MaxLength(191)
+  executionReference!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+
+  @IsOptional()
+  @IsUUID()
+  ledgerTransactionId?: string;
+}
