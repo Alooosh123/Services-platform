@@ -1,7 +1,7 @@
 name: Yemen TopUp Platform - CI/CD Pipeline & Quality Gate
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
 on:
@@ -17,6 +17,8 @@ jobs:
   quality-gate:
     name: Lint, Types & Security Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -24,7 +26,7 @@ jobs:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Resolve patched lockfile without forcing major framework upgrades
@@ -46,6 +48,22 @@ jobs:
 
       - name: Generate Prisma Client
         run: npm run db:generate
+
+      - name: Generate MySQL baseline migration from the current schema
+        run: |
+          mkdir -p packages/database/prisma/migrations/20261113120000_initial_mysql
+          npx prisma migrate diff --from-empty --to-schema-datamodel packages/database/prisma/schema.prisma --script --output=packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
+
+      - name: Persist reviewed lockfile and MySQL baseline on release branch
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json packages/database/prisma/migrations/20261113120000_initial_mysql/migration.sql
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(db): commit generated MySQL baseline and patched lockfile"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
       - name: Monorepo Type Check
         run: npm run build --workspace=packages/shared && npm run build --workspace=packages/database
@@ -108,7 +126,7 @@ jobs:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Resolve lockfile using pinned security overrides
@@ -162,7 +180,7 @@ jobs:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Resolve lockfile using pinned security overrides
@@ -237,7 +255,7 @@ jobs:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Resolve lockfile using pinned security overrides
