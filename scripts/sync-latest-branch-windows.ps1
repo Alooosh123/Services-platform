@@ -8,9 +8,9 @@ Set-StrictMode -Version Latest
 
 $repository = 'Alooosh123/Services-platform'
 $branch = 'fix/production-hardening-20261108'
-$archiveUrl = "https://github.com/$repository/archive/refs/heads/$branch.zip"
+$cloneUrl = "https://github.com/$repository.git"
 
-Write-Host '========== SAFE SOURCE REFRESH ==========' -ForegroundColor Cyan
+Write-Host '========== SAFE SOURCE REFRESH (GIT TRANSPORT) ==========' -ForegroundColor Cyan
 $ProjectPath = (Resolve-Path -LiteralPath $ProjectPath).Path
 Set-Location -LiteralPath $ProjectPath
 
@@ -22,51 +22,64 @@ foreach ($required in @('package.json', 'package-lock.json', '.env', 'docker/doc
     }
 }
 
+$git = Get-Command git.exe -ErrorAction SilentlyContinue
+if (-not $git) {
+    $git = Get-Command git -ErrorAction SilentlyContinue
+}
+if (-not $git) {
+    throw 'Git for Windows is not installed or not on PATH. Install Git for Windows, reopen PowerShell, and rerun this script. No project files were changed.'
+}
+
+$gitVersion = & $git.Source --version
+if ($LASTEXITCODE -ne 0) { throw 'Git is present but could not run. No project files were changed.' }
+Write-Host "Using $gitVersion"
+
 $envHashBefore = (Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash
 $composeHashBefore = (Get-FileHash -LiteralPath $composePath -Algorithm SHA256).Hash
 
 $runRoot = Join-Path $ProjectPath '.local-run'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $stage = Join-Path $runRoot "source-sync-$stamp"
-$archive = Join-Path $runRoot "source-$stamp.zip"
+$sourceRoot = Join-Path $stage 'repository'
 $backup = Join-Path $runRoot "source-metadata-backup-$stamp"
-
 New-Item -ItemType Directory -Force -Path $runRoot, $stage, $backup | Out-Null
 
-Write-Host "Downloading branch source archive: $branch"
-$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-if (-not $curl) {
-    throw 'curl.exe is required for the large GitHub archive download. No project files were changed.'
-}
-$partialArchive = "$archive.download"
-if (Test-Path -LiteralPath $partialArchive) {
-    Remove-Item -LiteralPath $partialArchive -Force
-}
-& $curl.Source -L --fail --retry 6 --retry-delay 5 --retry-max-time 1200 --connect-timeout 30 --max-time 1200 --output $partialArchive $archiveUrl
-$downloadExit = $LASTEXITCODE
-if ($downloadExit -ne 0) {
-    if (Test-Path -LiteralPath $partialArchive) {
-        Write-Warning "Incomplete download retained for diagnosis: $partialArchive"
+Write-Host "Cloning shallow copy of branch: $branch"
+$cloneSucceeded = $false
+$protocols = @('HTTP/1.1', 'HTTP/2')
+foreach ($protocol in $protocols) {
+    if (Test-Path -LiteralPath $stage) {
+        Get-ChildItem -LiteralPath $stage -Force | Remove-Item -Recurse -Force
     }
-    throw "GitHub archive download failed (curl exit $downloadExit). No project source files were changed. Check network/VPN or retry later."
+    New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+    Write-Host "Attempting Git transport with $protocol..."
+    & $git.Source -c "http.version=$protocol" clone --depth 1 --single-branch --branch $branch $cloneUrl $sourceRoot
+    $cloneExit = $LASTEXITCODE
+    if ($cloneExit -eq 0) {
+        $cloneSucceeded = $true
+        break
+    }
+    Write-Warning "Git clone attempt using $protocol failed (exit $cloneExit)."
 }
-if (-not (Test-Path -LiteralPath $partialArchive) -or (Get-Item -LiteralPath $partialArchive).Length -lt 100000) {
-    throw 'GitHub archive is missing or unexpectedly small. No project files were changed.'
+if (-not $cloneSucceeded) {
+    throw 'Git clone could not reach GitHub after HTTP/1.1 and HTTP/2 attempts. No project source files were changed. Check VPN/proxy/firewall or network access to github.com.'
 }
-Move-Item -LiteralPath $partialArchive -Destination $archive -Force
 
-Write-Host 'Extracting source into isolated staging directory...'
-Expand-Archive -LiteralPath $archive -DestinationPath $stage -Force
-$sourceRoot = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
-if (-not $sourceRoot) { throw 'Archive root directory was not found.' }
+$head = (& $git.Source -C $sourceRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($head)) {
+    throw 'Could not identify the downloaded Git commit. No project files were changed.'
+}
+$branchName = (& $git.Source -C $sourceRoot branch --show-current).Trim()
+Write-Host "Fetched branch: $branchName"
+Write-Host "Fetched commit: $head"
 
 foreach ($file in @('package.json', 'package-lock.json', 'apps/web-admin/package.json', 'apps/web-customer/package.json', 'apps/web-saas/package.json', 'packages/database/prisma/schema.prisma')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot.FullName $file) -PathType Leaf)) {
-        throw "Source archive is incomplete: $file. No project files were changed."
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $file) -PathType Leaf)) {
+        throw "Cloned source is incomplete: $file. No project files were changed."
     }
 }
 
-$lock = Get-Content -LiteralPath (Join-Path $sourceRoot.FullName 'package-lock.json') -Raw | ConvertFrom-Json
+$lock = Get-Content -LiteralPath (Join-Path $sourceRoot 'package-lock.json') -Raw | ConvertFrom-Json
 $nextLock = $lock.packages.PSObject.Properties['node_modules/next'].Value.version
 $reactLock = $lock.packages.PSObject.Properties['node_modules/react'].Value.version
 $reactDomLock = $lock.packages.PSObject.Properties['node_modules/react-dom'].Value.version
@@ -109,10 +122,10 @@ if ($backupCode -ge 8) {
 
 Write-Host ''
 Write-Host 'Updating tracked source files while preserving local state...' -ForegroundColor Cyan
-Write-Host 'Preserved: .env, docker/docker-compose.yml, .local-run, node_modules, build caches, and any existing Git metadata.'
+Write-Host 'Preserved: .env, docker/docker-compose.yml, .local-run, node_modules, build caches, and existing Git metadata.'
 
 $robocopyArgs = @(
-    $sourceRoot.FullName,
+    $sourceRoot,
     $ProjectPath,
     '/E',
     '/COPY:DAT',
@@ -152,6 +165,7 @@ $migrationCount = @(Get-ChildItem -LiteralPath $migrationRoot -Directory | Where
 Write-Host ''
 Write-Host 'SOURCE REFRESH COMPLETED' -ForegroundColor Green
 Write-Host "Branch: $branch"
+Write-Host "Commit: $head"
 Write-Host "Next.js lock: $updatedNext"
 Write-Host "React lock: $updatedReact"
 Write-Host "React DOM lock: $updatedReactDom"
@@ -159,6 +173,6 @@ Write-Host "Prisma migration directories: $migrationCount"
 Write-Host ".env preserved: $($envHashAfter -eq $envHashBefore)"
 Write-Host "Local Docker Compose preserved: $($composeHashAfter -eq $composeHashBefore)"
 Write-Host "Original root manifests backed up to: $backup"
-Write-Host "Source archive retained at: $archive"
+Write-Host "Git source retained at: $sourceRoot"
 Write-Host ''
-Write-Host 'Next: run scripts/complete-local-services-platform.ps1. It will reinstall from the refreshed lockfile, apply only pending local migrations, and rebuild.' -ForegroundColor Yellow
+Write-Host 'Next: run scripts/complete-local-services-platform.ps1. It will reinstall dependencies, apply only pending local migrations, and rebuild.' -ForegroundColor Yellow
