@@ -46,8 +46,12 @@ export class PayoutsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get single payout details' })
-  async getPayoutById(@Param('id') id: string) {
-    return this.payoutsService.getPayoutById(id);
+  async getPayoutById(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: UserRole,
+    @Param('id') id: string,
+  ) {
+    return this.payoutsService.getPayoutByIdForUser(id, userId, role);
   }
 
   @Get('admin/list')
