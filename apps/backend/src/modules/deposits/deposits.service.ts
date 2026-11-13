@@ -454,9 +454,9 @@ export class DepositsService {
       }
       if (filters?.search) {
         where.OR = [
-          { depositNumber: { contains: filters.search, mode: 'insensitive' } },
-          { referenceNumber: { contains: filters.search, mode: 'insensitive' } },
-          { senderName: { contains: filters.search, mode: 'insensitive' } },
+          { depositNumber: { contains: filters.search } },
+          { referenceNumber: { contains: filters.search } },
+          { senderName: { contains: filters.search } },
         ];
       }
 
