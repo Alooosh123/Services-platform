@@ -1,3 +1,21 @@
+## نتيجة أول تشغيل محلي كامل — 13 نوفمبر 2026
+
+> مصدر الأدلة: سجل PowerShell المرفق من صاحب المشروع، وليس اتصالاً مباشراً بجهاز Windows.
+
+- نجح تشغيل PostgreSQL وRedis محلياً؛ PostgreSQL أصبحت `healthy` ونفذ استعلام SQL على `digital_topup_db`، وRedis أعاد `PONG`.
+- نجح `npm ci` في تثبيت 799 حزمة، ونجح `prisma generate` بإصدار Prisma Client 5.22.0، كما نجح `prisma validate`.
+- أُنشئت نسخة ما قبل الهجرة في `.local-run/backups/pre-migrate-20261113-213330.sql` بحجم 643 بايت وبصمة SHA256 مسجلة في سجل المستخدم. كانت القاعدة في تلك اللحظة حديثة الإنشاء.
+- نجح `prisma migrate deploy` في تطبيق 19 هجرة محلية، وأكد `prisma migrate status` أن مخطط تلك النسخة المحلية محدث.
+- توقف بناء Monorepo عند توليد الصفحات الثابتة لتطبيقات Next.js الثلاثة. أظهر السجل Next.js 14.2.35، مع أخطاء React `useContext` ورسائل `<Html> should not be imported outside of pages/_document`. لا تُعد هذه مرحلة بناء ناجحة.
+- ملف القفل في رأس فرع GitHub الحالي يثبت Next.js 15.5.29 وReact/ReactDOM 19.3.1، كما يحتوي فرع GitHub على 27 هجرة Prisma؛ في المقابل، المجلد المحلي المستخدم في هذا التشغيل احتوى على 19 هجرة فقط. هذا دليل على أن مصدر المجلد المحلي وملف القفل أقدم من الفرع الحالي، وهو سبب يجب معالجته قبل إعادة البناء.
+- أضيف `scripts/sync-latest-branch-windows.ps1` لتحديث مصدر المشروع بأمان، مع الحفاظ على `.env` و`docker/docker-compose.yml` المحلي و`.local-run` وبيانات Docker وعدم حذف الملفات المحلية.
+- تم تعديل `scripts/complete-local-services-platform.ps1` لعزل `NODE_ENV` عن عملية Next.js build؛ يبني Next.js في وضع الإنتاج الافتراضي، ثم يضبط وضع التطوير فقط لخوادم التشغيل.
+- GitHub Actions Run #899 كان قيد التنفيذ وقت تحديث هذا التقرير؛ لا نسجل نتيجة نهائية قبل ظهورها.
+
+**التوجيه:** شغّل مزامنة المصدر أولاً، ثم سكربت الإكمال الموجود في مجلد `scripts`. سيعيد `npm ci` تثبيت الإصدارات المقفلة الحديثة، ثم يطبق الهجرات الثماني المتبقية محلياً بعد إنشاء نسخة احتياطية جديدة، ثم يعيد البناء واختبارات API. لا تستخدم `db push` ولا `migrate reset` ولا تحذف volumes.
+
+---
+
 ## أداة تشغيل Windows المحلية — 13 نوفمبر 2026
 
 أضيف السكربت `scripts/complete-local-services-platform.ps1` لتشغيل مراحل البيئة المحلية بالتسلسل: فحص loopback، PostgreSQL وRedis، تثبيت الاعتماديات، Prisma generate/validate، نسخة PostgreSQL احتياطية قبل الهجرات، `migrate deploy` المحلي، بناء monorepo، تشغيل Backend والواجهات، واختبار تسجيل العميل ودخوله. يرفض السكربت قواعد البيانات البعيدة أو `NODE_ENV=production`، ولا ينفذ seed reset أو يفعّل أي مزود دفع.
