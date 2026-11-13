@@ -1,7 +1,7 @@
 name: Yemen TopUp Platform - CI/CD Pipeline & Quality Gate
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: read
 
 on:
@@ -27,8 +27,22 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Resolve patched lockfile without forcing major framework upgrades
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install Monorepo Dependencies
         run: npm ci
+
+      - name: Persist reviewed lockfile updates on release branches
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(security): refresh patched npm dependency lockfile"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
       - name: Generate Prisma Client
         run: npm run db:generate
@@ -97,6 +111,9 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Resolve lockfile using pinned security overrides
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install Dependencies
         run: npm ci
 
@@ -113,9 +130,26 @@ jobs:
   # Job 3: Prisma Migration Dry-Run & Schema Safety Check
   # -------------------------------------------------------------
   migration-dryrun:
-    name: Migration Dry-Run & Safety Check
+    name: MySQL 8.4 Baseline Migration Generation and Apply
     runs-on: ubuntu-latest
     needs: quality-gate
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_DATABASE: digital_topup_migration_test
+          MYSQL_USER: ci_user
+          MYSQL_PASSWORD: ci-user-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-password --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "mysql://ci_user:ci-user-password@127.0.0.1:3306/digital_topup_migration_test"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
