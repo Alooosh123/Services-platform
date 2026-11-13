@@ -75,7 +75,7 @@ async function decryptBackup(backupPath: string, key: Buffer): Promise<string> {
 
 async function runMysql(args: string[], env: NodeJS.ProcessEnv, inputFile?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('mysql', args, { env, stdio: [inputFile ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.env.MYSQL_BIN || 'mysql', args, { env, stdio: [inputFile ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let settled = false;
     const fail = (error: Error) => { if (!settled) { settled = true; child.kill(); reject(error); } };
     child.stdout.on('data', (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-8000); });
