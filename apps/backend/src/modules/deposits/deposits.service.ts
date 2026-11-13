@@ -379,13 +379,17 @@ export class DepositsService {
         },
       });
 
-      if (deposits && deposits.length > 0) {
+      if (process.env.NODE_ENV === 'production' || (deposits && deposits.length > 0)) {
         return deposits;
       }
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getCustomerDeposits: reading memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة طلبات الإيداع من قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during getCustomerDeposits: reading test/development memory (${err?.message})`);
     }
 
+    if (process.env.NODE_ENV === 'production') return [];
     const userDeposits: InMemoryDeposit[] = [];
     for (const d of this.memoryDeposits.values()) {
       if (d.userId === userId || userId === 'user-customer-003') {
@@ -418,9 +422,15 @@ export class DepositsService {
       }
     } catch (err: any) {
       if (err instanceof NotFoundException) throw err;
-      this.logger.warn(`Prisma offline during getDepositById: searching memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة طلب الإيداع من قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during getDepositById: searching test/development memory (${err?.message})`);
     }
 
+    if (process.env.NODE_ENV === 'production') {
+      throw new NotFoundException(`طلب الإيداع ${depositId} غير موجود`);
+    }
     const memDep = this.memoryDeposits.get(depositId);
     if (!memDep) {
       throw new NotFoundException(`طلب الإيداع ${depositId} غير موجود`);
@@ -462,7 +472,10 @@ export class DepositsService {
 
       return deposits;
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getAllDepositsForAdmin: reading memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة طلبات الإيداع الإدارية من قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during getAllDepositsForAdmin: reading test/development memory (${err?.message})`);
 
       let results = Array.from(this.memoryDeposits.values());
       if (filters?.status) {
@@ -519,7 +532,10 @@ export class DepositsService {
         deposit: updated,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during markUnderReview: updating memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر حفظ حالة مراجعة الإيداع في قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during markUnderReview: updating test/development memory (${err?.message})`);
 
       const memDep = this.memoryDeposits.get(depositId);
       if (memDep) {
@@ -739,7 +755,10 @@ export class DepositsService {
         deposit: updated,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during rejectDeposit: updating memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر حفظ رفض الإيداع في قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during rejectDeposit: updating test/development memory (${err?.message})`);
 
       const memDep = this.memoryDeposits.get(depositId);
       if (memDep) {
@@ -785,11 +804,15 @@ export class DepositsService {
           wallet: true,
         },
       });
-      if (deposit) return deposit;
+      if (deposit || process.env.NODE_ENV === 'production') return deposit;
     } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر فحص الرقم المرجعي في قاعدة البيانات الدائمة.');
+      }
       this.logger.warn(`Prisma offline in findDepositByReference (${err?.message})`);
     }
 
+    if (process.env.NODE_ENV === 'production') return null;
     for (const d of this.memoryDeposits.values()) {
       if (
         d.referenceNumber.trim().toLowerCase() === trimmed.toLowerCase() &&
@@ -820,7 +843,10 @@ export class DepositsService {
           },
         },
       });
-    } catch {
+    } catch (error) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر تسجيل فرق الإيداع في قاعدة البيانات الدائمة.');
+      }
       const mem = this.memoryDeposits.get(depositId);
       if (mem) {
         mem.status = DepositStatus.UNDER_REVIEW;
@@ -852,6 +878,16 @@ export class DepositsService {
     timestampHeader?: string,
     rawBody?: Buffer,
   ): Promise<DepositConfirmResult> {
+    // No bank/wallet provider API or signed webhook contract has been certified for production yet.
+    // Never let the built-in sandbox adapter or a manual wallet channel auto-create/credit real deposits.
+    if (process.env.NODE_ENV === 'production') {
+      this.logger.warn(`Production webhook rejected for ${channelCode}: no certified real provider adapter is enabled.`);
+      return {
+        success: false,
+        status: 'REJECTED',
+        message: 'الإشعارات الآلية لهذه القناة غير مفعلة إنتاجياً. استخدم إجراءات الدفع اليدوي والموافقة المالية حتى اعتماد مزود حقيقي.',
+      };
+    }
     const adapter = this.adapterRegistry.getAdapter(channelCode);
     if (!adapter) {
       throw new BadRequestException(`قناة الدفع ${channelCode} غير معروفة في النظام.`);
