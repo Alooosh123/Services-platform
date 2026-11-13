@@ -178,8 +178,8 @@ export class FulfillmentService {
             walletId: wallet.id,
             orderId: order.orderNumber,
             currency,
-            retailPrice: retailPriceNumber,
-            costPrice: costPriceNumber,
+            retailPrice: retailPriceDecimal.toString(),
+            costPrice: costPriceDecimal.toString(),
             serviceName: order.snapshotServiceName,
             providerCode,
             supplierAccountType,
@@ -242,7 +242,7 @@ export class FulfillmentService {
         if (!current || current.status !== OrderStatus.Processing) {
           throw new ConflictException('تغيرت حالة الطلب قبل تسجيل فشل المزود؛ يلزم تحقيق ومطابقة.');
         }
-        await this.ledgerService.releaseWalletHold(wallet.id, retailPriceNumber, tx);
+        await this.ledgerService.releaseWalletHold(wallet.id, retailPriceDecimal.toString(), tx);
         await tx.order.update({
           where: { id: order.id },
           data: {
