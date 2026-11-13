@@ -473,10 +473,10 @@ export class MonitoringService {
     // 1. Audit Double-Entry Ledger Transactions
     try {
       const unbalanced: any = await this.prisma.$queryRaw`
-        SELECT "transactionId", ABS(SUM("debitAmount") - SUM("creditAmount")) as diff
-        FROM "ledger_entries"
-        GROUP BY "transactionId"
-        HAVING ABS(SUM("debitAmount") - SUM("creditAmount")) > 0.0001;
+        SELECT transactionId, ABS(SUM(debitAmount) - SUM(creditAmount)) AS diff
+        FROM ledger_entries
+        GROUP BY transactionId
+        HAVING ABS(SUM(debitAmount) - SUM(creditAmount)) > 0.0001;
       `;
 
       if (unbalanced && unbalanced.length > 0) {
