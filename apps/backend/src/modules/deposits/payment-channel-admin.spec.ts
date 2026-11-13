@@ -149,6 +149,29 @@ describe('Durable payment channel administration and four-eyes review', () => {
     }));
   });
 
+  it('fails over to MANUAL durably and never clears an existing kill switch', async () => {
+    tx.paymentChannelConfig.findUnique.mockResolvedValue({
+      ...channel,
+      isActive: false,
+      mode: PaymentChannelMode.DISABLED,
+      killSwitchReason: 'previous incident',
+    });
+    const result = await service.failoverChannel(
+      PaymentChannelCode.JAIB,
+      'التحويل الآمن إلى المعالجة اليدوية بسبب تعذر التحقق من القناة.',
+      'owner-1',
+    );
+    expect(result.channel.mode).toBe(PaymentChannelMode.MANUAL);
+    expect(result.channel.isActive).toBe(false);
+    expect(tx.paymentChannelConfig.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        mode: PaymentChannelMode.MANUAL,
+        isActive: false,
+      }),
+    }));
+    expect(tx.paymentChannelConfig.update.mock.calls[0][0].data).not.toHaveProperty('killSwitchReason', null);
+  });
+
   it('reports channels as unverified until independently activated', async () => {
     const result = await service.verifyLegalAccounts();
     expect(result.isValid).toBe(false);
