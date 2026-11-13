@@ -117,7 +117,7 @@ describe('OperationalApprovalsService four-eyes controls', () => {
 
   it('records external network change evidence but never invokes a router write operation', async () => {
     prisma.operationalApproval.findUnique.mockResolvedValue(pendingNetwork);
-    const result = await service.closeout('network-operator', UserRole.ADMIN, approvalId, {
+    const result: any = await service.closeout('network-operator', UserRole.ADMIN, approvalId, {
       executionReference: 'CHANGE-TICKET-2026-014',
       notes: 'تم تنفيذ التغيير يدوياً خارج المنصة وبعد مراجعة نافذة الصيانة.',
     });
@@ -148,7 +148,7 @@ describe('OperationalApprovalsService four-eyes controls', () => {
       status: 'DISCREPANCY',
       notes: null,
     });
-    const result = await service.closeout(approverId, UserRole.FINANCE_MANAGER, approvalId, {
+    const result: any = await service.closeout(approverId, UserRole.FINANCE_MANAGER, approvalId, {
       executionReference: 'BANK-STATEMENT-ROW-19',
     });
     expect(result.reconciliationStatus).toBe('MATCHED');
@@ -199,7 +199,7 @@ describe('OperationalApprovalsService four-eyes controls', () => {
         { currency: 'YER', debitAmount: new Prisma.Decimal(0), creditAmount: new Prisma.Decimal('200.0000') },
       ],
     });
-    const result = await service.closeout(approverId, UserRole.FINANCE_MANAGER, approvalId, {
+    const result: any = await service.closeout(approverId, UserRole.FINANCE_MANAGER, approvalId, {
       executionReference: 'FINANCE-ADJUSTMENT-001',
       ledgerTransactionId: '6d5c0c3a-1010-4dc5-ae8f-65f44e8fc5e0',
     });
