@@ -29,8 +29,8 @@ jobs:
           node-version: 22
           cache: 'npm'
 
-      - name: Resolve patched lockfile without forcing major framework upgrades
-        run: npm install --package-lock-only --ignore-scripts
+      - name: Regenerate lockfile from audited package manifests and scoped overrides
+        run: rm -f package-lock.json && npm install --package-lock-only --ignore-scripts
 
       - name: Install Monorepo Dependencies
         run: npm ci
