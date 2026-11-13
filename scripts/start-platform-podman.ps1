@@ -10,7 +10,7 @@ try {
     $match = [regex]::Match($envText, "(?m)^$key=(.*)$")
     if (-not $match.Success -or [string]::IsNullOrWhiteSpace($match.Groups[1].Value) -or $match.Groups[1].Value -match "REPLACE|CHANGE_ME|YOUR_") { throw "Missing or placeholder value for $key in .env. No containers were started." }
   }
-  podman compose -f docker/docker-compose.yml config | Out-Null
+  podman compose -f podman/compose.yml config | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Podman Compose configuration validation failed." }
   podman compose -f docker/docker-compose.yml up -d --build
   if ($LASTEXITCODE -ne 0) { throw "Platform startup failed. Inspect Podman Compose logs." }
