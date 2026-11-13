@@ -23,3 +23,9 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local database dumps and restore artifacts
+/backups/
+*.dump
+*.dump.sha256
+*.sql.enc
