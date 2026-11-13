@@ -351,3 +351,13 @@ Workflow: https://github.com/Alooosh123/Services-platform/actions/runs/434945572
 - لم يتم تنفيذ ترقية جماعية لاعتماديات Node؛ لا يجوز تطبيق `npm audit fix --force` دون تحليل تغييرات SemVer واختبارات التوافق.
 
 **حالة الإطلاق:** ما زالت `NO-GO` حتى نجاح CI، واختبارات العزل المالي والمتاجر، ومراجعة الثغرات، واختبار Staging والاستعادة.
+
+
+## Local registration root cause and permanent currency-reference fix (13 Nov 2026)
+
+- The latest local bootstrap reached a successful dependency install, Argon2id/bcrypt native preflight, 27-migration restore drill, no-pending-migration check, and production builds for backend plus all three web apps.
+- The customer registration smoke test then failed with PostgreSQL foreign-key error `wallets_currency_fkey`. PostgreSQL and Redis readiness were both healthy; the detailed backend log identified the wallet-to-currency foreign key, not a connectivity failure.
+- Root cause: the schema created the `currencies` table and the registration flow created YER/USD/SAR wallets, but there was no migration guaranteeing those three required reference rows. The seed script also returned early when users or currencies already existed, which could leave a partially initialized currency reference set unrepaired.
+- Added migration `20261210000000_seed_required_currency_reference_data` to insert YER/USD/SAR idempotently using `ON CONFLICT DO NOTHING`. This preserves existing currency configuration and all financial/user data.
+- Updated the seed early-return path to insert any missing supported currencies with `createMany(skipDuplicates: true)`, preserving existing records.
+- The fix must pass the migration, backend, security and full build workflows, then be applied locally with the normal safe bootstrap. Local customer registration/login must be rerun to verify the end-to-end path. No registration success is claimed until that smoke test passes.
