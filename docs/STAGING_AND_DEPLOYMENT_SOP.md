@@ -10,9 +10,9 @@
 
 | البيئة (Environment) | النطاقات (Domains) | مصدر البيانات (Database) | إدارة الأسرار (Secrets Management) | وضع المزودين (Provider Mode) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Development** | `localhost:3000 / 3001 / 4000` | قاعدة بيانات محلية Docker | ملف `.env` المحلي (مفاتيح افتراضية) | `MOCK` / محاكيات محلية |
-| **Staging** | `staging.yementopup.com` | خادم PostgreSQL سحابي مخصص معزول | بيئة CI/CD المحمية (`.env.staging`) | `SANDBOX` + محاكيات معتمدة |
-| **Production** | `yementopup.com` | عنقود PostgreSQL مكرر عالي التوافر | Vault / AWS Secrets Manager / Cloud KMS | `MANUAL` / `API` (بعقود رسمية فقط) |
+| **Development** | `localhost:3000 / 3001 / 4000` | MySQL 8.4 محلياً عبر Podman Desktop | ملف `.env` المحلي (مفاتيح افتراضية) | `MOCK` / محاكيات محلية |
+| **Staging** | `staging.yementopup.com` | خادم MySQL 8.4 سحابي مخصص معزول | بيئة CI/CD المحمية (`.env.staging`) | `SANDBOX` + محاكيات معتمدة |
+| **Production** | `yementopup.com` | عنقود MySQL 8.4 مكرر عالي التوافر | Vault / AWS Secrets Manager / Cloud KMS | `MANUAL` / `API` (بعقود رسمية فقط) |
 
 ### ضوابط حظر نقل بيانات الإنتاج (PII Masking Guardrails)
 - يُحظر حظراً قاطعاً استيراد أي نسخة احتياطية من قاعدة بيانات الإنتاج إلى بيئة Staging دون تمريرها عبر سكربت التعمية الآلي:
