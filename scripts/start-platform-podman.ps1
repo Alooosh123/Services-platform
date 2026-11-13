@@ -12,7 +12,7 @@ try {
   }
   podman compose -f podman/compose.yml config | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Podman Compose configuration validation failed." }
-  podman compose -f docker/docker-compose.yml up -d --build
+  podman compose -f podman/compose.yml up -d --build
   if ($LASTEXITCODE -ne 0) { throw "Platform startup failed. Inspect Podman Compose logs." }
-  podman compose -f docker/docker-compose.yml ps
+  podman compose -f podman/compose.yml ps
 } finally { Pop-Location }
