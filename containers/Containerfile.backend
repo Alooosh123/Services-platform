@@ -6,7 +6,7 @@ COPY package*.json ./
 COPY packages/ ./packages/
 COPY apps/backend/ ./apps/backend/
 
-RUN npm install --package-lock-only --ignore-scripts && npm ci
+RUN npm ci
 RUN npm run build --workspace=packages/shared
 RUN npm run generate --workspace=packages/database
 RUN npm run build --workspace=packages/database
