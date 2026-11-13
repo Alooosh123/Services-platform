@@ -96,7 +96,6 @@ if ($dbUri.Host -notin @('localhost', '127.0.0.1', '::1')) { throw 'DATABASE_URL
 $dbName = [System.Uri]::UnescapeDataString($dbUri.AbsolutePath.TrimStart('/').Split('?')[0])
 if ([string]::IsNullOrWhiteSpace($dbName)) { throw 'DATABASE_URL has no database name.' }
 $env:DATABASE_URL = $dbValue
-$env:NODE_ENV = 'development'
 $env:PORT = '4000'
 $env:API_PREFIX = 'api'
 
@@ -197,10 +196,15 @@ Assert-Exit 'Prisma migrate deploy'
 Assert-Exit 'Prisma migration status'
 
 Write-Section 'BUILD MONOREPO'
+# Next.js build must not inherit NODE_ENV=development from this runner.
+# Next.js sets production mode internally for "next build".
+Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
 & $script:NpmCommand run build
 Assert-Exit 'Monorepo build'
 
 Write-Section 'START BACKEND AND TEST CUSTOMER AUTH'
+# Runtime development servers must inherit development mode only after builds finish.
+$env:NODE_ENV = 'development'
 foreach ($port in @(4000, 3000, 3001, 3002)) { Assert-PortFree $port }
 $backend = Start-LocalApp 'dev:backend' 'backend' $logDirectory
 Wait-Http 'http://localhost:4000/api/health/ready' 'Backend readiness' 150 $backend.ProcessId $backend.Stderr
