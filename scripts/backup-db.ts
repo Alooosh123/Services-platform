@@ -14,38 +14,32 @@ const BACKUP_KEY_ENV = 'BACKUP_ENCRYPTION_KEY';
 
 function getConnectionOptions(connectionString: string) {
   const url = new URL(connectionString);
-  if (!['postgres:', 'postgresql:'].includes(url.protocol)) {
-    throw new Error('DATABASE_URL must use the PostgreSQL protocol.');
-  }
+  if (url.protocol !== 'mysql:') throw new Error('DATABASE_URL must use the MySQL protocol.');
 
   const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
   if (!url.hostname || !database) {
     throw new Error('DATABASE_URL must include a host and database name.');
   }
 
-  const sslMode = url.searchParams.get('sslmode');
-  if (sslMode && !['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].includes(sslMode)) {
-    throw new Error('DATABASE_URL contains an unsupported sslmode.');
-  }
+  const sslAccept = url.searchParams.get('sslaccept');
+  if (sslAccept && sslAccept !== 'strict') throw new Error('Only strict MySQL TLS verification is allowed for encrypted remote backups.');
 
   return {
     args: [
-      '--host',
-      url.hostname,
-      '--port',
-      url.port || '5432',
-      '--username',
-      decodeURIComponent(url.username),
-      '--dbname',
+      '--host', url.hostname,
+      '--port', url.port || '3306',
+      '--user', decodeURIComponent(url.username),
+      '--single-transaction',
+      '--routines', '--triggers', '--events', '--hex-blob',
+      '--set-gtid-purged=OFF',
+      '--default-character-set=utf8mb4',
+      ...(sslAccept === 'strict' ? ['--ssl-mode=VERIFY_IDENTITY'] : []),
+      ...(process.env.MYSQL_SSL_CA ? ['--ssl-ca', process.env.MYSQL_SSL_CA] : []),
       database,
-      '--format=custom',
-      '--no-owner',
-      '--no-acl',
     ],
     env: {
       ...process.env,
-      ...(url.password ? { PGPASSWORD: decodeURIComponent(url.password) } : {}),
-      ...(sslMode ? { PGSSLMODE: sslMode } : {}),
+      ...(url.password ? { MYSQL_PWD: decodeURIComponent(url.password) } : {}),
     },
   };
 }
@@ -65,7 +59,7 @@ async function runBackup(
   key: Buffer,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const childProcess = spawn('pg_dump', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const childProcess = spawn('mysqldump', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = fs.createWriteStream(destination, { flags: 'wx' });
     const nonce = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
@@ -74,7 +68,7 @@ async function runBackup(
         try {
           callback(null, cipher.update(chunk));
         } catch (error) {
-          callback(error instanceof Error ? error : new Error('Failed to encrypt PostgreSQL backup chunk.'));
+          callback(error instanceof Error ? error : new Error('Failed to encrypt MySQL backup chunk.'));
         }
       },
       flush(callback) {
@@ -83,7 +77,7 @@ async function runBackup(
           this.push(cipher.getAuthTag());
           callback();
         } catch (error) {
-          callback(error instanceof Error ? error : new Error('Failed to finalize encrypted PostgreSQL backup.'));
+          callback(error instanceof Error ? error : new Error('Failed to finalize encrypted MySQL backup.'));
         }
       },
     });
@@ -109,10 +103,10 @@ async function runBackup(
     childProcess.stderr.on('data', (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString()}`.slice(-8000);
     });
-    childProcess.on('error', (error) => fail(new Error(`Unable to start pg_dump: ${error.message}`)));
+    childProcess.on('error', (error) => fail(new Error(`Unable to start mysqldump: ${error.message}`)));
     childProcess.on('close', (code) => {
       if (code !== 0) {
-        fail(new Error(`pg_dump failed with exit code ${code}: ${stderr.trim()}`));
+        fail(new Error(`mysqldump failed with exit code ${code}: ${stderr.trim()}`));
         return;
       }
       childClosed = true;
@@ -131,7 +125,7 @@ async function runBackup(
           finishIfReady();
         })
         .catch((error: unknown) =>
-          fail(error instanceof Error ? error : new Error('Failed to encrypt PostgreSQL backup stream.')),
+          fail(error instanceof Error ? error : new Error('Failed to encrypt MySQL backup stream.')),
         );
     });
   });
@@ -159,7 +153,7 @@ async function main() {
   await fs.promises.mkdir(backupDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const fileName = `postgres_${timestamp}_${crypto.randomBytes(4).toString('hex')}.dump`;
+  const fileName = `mysql_${timestamp}_${crypto.randomBytes(4).toString('hex')}.dump`;
   const filePath = path.join(backupDir, fileName);
   const temporaryPath = `${filePath}.partial`;
   const checksumPath = `${filePath}.sha256`;
@@ -172,7 +166,7 @@ async function main() {
     await runBackup(temporaryPath, connection.args, connection.env, backupKey);
     const stats = await fs.promises.stat(temporaryPath);
     if (!stats.size) {
-      throw new Error('pg_dump produced an empty backup.');
+      throw new Error('mysqldump produced an empty backup.');
     }
 
     const checksum = await sha256File(temporaryPath);
@@ -193,7 +187,7 @@ async function main() {
           environment: process.env.NODE_ENV || 'development',
           tablesIncluded: 'all',
           durationSeconds: Math.max(1, Math.floor((Date.now() - startedAt) / 1000)),
-          verificationNotes: 'AES-256-GCM encrypted PostgreSQL custom-format backup; SHA-256 checksum recorded.',
+          verificationNotes: 'AES-256-GCM encrypted MySQL SQL backup; SHA-256 checksum recorded.',
         },
       });
     } catch (error) {
@@ -206,7 +200,7 @@ async function main() {
       await prisma.$disconnect();
     }
 
-    console.log(`PostgreSQL backup created: ${filePath}`);
+    console.log(`MySQL backup created: ${filePath}`);
     console.log(`Size: ${stats.size} bytes`);
     console.log(`SHA-256: ${checksum}`);
     console.log('Encryption: AES-256-GCM');
