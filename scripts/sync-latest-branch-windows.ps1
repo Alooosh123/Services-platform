@@ -79,16 +79,31 @@ foreach ($file in @('package.json', 'package-lock.json', 'apps/web-admin/package
     }
 }
 
-$lock = Get-Content -LiteralPath (Join-Path $sourceRoot 'package-lock.json') -Raw | ConvertFrom-Json
-$nextLock = $lock.packages.PSObject.Properties['node_modules/next'].Value.version
-$reactLock = $lock.packages.PSObject.Properties['node_modules/react'].Value.version
-$reactDomLock = $lock.packages.PSObject.Properties['node_modules/react-dom'].Value.version
+function Get-LockPackageVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$LockPath,
+        [Parameter(Mandatory = $true)][string]$PackagePath
+    )
+    $node = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }
+    if (-not $node) { throw 'Node.js is required to validate package-lock.json. No project source files were changed.' }
+    $parser = 'const fs=require("fs"); const lock=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const item=lock.packages && lock.packages[process.argv[2]]; if(!item || !item.version){process.exit(2)}; process.stdout.write(String(item.version));'
+    $version = & $node.Source -e $parser $LockPath $PackagePath
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($version -join ''))) {
+        throw "Could not read locked version for $PackagePath from $LockPath. No project source files were changed."
+    }
+    return ($version -join '').Trim()
+}
+
+$sourceLockPath = Join-Path $sourceRoot 'package-lock.json'
+$nextLock = Get-LockPackageVersion -LockPath $sourceLockPath -PackagePath 'node_modules/next'
+$reactLock = Get-LockPackageVersion -LockPath $sourceLockPath -PackagePath 'node_modules/react'
+$reactDomLock = Get-LockPackageVersion -LockPath $sourceLockPath -PackagePath 'node_modules/react-dom'
 if ($nextLock -ne '15.5.29' -or $reactLock -ne '19.3.1' -or $reactDomLock -ne '19.3.1') {
     throw "Unexpected locked frontend versions: Next=$nextLock React=$reactLock ReactDOM=$reactDomLock. No project files were changed."
 }
 
-$localLock = Get-Content -LiteralPath (Join-Path $ProjectPath 'package-lock.json') -Raw | ConvertFrom-Json
-$localNext = $localLock.packages.PSObject.Properties['node_modules/next'].Value.version
+$localNext = Get-LockPackageVersion -LockPath (Join-Path $ProjectPath 'package-lock.json') -PackagePath 'node_modules/next'
 Write-Host "Current local lock Next.js: $localNext"
 Write-Host "Verified source lock: Next.js $nextLock / React $reactLock / ReactDOM $reactDomLock"
 
@@ -151,10 +166,10 @@ $composeHashAfter = (Get-FileHash -LiteralPath $composePath -Algorithm SHA256).H
 if ($envHashAfter -ne $envHashBefore) { throw '.env changed unexpectedly. Stop and restore from your own backup.' }
 if ($composeHashAfter -ne $composeHashBefore) { throw 'Local Docker Compose configuration changed unexpectedly.' }
 
-$updatedLock = Get-Content -LiteralPath (Join-Path $ProjectPath 'package-lock.json') -Raw | ConvertFrom-Json
-$updatedNext = $updatedLock.packages.PSObject.Properties['node_modules/next'].Value.version
-$updatedReact = $updatedLock.packages.PSObject.Properties['node_modules/react'].Value.version
-$updatedReactDom = $updatedLock.packages.PSObject.Properties['node_modules/react-dom'].Value.version
+$updatedLockPath = Join-Path $ProjectPath 'package-lock.json'
+$updatedNext = Get-LockPackageVersion -LockPath $updatedLockPath -PackagePath 'node_modules/next'
+$updatedReact = Get-LockPackageVersion -LockPath $updatedLockPath -PackagePath 'node_modules/react'
+$updatedReactDom = Get-LockPackageVersion -LockPath $updatedLockPath -PackagePath 'node_modules/react-dom'
 if ($updatedNext -ne '15.5.29' -or $updatedReact -ne '19.3.1' -or $updatedReactDom -ne '19.3.1') {
     throw 'Updated lockfile version verification failed.'
 }
