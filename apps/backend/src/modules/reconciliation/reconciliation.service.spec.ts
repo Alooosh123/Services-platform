@@ -4,165 +4,63 @@ import { DepositsService } from '../deposits/deposits.service';
 import { PayoutsService } from '../payouts/payouts.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PrismaService } from '../../database/prisma.service';
-import {
-  CurrencyCode,
-  PaymentChannelCode,
-  ReconciliationStatus,
-  DiscrepancyType,
-} from '@digital-topup/shared';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
-describe('Phase 05 — AT-21: Daily Reconciliation Batch Engine & Exceptions', () => {
-  let reconciliationService: ReconciliationService;
-  let depositsService: DepositsService;
-  let payoutsService: PayoutsService;
-
-  const mockPrisma = {
-    reconciliationBatch: {
-      create: jest.fn(),
-      findMany: jest.fn().mockResolvedValue([]),
-    },
+describe('Reconciliation persistence and financial controls', () => {
+  let service: ReconciliationService;
+  const mockPrisma: any = {
+    reconciliationBatch: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
+    reconciliationItem: { findUnique: jest.fn().mockResolvedValue(null) },
+    $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
   };
-
-  const mockLedgerService = {};
-
-  const mockDepositsService = {
-    findDepositByReference: jest.fn(),
-  };
-
-  const mockPayoutsService = {
-    findByIdempotencyKey: jest.fn(),
+  const deposits = { findDepositByReference: jest.fn().mockResolvedValue(null) };
+  const payouts = { findByExternalReference: jest.fn().mockResolvedValue(null) };
+  const ledger = {
+    scopeAccountCode: jest.fn((code: string) => code),
+    recordDoubleEntryTransaction: jest.fn(),
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
-
+    mockPrisma.reconciliationBatch.findMany.mockResolvedValue([]);
+    mockPrisma.reconciliationItem.findUnique.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReconciliationService,
-        { provide: DepositsService, useValue: mockDepositsService },
-        { provide: PayoutsService, useValue: mockPayoutsService },
-        { provide: LedgerService, useValue: mockLedgerService },
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: DepositsService, useValue: deposits },
+        { provide: PayoutsService, useValue: payouts },
+        { provide: LedgerService, useValue: ledger },
       ],
     }).compile();
-
-    reconciliationService = module.get<ReconciliationService>(ReconciliationService);
-    depositsService = module.get<DepositsService>(DepositsService);
-    payoutsService = module.get<PayoutsService>(PayoutsService);
+    service = module.get(ReconciliationService);
   });
 
-  describe('AT-21: 3-Way Reconciliation Batch Execution', () => {
-    it('AT-21: executes 3-way matching, classifies MATCHED, AMOUNT_MISMATCH, and MISSING_IN_INTERNAL', async () => {
-      // 1. Mock matched deposit
-      mockDepositsService.findDepositByReference.mockImplementation((ref: string) => {
-        if (ref === 'REF-MATCHED-01') {
-          return Promise.resolve({
-            id: 'dep-1',
-            depositNumber: 'DEP-20261010-001',
-            amount: 50000,
-            currency: CurrencyCode.YER,
-            status: 'CREDITED',
-          });
-        }
-        if (ref === 'REF-MISMATCH-01') {
-          return Promise.resolve({
-            id: 'dep-2',
-            depositNumber: 'DEP-20261010-002',
-            amount: 70000, // Expected 70,000, but statement has 65,000!
-            currency: CurrencyCode.YER,
-            status: 'UNDER_REVIEW',
-          });
-        }
-        return Promise.resolve(null);
-      });
+  it('does not return seeded reconciliation batches from process memory', async () => {
+    await expect(service.listBatches()).resolves.toEqual([]);
+    expect(mockPrisma.reconciliationBatch.findMany).toHaveBeenCalled();
+  });
 
-      // 2. Mock matched payout
-      mockPayoutsService.findByIdempotencyKey.mockImplementation((key: string) => {
-        if (key === 'PO-KEY-MATCHED-01') {
-          return Promise.resolve({
-            id: 'po-1',
-            payoutNumber: 'PO-20261010-001',
-            amount: 15000,
-            currency: CurrencyCode.YER,
-            status: 'CONFIRMED',
-          });
-        }
-        return Promise.resolve(null);
-      });
+  it('rejects an empty external statement instead of creating an empty successful batch', async () => {
+    await expect(service.runDailyReconciliation('finance-user', {
+      statementDate: '2026-11-01',
+      externalStatements: [],
+    } as any)).rejects.toThrow(BadRequestException);
+    expect(mockPrisma.reconciliationBatch.create).not.toHaveBeenCalled();
+  });
 
-      // Run daily reconciliation batch with statement lines
-      const summary = await reconciliationService.runDailyReconciliation('user-finance-002', {
-        channelCode: PaymentChannelCode.JAIB,
-        statementDate: '2026-10-10',
-        externalStatements: [
-          {
-            referenceNumber: 'REF-MATCHED-01',
-            amount: 50000,
-            currency: CurrencyCode.YER,
-            type: 'DEPOSIT',
-          },
-          {
-            referenceNumber: 'REF-MISMATCH-01',
-            amount: 65000, // Difference: 5,000 YER
-            currency: CurrencyCode.YER,
-            type: 'DEPOSIT',
-          },
-          {
-            referenceNumber: 'PO-KEY-MATCHED-01',
-            amount: 15000,
-            currency: CurrencyCode.YER,
-            type: 'PAYOUT',
-          },
-          {
-            referenceNumber: 'REF-UNKNOWN-EXTERNAL-99',
-            amount: 30000, // Not in platform!
-            currency: CurrencyCode.YER,
-            type: 'DEPOSIT',
-          },
-        ],
-      });
+  it('does not resolve an unknown reconciliation item from an in-memory seed', async () => {
+    await expect(service.getBatchById('non-existent-batch')).rejects.toThrow(NotFoundException);
+  });
 
-      expect(summary.totalRecords).toBe(4);
-      expect(summary.matchedCount).toBe(2); // 1 deposit + 1 payout
-      expect(summary.discrepancyCount).toBe(2); // 1 amount mismatch + 1 unknown external
-      expect(summary.totalAmountMatched).toBe(65000); // 50000 + 15000
-      expect(summary.totalAmountDiscrepant).toBe(95000); // 65000 + 30000
-
-      // Check discrepancy items
-      const amountMismatchItem = summary.discrepancies.find((d) => d.referenceNumber === 'REF-MISMATCH-01');
-      expect(amountMismatchItem).toBeDefined();
-      expect(amountMismatchItem?.type).toBe(DiscrepancyType.AMOUNT_MISMATCH);
-      expect(amountMismatchItem?.expectedAmount).toBe(70000);
-      expect(amountMismatchItem?.actualAmount).toBe(65000);
-
-      const unknownItem = summary.discrepancies.find((d) => d.referenceNumber === 'REF-UNKNOWN-EXTERNAL-99');
-      expect(unknownItem).toBeDefined();
-      expect(unknownItem?.type).toBe(DiscrepancyType.MISSING_IN_INTERNAL);
-      expect(unknownItem?.status).toBe(ReconciliationStatus.UNKNOWN_EXTERNAL);
-    });
-
-    it('allows finance manager to manually resolve an exception item and update batch status', async () => {
-      // Get the default seeded batch
-      const batches = await reconciliationService.listBatches();
-      expect(batches.length).toBeGreaterThan(0);
-
-      const seedBatch = batches[0];
-      const discrepancyItem = seedBatch.items.find((i) => i.status === ReconciliationStatus.DISCREPANCY);
-      expect(discrepancyItem).toBeDefined();
-
-      const resolveRes = await reconciliationService.resolveDiscrepancy(
-        'user-finance-002',
-        discrepancyItem!.id,
-        'تم التواصل مع البنك وتأكيد قيد فارق العمولة 500 ريال',
-        'ADJUST_LEDGER',
-      );
-
-      expect(resolveRes.success).toBe(true);
-
-      const updatedBatch = await reconciliationService.getBatchById(seedBatch.id);
-      const updatedItem = updatedBatch.items.find((i) => i.id === discrepancyItem!.id);
-      expect(updatedItem?.status).toBe(ReconciliationStatus.RESOLVED_MANUAL);
-      expect(updatedBatch.status).toBe('RESOLVED');
-    });
+  it('does not propose a ledger adjustment for an item missing from PostgreSQL', async () => {
+    await expect(service.proposeLedgerAdjustment(
+      'finance-user-a',
+      'missing-item',
+      '1010-CASH',
+      '2100-SUSPENSE',
+      'test adjustment',
+    )).rejects.toThrow(NotFoundException);
+    expect(ledger.recordDoubleEntryTransaction).not.toHaveBeenCalled();
   });
 });

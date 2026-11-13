@@ -2,12 +2,15 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  Logger,
+  ConflictException,
+  ForbiddenException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { LedgerService } from '../ledger/ledger.service';
+import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
-import { LedgerService } from '../ledger/ledger.service';
 import { DepositsService } from '../deposits/deposits.service';
 import { PayoutsService } from '../payouts/payouts.service';
 import {
@@ -17,456 +20,494 @@ import {
   DiscrepancyType,
   RunReconciliationDto,
   ReconciliationBatchSummary,
+  LedgerTransactionType,
 } from '@digital-topup/shared';
-import { Prisma } from '@prisma/client';
-
-export interface InMemoryReconciliationItem {
-  id: string;
-  batchId: string;
-  referenceNumber: string;
-  expectedAmount: number;
-  actualAmount: number;
-  currency: CurrencyCode;
-  status: ReconciliationStatus;
-  discrepancyType?: DiscrepancyType | null;
-  internalTxId?: string | null;
-  notes?: string | null;
-  resolvedAt?: Date | null;
-  resolvedByUserId?: string | null;
-  createdAt: Date;
-}
-
-export interface InMemoryReconciliationBatch {
-  id: string;
-  batchNumber: string;
-  channelCode?: PaymentChannelCode | null;
-  statementDate: Date;
-  totalRecords: number;
-  matchedCount: number;
-  discrepancyCount: number;
-  totalAmountMatched: number;
-  totalAmountDiscrepant: number;
-  status: string; // COMPLETED, PENDING_REVIEW, RESOLVED
-  reconciledByUserId?: string | null;
-  notes?: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  items: InMemoryReconciliationItem[];
-}
 
 @Injectable()
 export class ReconciliationService {
-  private readonly logger = new Logger(ReconciliationService.name);
-
-  private failClosedForTenant(error: any): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      this.logger.error(`Reconciliation persistence failed: ${error?.message || error}`);
-      throw new ServiceUnavailableException('Reconciliation data is unavailable from the tenant database.');
-    }
-  }
-  private memoryBatches: Map<string, InMemoryReconciliationBatch> = new Map();
-
   constructor(
     private prisma: PrismaService,
-    private ledgerService: LedgerService,
     private depositsService: DepositsService,
     private payoutsService: PayoutsService,
-  ) {
-    this.seedDefaultBatch();
+    private ledgerService: LedgerService,
+  ) {}
+
+  private get tenantId(): string | null {
+    return getCurrentTenantId() || null;
   }
 
-  private seedDefaultBatch() {
-    const batchId = 'rec-seed-001';
-    const batch: InMemoryReconciliationBatch = {
-      id: batchId,
-      batchNumber: 'REC-20261009-001',
-      channelCode: PaymentChannelCode.JAIB,
-      statementDate: new Date(Date.now() - 3600000 * 24),
-      totalRecords: 3,
-      matchedCount: 2,
-      discrepancyCount: 1,
-      totalAmountMatched: 75000.0,
-      totalAmountDiscrepant: 15000.0,
-      status: 'PENDING_REVIEW',
-      reconciledByUserId: 'user-finance-002',
-      notes: 'كشف مطابقة يومية لمحفظة جيب - تم عزل حوالة واحدة لوجود فرق بالمبلغ',
-      createdAt: new Date(Date.now() - 3600000 * 24),
-      updatedAt: new Date(Date.now() - 3600000 * 24),
-      items: [
-        {
-          id: 'item-1',
-          batchId,
-          referenceNumber: 'REF-JAIB-112233',
-          expectedAmount: 50000.0,
-          actualAmount: 50000.0,
-          currency: CurrencyCode.YER,
-          status: ReconciliationStatus.MATCHED,
-          internalTxId: 'DEP-20261009-0001',
-          notes: 'مطابقة تامة مع كشف حساب CAC Bank',
-          createdAt: new Date(),
-        },
-        {
-          id: 'item-2',
-          batchId,
-          referenceNumber: 'REF-JAIB-998811',
-          expectedAmount: 25000.0,
-          actualAmount: 25000.0,
-          currency: CurrencyCode.YER,
-          status: ReconciliationStatus.MATCHED,
-          internalTxId: 'DEP-20261009-0002',
-          notes: 'مطابقة تامة',
-          createdAt: new Date(),
-        },
-        {
-          id: 'item-3',
-          batchId,
-          referenceNumber: 'REF-JAIB-DISC-01',
-          expectedAmount: 15000.0,
-          actualAmount: 14500.0,
-          currency: CurrencyCode.YER,
-          status: ReconciliationStatus.DISCREPANCY,
-          discrepancyType: DiscrepancyType.AMOUNT_MISMATCH,
-          internalTxId: 'DEP-20261009-0003',
-          notes: 'فرق في المبلغ بمقدار 500 ريال (عمولة غير مسجلة أو تحويل ناقص) - تم إيقاف إعادة المحاولات',
-          createdAt: new Date(),
-        },
-      ],
-    };
-
-    this.memoryBatches.set(batchId, batch);
-  }
-
-  /**
-   * P05 Daily Reconciliation Batch Engine:
-   * Reconciles external bank/wallet/provider statements against:
-   * 1. Internal Deposits (DepositRequest)
-   * 2. Internal Payouts (PayoutRequest)
-   * 3. Provider Fulfillment Costs (Orders)
-   * 4. Double-Entry Ledger Transactions
-   * Isolates any unknown deposits/payouts and discrepancy amounts into a manual review queue.
-   */
   async runDailyReconciliation(
     staffUserId: string,
     dto: RunReconciliationDto,
   ): Promise<ReconciliationBatchSummary> {
-    if (!dto.externalStatements || dto.externalStatements.length === 0) {
-      throw new BadRequestException('كشف الحساب فارغ؛ يجب تقديم عناصر كشف حساب لمطابقتها');
-    }
+    if (!dto.externalStatements?.length) throw new BadRequestException('كشف الحساب فارغ.');
+    const statementDate = new Date(dto.statementDate);
+    if (Number.isNaN(statementDate.getTime())) throw new BadRequestException('تاريخ كشف الحساب غير صالح.');
 
-    const now = new Date();
+    const batchId = uuidv4();
     const dateStr = dto.statementDate.replace(/-/g, '');
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const batchNumber = `REC-${dateStr}-${randomSuffix}`;
-    const batchId = `rec-${Date.now()}`;
-
-    const items: InMemoryReconciliationItem[] = [];
+    const batchNumber = `REC-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const now = new Date();
+    const items: Array<{
+      id: string;
+      referenceNumber: string;
+      expectedAmount: number;
+      actualAmount: number;
+      currency: CurrencyCode;
+      status: ReconciliationStatus;
+      discrepancyType?: DiscrepancyType | null;
+      internalTxId?: string | null;
+      notes?: string | null;
+    }> = [];
+    const seen = new Set<string>();
     let matchedCount = 0;
     let discrepancyCount = 0;
     let totalAmountMatched = 0;
     let totalAmountDiscrepant = 0;
 
     for (const stmt of dto.externalStatements) {
-      const ref = stmt.referenceNumber.trim();
+      const referenceNumber = String(stmt.referenceNumber || '').trim();
       const actualAmount = Number(stmt.amount);
-      const currency = stmt.currency;
-      const itemId = `rec-item-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+      const currency = stmt.currency as CurrencyCode;
+      if (!referenceNumber || !Number.isFinite(actualAmount) || actualAmount <= 0) {
+        throw new BadRequestException('يتضمن كشف الحساب مرجعاً فارغاً أو مبلغاً غير صالح.');
+      }
+      const itemId = uuidv4();
 
-      // 1. Check Internal Deposits
-      const deposit = await this.depositsService.findDepositByReference(ref);
+      if (seen.has(referenceNumber)) {
+        discrepancyCount++;
+        totalAmountDiscrepant += actualAmount;
+        items.push({
+          id: itemId,
+          referenceNumber,
+          expectedAmount: 0,
+          actualAmount,
+          currency,
+          status: ReconciliationStatus.DISCREPANCY,
+          discrepancyType: DiscrepancyType.DUPLICATE_EXTERNAL,
+          notes: 'مرجع مكرر داخل كشف الحساب؛ تم عزله للمراجعة دون إجراء قيد مالي.',
+        });
+        continue;
+      }
+      seen.add(referenceNumber);
+
+      const deposit = await this.depositsService.findDepositByReference(referenceNumber);
       if (deposit) {
         const expectedAmount = Number(deposit.amount);
-        const expectedCurrency = deposit.currency;
-
-        if (Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === expectedCurrency) {
-          // PERFECT MATCH
+        const exact = Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === deposit.currency;
+        if (exact) {
           matchedCount++;
           totalAmountMatched += actualAmount;
           items.push({
-            id: itemId,
-            batchId,
-            referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
-            currency,
-            status: ReconciliationStatus.MATCHED,
-            internalTxId: deposit.depositNumber,
-            notes: `مطابقة تامة للإيداع ${deposit.depositNumber}`,
-            createdAt: now,
+            id: itemId, referenceNumber, expectedAmount, actualAmount, currency,
+            status: ReconciliationStatus.MATCHED, internalTxId: deposit.depositNumber,
+            notes: `مطابقة الإيداع ${deposit.depositNumber}`,
           });
         } else {
-          // DISCREPANCY: Amount or Currency mismatch
           discrepancyCount++;
           totalAmountDiscrepant += actualAmount;
-          const discType =
-            currency !== expectedCurrency
-              ? DiscrepancyType.CURRENCY_MISMATCH
-              : DiscrepancyType.AMOUNT_MISMATCH;
-
           items.push({
-            id: itemId,
-            batchId,
-            referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
-            currency,
+            id: itemId, referenceNumber, expectedAmount, actualAmount, currency,
             status: ReconciliationStatus.DISCREPANCY,
-            discrepancyType: discType,
+            discrepancyType: currency !== deposit.currency ? DiscrepancyType.CURRENCY_MISMATCH : DiscrepancyType.AMOUNT_MISMATCH,
             internalTxId: deposit.depositNumber,
-            notes: `فرق في البيانات: المتوقع في النظام ${expectedAmount} ${expectedCurrency}، الوارد في الكشف ${actualAmount} ${currency}`,
-            createdAt: now,
+            notes: `فرق في الإيداع ${deposit.depositNumber}: المتوقع ${expectedAmount} ${deposit.currency}، الفعلي ${actualAmount} ${currency}`,
           });
         }
         continue;
       }
 
-      // 2. Check Internal Payouts
-      const payout = await this.payoutsService.findByIdempotencyKey(ref);
+      // Match payouts only by a real external bank/provider reference, never by
+      // the internal idempotency key.
+      const payout = await this.payoutsService.findByExternalReference(referenceNumber);
       if (payout) {
-        const expectedAmount = Number(payout.amount);
-        if (Math.abs(actualAmount - expectedAmount) < 0.0001 && currency === payout.currency) {
+        const exact = Math.abs(actualAmount - payout.amount) < 0.0001 && currency === payout.currency;
+        if (exact && payout.status === 'CONFIRMED') {
           matchedCount++;
           totalAmountMatched += actualAmount;
           items.push({
-            id: itemId,
-            batchId,
-            referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
-            currency,
-            status: ReconciliationStatus.MATCHED,
-            internalTxId: payout.payoutNumber,
-            notes: `مطابقة تامة لطلب السحب ${payout.payoutNumber}`,
-            createdAt: now,
+            id: itemId, referenceNumber, expectedAmount: payout.amount, actualAmount, currency,
+            status: ReconciliationStatus.MATCHED, internalTxId: payout.payoutNumber,
+            notes: `مطابقة السحب ${payout.payoutNumber}`,
           });
         } else {
           discrepancyCount++;
           totalAmountDiscrepant += actualAmount;
           items.push({
-            id: itemId,
-            batchId,
-            referenceNumber: ref,
-            expectedAmount,
-            actualAmount,
-            currency,
+            id: itemId, referenceNumber, expectedAmount: payout.amount, actualAmount, currency,
             status: ReconciliationStatus.DISCREPANCY,
-            discrepancyType: DiscrepancyType.AMOUNT_MISMATCH,
+            discrepancyType: currency !== payout.currency ? DiscrepancyType.CURRENCY_MISMATCH : DiscrepancyType.AMOUNT_MISMATCH,
             internalTxId: payout.payoutNumber,
-            notes: `فرق في مبلغ السحب: المتوقع ${expectedAmount}، الفعلي ${actualAmount}`,
-            createdAt: now,
+            notes: `مرجع سحب ${payout.payoutNumber} موجود لكن المبلغ أو العملة أو الحالة لا تطابق.`,
           });
         }
         continue;
       }
 
-      // 3. Not Found Internally -> UNKNOWN EXTERNAL (Missing in platform)
       discrepancyCount++;
       totalAmountDiscrepant += actualAmount;
       items.push({
-        id: itemId,
-        batchId,
-        referenceNumber: ref,
-        expectedAmount: 0,
-        actualAmount,
-        currency,
+        id: itemId, referenceNumber, expectedAmount: 0, actualAmount, currency,
         status: ReconciliationStatus.UNKNOWN_EXTERNAL,
         discrepancyType: DiscrepancyType.MISSING_IN_INTERNAL,
-        notes: 'عملية ظاهرة في كشف حساب البنك بدون قيد أو طلب إيداع مطابق في المنصة (Unknown External Transaction) - تم حجزها للمراجعة',
-        createdAt: now,
+        notes: 'عملية خارجية لا يقابلها إيداع أو سحب معروف؛ بانتظار تدقيق المالية.',
       });
     }
 
     const batchStatus = discrepancyCount > 0 ? 'PENDING_REVIEW' : 'COMPLETED';
-
-    // Store in DB or Memory
-    try {
-      const dbBatch = await this.prisma.reconciliationBatch.create({
-        data: {
-          batchNumber,
-          channelCode: dto.channelCode || null,
-          statementDate: new Date(dto.statementDate),
-          totalRecords: dto.externalStatements.length,
-          matchedCount,
-          discrepancyCount,
-          totalAmountMatched: new Prisma.Decimal(totalAmountMatched),
-          totalAmountDiscrepant: new Prisma.Decimal(totalAmountDiscrepant),
-          status: batchStatus,
-          reconciledByUserId: staffUserId,
-          notes: `مطابقة يومية بتاريخ ${dto.statementDate}`,
-          items: {
-            create: items.map((i) => ({
-              referenceNumber: i.referenceNumber,
-              expectedAmount: new Prisma.Decimal(i.expectedAmount),
-              actualAmount: new Prisma.Decimal(i.actualAmount),
-              currency: i.currency,
-              status: i.status,
-              discrepancyType: i.discrepancyType || null,
-              internalTxId: i.internalTxId || null,
-              notes: i.notes || null,
-            })),
-          },
+    // Persist the entire batch + all detail rows atomically. No volatile fallback.
+    const batch = await this.prisma.reconciliationBatch.create({
+      data: {
+        id: batchId,
+        batchNumber,
+        channelCode: dto.channelCode || null,
+        statementDate,
+        totalRecords: dto.externalStatements.length,
+        matchedCount,
+        discrepancyCount,
+        totalAmountMatched: new Prisma.Decimal(totalAmountMatched),
+        totalAmountDiscrepant: new Prisma.Decimal(totalAmountDiscrepant),
+        status: batchStatus,
+        reconciledByUserId: staffUserId,
+        notes: `مطابقة كشف بتاريخ ${dto.statementDate}`,
+        items: {
+          create: items.map((item) => ({
+            id: item.id,
+            referenceNumber: item.referenceNumber,
+            expectedAmount: new Prisma.Decimal(item.expectedAmount),
+            actualAmount: new Prisma.Decimal(item.actualAmount),
+            currency: item.currency,
+            status: item.status,
+            discrepancyType: item.discrepancyType || null,
+            internalTxId: item.internalTxId || null,
+            notes: item.notes || null,
+          })),
         },
-      });
-    } catch (err: any) {
-      this.failClosedForTenant(err);
-      this.logger.warn(`Local unscoped development reconciliation fallback (${err?.message})`);
-    }
-
-    // Save in memory
-    const memBatch: InMemoryReconciliationBatch = {
-      id: batchId,
-      batchNumber,
-      channelCode: dto.channelCode || null,
-      statementDate: new Date(dto.statementDate),
-      totalRecords: dto.externalStatements.length,
-      matchedCount,
-      discrepancyCount,
-      totalAmountMatched,
-      totalAmountDiscrepant,
-      status: batchStatus,
-      reconciledByUserId: staffUserId,
-      notes: `مطابقة يومية بتاريخ ${dto.statementDate}`,
-      createdAt: now,
-      updatedAt: now,
-      items,
-    };
-
-    this.memoryBatches.set(batchId, memBatch);
-
-    this.logger.log(
-      `[ReconciliationBatchCompleted] Batch ${batchNumber}: ${matchedCount} matched (${totalAmountMatched}), ${discrepancyCount} discrepancies (${totalAmountDiscrepant}). Status: ${batchStatus}`,
-    );
+      },
+      include: { items: true },
+    });
 
     return {
-      batchId,
-      batchNumber,
+      batchId: batch.id,
+      batchNumber: batch.batchNumber,
       statementDate: dto.statementDate,
-      totalRecords: dto.externalStatements.length,
-      matchedCount,
-      discrepancyCount,
-      totalAmountMatched,
-      totalAmountDiscrepant,
-      discrepancies: items
-        .filter((i) => i.status !== ReconciliationStatus.MATCHED)
-        .map((i) => ({
-          id: i.id,
-          referenceNumber: i.referenceNumber,
-          expectedAmount: i.expectedAmount,
-          actualAmount: i.actualAmount,
-          currency: i.currency,
-          type: i.discrepancyType as DiscrepancyType,
-          status: i.status,
-          notes: i.notes || undefined,
+      totalRecords: batch.totalRecords,
+      matchedCount: batch.matchedCount,
+      discrepancyCount: batch.discrepancyCount,
+      totalAmountMatched: Number(batch.totalAmountMatched),
+      totalAmountDiscrepant: Number(batch.totalAmountDiscrepant),
+      discrepancies: batch.items
+        .filter((item) => item.status !== ReconciliationStatus.MATCHED)
+        .map((item) => ({
+          id: item.id,
+          referenceNumber: item.referenceNumber,
+          expectedAmount: Number(item.expectedAmount),
+          actualAmount: Number(item.actualAmount),
+          currency: item.currency as CurrencyCode,
+          type: item.discrepancyType as DiscrepancyType,
+          status: item.status as ReconciliationStatus,
+          notes: item.notes || undefined,
         })),
     };
   }
 
-  /**
-   * List all reconciliation batches
-   */
-  async listBatches(): Promise<InMemoryReconciliationBatch[]> {
-    try {
-      const dbBatches = await this.prisma.reconciliationBatch.findMany({
-        orderBy: { statementDate: 'desc' },
-        include: { items: true },
-      });
-      if (dbBatches.length > 0 || process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        return dbBatches.map((b) => ({
-          id: b.id,
-          batchNumber: b.batchNumber,
-          channelCode: b.channelCode as PaymentChannelCode,
-          statementDate: b.statementDate,
-          totalRecords: b.totalRecords,
-          matchedCount: b.matchedCount,
-          discrepancyCount: b.discrepancyCount,
-          totalAmountMatched: Number(b.totalAmountMatched),
-          totalAmountDiscrepant: Number(b.totalAmountDiscrepant),
-          status: b.status,
-          reconciledByUserId: b.reconciledByUserId,
-          notes: b.notes,
-          createdAt: b.createdAt,
-          updatedAt: b.updatedAt,
-          items: b.items.map((it) => ({
-            id: it.id,
-            batchId: it.batchId,
-            referenceNumber: it.referenceNumber,
-            expectedAmount: Number(it.expectedAmount),
-            actualAmount: Number(it.actualAmount),
-            currency: it.currency as CurrencyCode,
-            status: it.status as ReconciliationStatus,
-            discrepancyType: it.discrepancyType as DiscrepancyType,
-            internalTxId: it.internalTxId,
-            notes: it.notes,
-            resolvedAt: it.resolvedAt,
-            resolvedByUserId: it.resolvedByUserId,
-            createdAt: it.createdAt,
-          })),
-        }));
-      }
-    } catch (error: any) {
-      this.failClosedForTenant(error);
-      this.logger.warn(`Local unscoped development reconciliation listing fallback: ${error?.message || error}`);
-    }
-
-    return Array.from(this.memoryBatches.values()).sort(
-      (a, b) => b.statementDate.getTime() - a.statementDate.getTime(),
-    );
+  async listBatches() {
+    const batches = await this.prisma.reconciliationBatch.findMany({
+      where: { tenantId: this.tenantId },
+      orderBy: { statementDate: 'desc' },
+      include: { items: true },
+    });
+    return batches.map((batch) => ({
+      ...batch,
+      totalAmountMatched: Number(batch.totalAmountMatched),
+      totalAmountDiscrepant: Number(batch.totalAmountDiscrepant),
+      items: batch.items.map((item) => ({
+        ...item,
+        expectedAmount: Number(item.expectedAmount),
+        actualAmount: Number(item.actualAmount),
+      })),
+    }));
   }
 
-  /**
-   * Get single batch details and items
-   */
-  async getBatchById(batchId: string): Promise<InMemoryReconciliationBatch> {
-    const batches = await this.listBatches();
-    const batch = batches.find((b) => b.id === batchId || b.batchNumber === batchId);
-    if (!batch) {
-      throw new NotFoundException(`دفعة التسوية ${batchId} غير موجودة`);
-    }
-    return batch;
+  async getBatchById(batchId: string) {
+    const batch = await this.prisma.reconciliationBatch.findFirst({
+      where: { tenantId: this.tenantId, OR: [{ id: batchId }, { batchNumber: batchId }] },
+      include: { items: true },
+    });
+    if (!batch) throw new NotFoundException(`دفعة المطابقة ${batchId} غير موجودة.`);
+    return {
+      ...batch,
+      totalAmountMatched: Number(batch.totalAmountMatched),
+      totalAmountDiscrepant: Number(batch.totalAmountDiscrepant),
+      items: batch.items.map((item) => ({
+        ...item,
+        expectedAmount: Number(item.expectedAmount),
+        actualAmount: Number(item.actualAmount),
+      })),
+    };
   }
 
-  /**
-   * P05 / Manual Discrepancy Resolution:
-   * Finance officer resolves an exception or dispute after reviewing bank statement proof.
-   */
   async resolveDiscrepancy(
     staffUserId: string,
     itemId: string,
     notes: string,
     action: 'ADJUST_LEDGER' | 'REJECT_EXTERNAL' | 'FORCE_MATCH',
   ): Promise<{ success: boolean; message: string }> {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
+    if (!notes?.trim()) throw new BadRequestException('ملاحظات المعالجة إلزامية.');
+    const item = await this.prisma.reconciliationItem.findUnique({
+      where: { id: itemId },
+      include: { batch: true },
+    });
+    if (!item || item.batch.tenantId !== this.tenantId) throw new NotFoundException('عنصر المطابقة غير موجود.');
+    if (item.status === ReconciliationStatus.MATCHED || item.status === ReconciliationStatus.RESOLVED_MANUAL) {
+      throw new ConflictException('تمت معالجة هذا العنصر مسبقاً.');
+    }
+    if (item.batch.reconciledByUserId === staffUserId) {
+      throw new ForbiddenException('يلزم موظف مالية مستقل عن منفذ تشغيل المطابقة لمعالجة الاستثناء.');
+    }
+
+    if (action === 'ADJUST_LEDGER') {
+      // Do not manufacture an account mapping or debit/credit direction. A
+      // controlled suspense-account proposal + separate approval is still
+      // required before a monetary adjustment can be posted.
       throw new ServiceUnavailableException(
-        'Discrepancy resolution is disabled until the resolution workflow is fully database-backed.',
+        'ترحيل فرق مالي معطل حتى تحديد حسابات التسوية المعتمدة لكل قناة وإضافة موافقة مالية ثانية مستقلة؛ لم يُنشأ أي قيد.',
       );
     }
-    for (const batch of this.memoryBatches.values()) {
-      const item = batch.items.find((i) => i.id === itemId);
-      if (item) {
-        item.status = ReconciliationStatus.RESOLVED_MANUAL;
-        item.resolvedAt = new Date();
-        item.resolvedByUserId = staffUserId;
-        item.notes = `${item.notes || ''} | تمت المعالجة بواسطة ${staffUserId}: ${notes} (الإجراء: ${action})`;
 
-        // Check if all discrepancies in batch are resolved
-        const remainingDiscrepancies = batch.items.filter(
-          (i) =>
-            i.status === ReconciliationStatus.DISCREPANCY ||
-            i.status === ReconciliationStatus.UNKNOWN_EXTERNAL ||
-            i.status === ReconciliationStatus.UNKNOWN_INTERNAL,
-        );
-
-        if (remainingDiscrepancies.length === 0) {
-          batch.status = 'RESOLVED';
-          batch.updatedAt = new Date();
-        }
-
-        return {
-          success: true,
-          message: 'تمت معالجة الفارق المالي وتحديث سجل المطابقة بنجاح.',
-        };
+    if (action === 'FORCE_MATCH') {
+      const exact = item.expectedAmount.equals(item.actualAmount);
+      if (!exact || item.discrepancyType === DiscrepancyType.CURRENCY_MISMATCH) {
+        throw new BadRequestException('لا يمكن فرض المطابقة ما لم يتساوَ المبلغ والعملة تماماً.');
       }
+    } else if (action === 'REJECT_EXTERNAL' && item.status !== ReconciliationStatus.UNKNOWN_EXTERNAL) {
+      throw new BadRequestException('رفض الحركة الخارجية متاح فقط للحركات التي لا يقابلها سجل داخلي.');
     }
 
-    throw new NotFoundException(`عنصر المطابقة ${itemId} غير موجود`);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.reconciliationItem.update({
+        where: { id: itemId },
+        data: {
+          status: ReconciliationStatus.RESOLVED_MANUAL,
+          resolvedAt: new Date(),
+          resolvedByUserId: staffUserId,
+          notes: [item.notes, `معالجة مالية ${action} بواسطة ${staffUserId}: ${notes.trim()}`].filter(Boolean).join(' | '),
+        },
+      });
+      const openCount = await tx.reconciliationItem.count({
+        where: {
+          batchId: item.batchId,
+          status: { in: [ReconciliationStatus.DISCREPANCY, ReconciliationStatus.UNKNOWN_EXTERNAL, ReconciliationStatus.UNKNOWN_INTERNAL, ReconciliationStatus.PENDING_REVIEW] },
+        },
+      });
+      if (openCount === 0) {
+        await tx.reconciliationBatch.update({ where: { id: item.batchId }, data: { status: 'RESOLVED' } });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: staffUserId,
+          action: 'RECONCILIATION_ITEM_RESOLVED',
+          entityName: 'ReconciliationItem',
+          entityId: itemId,
+          newValues: { action, notes: notes.trim(), financialImpact: 'NONE' },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    return {
+      success: true,
+      message: action === 'FORCE_MATCH'
+        ? 'تمت المطابقة بعد التحقق من تطابق المبلغ والعملة، وحُفظ القرار والتدقيق.'
+        : 'تم عزل الحركة الخارجية ورفض مطابقتها بعد مراجعة مستقلة؛ لم يتغير أي رصيد.',
+    };
   }
+  async proposeLedgerAdjustment(
+    financeUserId: string,
+    itemId: string,
+    debitAccountCode: string,
+    creditAccountCode: string,
+    notes: string,
+  ) {
+    if (!notes?.trim()) throw new BadRequestException('سبب التسوية المالية إلزامي.');
+    const debitCode = debitAccountCode?.trim();
+    const creditCode = creditAccountCode?.trim();
+    if (!debitCode || !creditCode || debitCode === creditCode) {
+      throw new BadRequestException('يجب اختيار حساب مدين وحساب دائن مختلفين من دليل الحسابات.');
+    }
+
+    const item = await this.prisma.reconciliationItem.findUnique({
+      where: { id: itemId },
+      include: { batch: true },
+    });
+    if (!item || item.batch.tenantId !== this.tenantId) {
+      throw new NotFoundException('عنصر المطابقة غير موجود ضمن نطاقك.');
+    }
+    if (
+      item.status !== ReconciliationStatus.DISCREPANCY ||
+      ![DiscrepancyType.AMOUNT_MISMATCH, DiscrepancyType.FEE_MISMATCH].includes(item.discrepancyType as DiscrepancyType) ||
+      item.expectedAmount.lessThanOrEqualTo(0) ||
+      item.actualAmount.lessThanOrEqualTo(0)
+    ) {
+      throw new BadRequestException('اقتراح قيد تسوية متاح فقط لفروقات مبلغ/رسوم بين حركتين موجودتين وبالعملة نفسها؛ لا يشمل الحركات المجهولة أو اختلاف العملات أو المراجع المكررة.');
+    }
+
+    const amount = item.actualAmount.sub(item.expectedAmount).abs();
+    if (amount.lessThanOrEqualTo(0)) throw new BadRequestException('قيمة الفرق تساوي صفراً.');
+    const scopedDebitCode = this.ledgerService.scopeAccountCode(debitCode);
+    const scopedCreditCode = this.ledgerService.scopeAccountCode(creditCode);
+    const accounts = await this.prisma.ledgerAccount.findMany({
+      where: { code: { in: [scopedDebitCode, scopedCreditCode] }, currency: item.currency },
+      select: { code: true, currency: true },
+    });
+    if (accounts.length !== 2) {
+      throw new BadRequestException('يجب أن يكون الحسابان موجودين مسبقاً في دليل الحسابات وبالعملة نفسها؛ لن ينشئ النظام حسابات تلقائياً للتسويات.');
+    }
+
+    return this.prisma.reconciliationAdjustment.create({
+      data: {
+        tenantId: this.tenantId,
+        itemId,
+        debitAccountCode: debitCode,
+        creditAccountCode: creditCode,
+        amount,
+        currency: item.currency,
+        status: 'PENDING_APPROVAL',
+        proposedByUserId: financeUserId,
+        proposalNotes: notes.trim(),
+      },
+    });
+  }
+
+  async approveLedgerAdjustment(
+    approverUserId: string,
+    adjustmentId: string,
+    approvalNotes: string,
+  ) {
+    if (!approvalNotes?.trim()) throw new BadRequestException('ملاحظات اعتماد التسوية مطلوبة.');
+    return this.prisma.$transaction(async (tx) => {
+      const adjustment = await tx.reconciliationAdjustment.findUnique({
+        where: { id: adjustmentId },
+        include: { item: { include: { batch: true } } },
+      });
+      if (!adjustment || adjustment.tenantId !== this.tenantId) {
+        throw new NotFoundException('طلب التسوية غير موجود ضمن نطاقك.');
+      }
+      if (adjustment.status !== 'PENDING_APPROVAL') {
+        throw new ConflictException('تمت معالجة طلب التسوية مسبقاً.');
+      }
+      if (adjustment.proposedByUserId === approverUserId) {
+        throw new ForbiddenException('مبدأ الرقابة الثنائية يمنع مقدم الاقتراح من اعتماده.');
+      }
+      const item = adjustment.item;
+      if (
+        item.status !== ReconciliationStatus.DISCREPANCY ||
+        ![DiscrepancyType.AMOUNT_MISMATCH, DiscrepancyType.FEE_MISMATCH].includes(item.discrepancyType as DiscrepancyType) ||
+        item.expectedAmount.lessThanOrEqualTo(0) ||
+        item.actualAmount.lessThanOrEqualTo(0)
+      ) {
+        throw new ConflictException('لم تعد حالة عنصر المطابقة تسمح بترحيل هذه التسوية.');
+      }
+      const expectedAmount = item.actualAmount.sub(item.expectedAmount).abs();
+      if (!expectedAmount.equals(adjustment.amount) || item.currency !== adjustment.currency) {
+        throw new ConflictException('تغيرت قيمة الفرق أو العملة منذ اقتراح التسوية.');
+      }
+
+      const debitCode = this.ledgerService.scopeAccountCode(adjustment.debitAccountCode);
+      const creditCode = this.ledgerService.scopeAccountCode(adjustment.creditAccountCode);
+      const accounts = await tx.ledgerAccount.findMany({
+        where: { code: { in: [debitCode, creditCode] }, currency: adjustment.currency },
+        select: { code: true, currency: true },
+      });
+      if (accounts.length !== 2 || debitCode === creditCode) {
+        throw new BadRequestException('حسابات التسوية لم تعد صالحة أو لا تطابق العملة.');
+      }
+
+      const ledger = await this.ledgerService.recordDoubleEntryTransaction({
+        txNumber: 'LTX-RECON-ADJ-' + adjustment.id,
+        type: LedgerTransactionType.ADJUSTMENT,
+        referenceType: 'RECONCILIATION_ADJUSTMENT',
+        referenceId: adjustment.id,
+        idempotencyKey: 'RECON-ADJUST-' + adjustment.id,
+        createdByUserId: approverUserId,
+        notes: 'تسوية فرق المطابقة: ' + approvalNotes.trim(),
+        entries: [
+          {
+            accountCode: adjustment.debitAccountCode,
+            debitAmount: Number(adjustment.amount),
+            creditAmount: 0,
+            currency: adjustment.currency as CurrencyCode,
+            notes: 'حساب مدين لتسوية فرق المطابقة ' + item.referenceNumber,
+          },
+          {
+            accountCode: adjustment.creditAccountCode,
+            debitAmount: 0,
+            creditAmount: Number(adjustment.amount),
+            currency: adjustment.currency as CurrencyCode,
+            notes: 'حساب دائن لتسوية فرق المطابقة ' + item.referenceNumber,
+          },
+        ],
+      }, tx);
+      const ledgerTxId = ledger?.transaction?.id || ledger?.transaction?.txNumber;
+      if (!ledgerTxId) throw new ServiceUnavailableException('لم يتم إنشاء قيد دفتر الأستاذ؛ ألغيت التسوية.');
+
+      await tx.reconciliationAdjustment.update({
+        where: { id: adjustmentId },
+        data: {
+          status: 'POSTED',
+          approvedByUserId: approverUserId,
+          approvalNotes: approvalNotes.trim(),
+          ledgerTxId: String(ledgerTxId),
+          approvedAt: new Date(),
+        },
+      });
+      await tx.reconciliationItem.update({
+        where: { id: item.id },
+        data: {
+          status: ReconciliationStatus.RESOLVED_MANUAL,
+          resolvedAt: new Date(),
+          resolvedByUserId: approverUserId,
+          notes: [item.notes, 'تم ترحيل قيد تسوية معتمد ' + ledgerTxId].filter(Boolean).join(' | '),
+        },
+      });
+      const openCount = await tx.reconciliationItem.count({
+        where: {
+          batchId: item.batchId,
+          status: {
+            in: [
+              ReconciliationStatus.DISCREPANCY,
+              ReconciliationStatus.UNKNOWN_EXTERNAL,
+              ReconciliationStatus.UNKNOWN_INTERNAL,
+              ReconciliationStatus.PENDING_REVIEW,
+            ],
+          },
+        },
+      });
+      if (openCount === 0) {
+        await tx.reconciliationBatch.update({
+          where: { id: item.batchId },
+          data: { status: 'RESOLVED' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: approverUserId,
+          action: 'RECONCILIATION_LEDGER_ADJUSTMENT_POSTED',
+          entityName: 'ReconciliationAdjustment',
+          entityId: adjustmentId,
+          newValues: {
+            itemId: item.id,
+            debitAccountCode: adjustment.debitAccountCode,
+            creditAccountCode: adjustment.creditAccountCode,
+            amount: adjustment.amount.toString(),
+            currency: adjustment.currency,
+            ledgerTxId: String(ledgerTxId),
+            proposedByUserId: adjustment.proposedByUserId,
+            approvedByUserId: approverUserId,
+          },
+        },
+      });
+      return tx.reconciliationAdjustment.findUnique({ where: { id: adjustmentId } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
 }

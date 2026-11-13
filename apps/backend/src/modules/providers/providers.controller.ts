@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, UseGuards, Query, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProvidersService } from './providers.service';
 import { SupplierBalanceService } from './supplier-balance.service';
@@ -86,7 +86,10 @@ export class ProvidersController {
       fields: Record<string, string>;
     },
   ) {
-    return this.providersService.validatePlayer(body.providerCode || 'MOCK', {
+    if (!body.providerCode) {
+      throw new BadRequestException('يجب تحديد رمز المزود صراحة؛ لا يتم استخدام MOCK كقيمة افتراضية.');
+    }
+    return this.providersService.validatePlayer(body.providerCode, {
       serviceId: body.serviceId,
       fields: body.fields,
     });

@@ -11,6 +11,7 @@ export enum UserRole {
   FINANCE = 'FINANCE',
   RESELLER = 'RESELLER',
   SUB_AGENT = 'SUB_AGENT',
+  PAYMENT_AGENT = 'PAYMENT_AGENT',
 }
 
 export enum CurrencyCode {
@@ -65,6 +66,13 @@ export enum PaymentChannelCode {
   BINANCE_PAY = 'BINANCE_PAY',
   USDT_TRC20 = 'USDT_TRC20',
   USDT_BEP20 = 'USDT_BEP20',
+}
+
+export enum PaymentSenderIdentifierType {
+  ALIAS = 'ALIAS',
+  PHONE = 'PHONE',
+  WALLET_ID = 'WALLET_ID',
+  ACCOUNT_NUMBER = 'ACCOUNT_NUMBER',
 }
 
 export enum LedgerAccountType {

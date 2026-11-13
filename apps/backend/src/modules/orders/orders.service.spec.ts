@@ -153,7 +153,7 @@ describe('OrdersService (Phase 3 — Real Shopping & Fulfillment)', () => {
         paymentMethod: PaymentChannelCode.WALLET,
       });
 
-      expect(mockLedgerService.holdWalletBalance).toHaveBeenCalledWith('wallet-cust-yer', 550);
+      expect(mockLedgerService.holdWalletBalance).toHaveBeenCalledWith('wallet-cust-yer', '550');
       expect(mockPrisma.order.create).toHaveBeenCalled();
       expect(mockFulfillmentService.dispatchOrder).toHaveBeenCalledWith('ord-created-1');
       expect(result).toBeDefined();

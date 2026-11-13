@@ -7,10 +7,11 @@ environment:
   sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
+  material_ui: ^1.11.0
   flutter:
     sdk: flutter
   http: ^1.2.0
-  intl: ^0.19.0
+  intl: ^0.20.3
   uuid: ^4.3.3
   flutter_secure_storage: ^9.2.2
 

@@ -1,5 +1,5 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiProperty } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Param, UseGuards, Query } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiProperty, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { IsNotEmpty, IsString } from 'class-validator';
 import { WalletService } from './wallet.service';
 import { DepositFundsDto } from '../ledger/dto/ledger-adjustment.dto';
@@ -66,8 +66,25 @@ export class WalletController {
     return this.walletService.getWalletsForAdmin(customerId);
   }
 
+  @Get('transactions')
+  @ApiOperation({ summary: 'Get persisted customer wallet ledger history with pagination' })
+  async getTransactions(
+    @CurrentUser('id') userId: string,
+    @Query('currency') currency?: CurrencyCode,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.walletService.getWalletTransactions(
+      userId,
+      currency,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 20,
+    );
+  }
+
   @Post('topup/request')
-  @ApiOperation({ summary: 'Submit manual transfer topup request with proof or reference number' })
+  @ApiExcludeEndpoint()
+  @ApiOperation({ summary: 'Deprecated legacy topup path; disabled by default' })
   async requestTopup(
     @CurrentUser('id') userId: string,
     @Body()
@@ -83,6 +100,7 @@ export class WalletController {
   }
 
   @Post('admin/topup/:id/confirm')
+  @ApiExcludeEndpoint()
   @Roles(UserRole.OWNER, UserRole.FINANCE_MANAGER, UserRole.GENERAL_MANAGER, UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Admin confirms verified topup and credits customer wallet via ledger' })
   async confirmTopup(
@@ -93,6 +111,7 @@ export class WalletController {
   }
 
   @Post('deposit')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Instant test deposit for development demo simulation' })
   async deposit(@CurrentUser('id') userId: string, @Body() dto: DepositFundsDto) {
     return this.walletService.depositFunds(userId, dto);

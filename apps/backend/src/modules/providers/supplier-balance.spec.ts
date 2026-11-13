@@ -43,6 +43,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
       }),
     },
     supplierTransaction: {
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'supplier-tx-1' }),
     },
     provider: {
@@ -53,6 +54,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
     order: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     wallet: {
       findUnique: jest.fn(),
@@ -72,6 +74,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
 
   const mockAdapter = {
     submitOrder: jest.fn().mockResolvedValue({
+      success: true,
       status: 'SUCCESS',
       pinCode: 'PIN-123456',
       providerOrderId: 'PROV-TX-999',
@@ -120,7 +123,7 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         expect.objectContaining({
           providerCode: 'MOCK',
           currency: CurrencyCode.USD,
-          amount: 2500.0,
+          amount: '2500',
           referenceNumber: 'WIRE-CAC-998877',
         }),
         mockPrisma,
@@ -141,8 +144,8 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         userId: 'cust-101',
         status: OrderStatus.Queued,
         snapshotServiceName: 'PUBG Mobile',
-        snapshotRetailPrice: new Prisma.Decimal(100.0),
-        snapshotCostPrice: new Prisma.Decimal(999999999.0), // Exceeds balance!
+        snapshotRetailPrice: new Prisma.Decimal('1000000000.0000'),
+        snapshotCostPrice: new Prisma.Decimal('999999999.0000'), // Exceeds supplier balance while remaining below retail price.
         snapshotCurrency: CurrencyCode.USD,
         snapshotBeneficiaryFields: { player_id: '12345678' },
         product: { sku: 'PUBG-BIG-PACK' },
@@ -159,7 +162,9 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         },
       };
 
-      mockPrisma.order.findUnique.mockResolvedValueOnce(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockPrisma.order.update.mockResolvedValue({});
 
       const dispatchResult = await fulfillmentService.dispatchOrder('ord-gating-fail-1');
@@ -170,6 +175,20 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
       expect(dispatchResult.message).toContain('غير كافٍ');
       // Adapter must NOT have been called!
       expect(mockAdapter.submitOrder).not.toHaveBeenCalled();
+    });
+
+    it('compares supplier limits with exact Decimal precision beyond JavaScript safe integers', async () => {
+      supplierAccountRecord.balance = new Prisma.Decimal('90071992547409.9999');
+      supplierAccountRecord.creditLimit = new Prisma.Decimal(0);
+
+      const result = await supplierBalanceService.checkFulfillmentGating(
+        'MOCK',
+        CurrencyCode.USD,
+        '90071992547410.0000',
+      );
+
+      expect(result.allowed).toBe(false);
+      expect(result.message).toContain('غير كافٍ');
     });
 
     it('AT-16: successfully dispatches order and deducts provider commercial balance when balance is sufficient', async () => {
@@ -197,7 +216,9 @@ describe('Phase 05 — AT-16: Supplier Commercial Balance & Fulfillment Gating',
         },
       };
 
-      mockPrisma.order.findUnique.mockResolvedValueOnce(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockPrisma.order.update.mockResolvedValue({});
 
       const beforeBalance = (await supplierBalanceService.getSupplierBalance('MOCK', CurrencyCode.USD)).balance;

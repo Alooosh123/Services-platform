@@ -9,6 +9,7 @@ import {
   DepositStatus,
   PaymentChannelMode,
   ChannelVerificationStatus,
+  PaymentSenderIdentifierType,
   SaaSBillingCycle,
 } from '@prisma/client';
 import * as dotenv from 'dotenv';
@@ -20,7 +21,19 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config();
 
+// This seed includes development/sample users, products and provider fixtures.
+// Production must bootstrap real administrator, merchant and catalog records
+// through the secured onboarding workflows instead of importing demo identities.
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Production seeding is disabled: use the audited production bootstrap procedure.');
+}
+
 const prisma = new PrismaClient();
+
+function isWeakOrPlaceholderSeedSecret(value: string | undefined): boolean {
+  if (!value || value.trim().length < 20) return true;
+  return /^(?:replace[-_ ]?with|change[-_ ]?me|your[-_ ]|example[-_ ]?password)/i.test(value.trim());
+}
 
 const defaultTiers = [
   { code: 'B2C', name: 'Standard Customer', nameAr: 'عميل عادي', displayOrder: 1 },
@@ -110,8 +123,8 @@ async function seedSaasPlans() {
 async function ensureSuperAdmin() {
   const email = process.env.SEED_SUPER_ADMIN_EMAIL?.trim();
   const password = process.env.SEED_SUPER_ADMIN_PASSWORD;
-  if (!email || !password || password.length < 20) {
-    throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique SEED_SUPER_ADMIN_PASSWORD of at least 20 characters before running the development seed.');
+  if (!email || !password || isWeakOrPlaceholderSeedSecret(password)) {
+    throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique, non-placeholder SEED_SUPER_ADMIN_PASSWORD of at least 20 characters before running the development seed.');
   }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Development seed is disabled in production.');
@@ -146,8 +159,8 @@ async function main() {
     ['SEED_CUSTOMER_PASSWORD', process.env.SEED_CUSTOMER_PASSWORD],
   ] as const;
   for (const [name, value] of requiredSeedSecrets) {
-    if (!value || (name.endsWith('_PASSWORD') && value.length < 20)) {
-      throw new Error(`Missing or weak ${name}. Configure unique development-only seed credentials before running the seed.`);
+    if (!value || (name.endsWith('_PASSWORD') && isWeakOrPlaceholderSeedSecret(value))) {
+      throw new Error(`Missing, placeholder, or weak ${name}. Configure a unique development-only secret of at least 20 characters before running the seed.`);
     }
   }
 
@@ -160,8 +173,18 @@ async function main() {
   await seedSaasPlans();
 
   if (!resetSeedData && (existingUsers > 0 || existingCurrencies > 0)) {
+    // Wallet.currency has a foreign key to currencies; repair missing references
+    // without overwriting existing currency settings or any financial balances.
+    await prisma.currency.createMany({
+      data: [
+        { code: CurrencyCode.YER, name: 'Yemeni Rial', nameAr: 'ريال يمني', symbol: 'YR', symbolAr: 'ر.ي', decimals: 2, isBase: false, isActive: true },
+        { code: CurrencyCode.USD, name: 'US Dollar', nameAr: 'دولار أمريكي', symbol: '$', symbolAr: '$', decimals: 2, isBase: true, isActive: true },
+        { code: CurrencyCode.SAR, name: 'Saudi Rial', nameAr: 'ريال سعودي', symbol: 'SAR', symbolAr: 'ر.س', decimals: 2, isBase: false, isActive: true },
+      ],
+      skipDuplicates: true,
+    });
     await ensureSuperAdmin();
-    console.log('Existing application data preserved; identity tiers and bootstrap administrator are ready.');
+    console.log('Existing application data preserved; supported currencies and bootstrap administrator are ready.');
     return;
   }
 
@@ -254,11 +277,11 @@ async function main() {
   const paymentMethodsData = [
     {
       code: PaymentChannelCode.JAIB,
-      name: 'Jaib Wallet (CAC Bank)',
-      nameAr: 'محفظة جيب (بنك التسليف التعاوني الزراعي CAC)',
+      name: 'Jaib Wallet (AHD Financial Services)',
+      nameAr: 'محفظة جيب (شركة عهد للخدمات المالية AHD)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'قم بالتحويل إلى رقم حساب المحفظة: 770123456، ثم أرفق رقم الحوالة وصورة الإشعار.',
+      instructionsAr: 'قناة جيب تجريبية غير مفعلة. لا تستخدمها لاستقبال أموال فعلية حتى إدخال حساب رسمي موثق.',
       isActive: false,
       isMock: true,
     },
@@ -268,7 +291,7 @@ async function main() {
       nameAr: 'محفظة جوالي (بنك اليمن والكويت)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'قم بالتحويل إلى حساب جوالي: 733987654، ثم أرفق رقم الإشعار للتأكيد الفوري.',
+      instructionsAr: 'قناة جوالي تجريبية غير مفعلة. لا تستخدمها لاستقبال أموال فعلية حتى إدخال حساب رسمي موثق.',
       isActive: false,
       isMock: true,
     },
@@ -278,7 +301,7 @@ async function main() {
       nameAr: 'محفظة كاش (بنك سبأ الإسلامي)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'أرسل الحوالة إلى محفظة كاش رقم: 711223344، وأدخل رقم العملية.',
+      instructionsAr: 'قناة كاش تجريبية غير مفعلة حتى إدخال حساب رسمي موثق.',
       isActive: false,
       isMock: true,
     },
@@ -288,7 +311,7 @@ async function main() {
       nameAr: 'ون كاش (شركة YOU)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'التحويل عبر ون كاش إلى الرقم: 739112233، ثم كتابة رقم الإشعار.',
+      instructionsAr: 'قناة ون كاش تجريبية غير مفعلة حتى إدخال حساب رسمي موثق.',
       isActive: false,
       isMock: true,
     },
@@ -298,7 +321,7 @@ async function main() {
       nameAr: 'محفظة إيزي',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'حول المبلغ إلى محفظة إيزي رقم 775544332 وأدخل رقم العملية.',
+      instructionsAr: 'قناة إيزي تجريبية غير مفعلة حتى إدخال حساب رسمي موثق.',
       isActive: false,
       isMock: true,
     },
@@ -323,7 +346,8 @@ async function main() {
     {
       code: PaymentChannelCode.JAIB,
       name: 'Jaib Wallet (CAC Bank)',
-      nameAr: 'محفظة جيب - بنك التسليف التعاوني الزراعي',
+      nameAr: 'محفظة جيب - شركة عهد للخدمات المالية',
+      senderIdentifierType: PaymentSenderIdentifierType.ALIAS,
       accountNumber: 'NOT_CONFIGURED',
       accountHolderName: 'يُحدد بعد التحقق من حساب الاستقبال الرسمي',
       instructionsAr: 'قناة غير مفعلة. يجب إدخال بيانات حساب الاستقبال الرسمية والتحقق منها قبل إتاحتها للعملاء.',
@@ -704,7 +728,7 @@ async function main() {
             fromStatus: DepositStatus.PENDING,
             toStatus: DepositStatus.UNDER_REVIEW,
             changedByUserId: financeOfficer.id,
-            notes: 'قيد مراجعة إشعار بنك CAC',
+            notes: 'قيد مراجعة إشعار تحويل جيب (بيانات اختبار غير إنتاجية)',
           },
           {
             fromStatus: DepositStatus.UNDER_REVIEW,

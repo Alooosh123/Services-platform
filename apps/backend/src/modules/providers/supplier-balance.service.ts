@@ -12,6 +12,7 @@ import {
   CurrencyCode,
   SupplierAccountType,
   SupplierDepositDto,
+  MonetaryInput,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
@@ -45,56 +46,31 @@ export interface InMemorySupplierTransaction {
 @Injectable()
 export class SupplierBalanceService {
   private readonly logger = new Logger(SupplierBalanceService.name);
-  private memoryAccounts: Map<string, InMemorySupplierAccount> = new Map();
-  private memoryTransactions: InMemorySupplierTransaction[] = [];
-
   constructor(
     private prisma: PrismaService,
     private ledgerService: LedgerService,
-  ) {
-    // Seed mock balances for local demo only. Tenant requests never share this store.
-    if (process.env.NODE_ENV !== 'production') {
-      this.seedDefaultAccounts();
+  ) {}
+
+  private assertDatabaseForFinancialOperation(): never {
+    throw new ServiceUnavailableException('Supplier commercial balances require a durable database record.');
+  }
+
+  private toMoneyDecimal(value: MonetaryInput, label: string): Prisma.Decimal {
+    let amount: Prisma.Decimal;
+    try {
+      amount = new Prisma.Decimal(value);
+    } catch {
+      throw new BadRequestException(`${label} is not a valid decimal amount.`);
     }
-  }
-
-  private seedDefaultAccounts() {
-    this.seedAccount('MOCK', 'prov-mock', CurrencyCode.USD, 10000, 5000);
-    this.seedAccount('MANUAL', 'prov-manual', CurrencyCode.USD, 999999, 0);
-    this.seedAccount('EXTERNAL_API', 'prov-ext', CurrencyCode.USD, 1450.5, 2000);
-    this.seedAccount('MOCK', 'prov-mock-yer', CurrencyCode.YER, 5000000, 1000000);
-  }
-
-  private seedAccount(
-    providerCode: string,
-    providerId: string,
-    currency: CurrencyCode,
-    balance: number,
-    creditLimit: number,
-  ) {
-    const key = `${providerCode.toUpperCase()}_${currency}`;
-    this.memoryAccounts.set(key, {
-      id: `sa-${key.toLowerCase()}`,
-      providerId,
-      providerCode: providerCode.toUpperCase(),
-      currency,
-      balance,
-      creditLimit,
-      accountType: SupplierAccountType.PREPAID,
-      updatedAt: new Date(),
-    });
-  }
-
-  private getAccountKey(providerCode: string, currency: CurrencyCode): string {
-    return `${providerCode.toUpperCase()}_${currency}`;
-  }
-
-  private assertDatabaseForFinancialOperation(): void {
-    if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-      throw new ServiceUnavailableException(
-        'Supplier commercial balances require an available tenant-scoped database.',
-      );
+    if (
+      !amount.isFinite() ||
+      amount.isNegative() ||
+      amount.decimalPlaces() > 4 ||
+      amount.greaterThan('99999999999999.9999')
+    ) {
+      throw new BadRequestException(`${label} must be non-negative and fit DECIMAL(18,4).`);
     }
+    return amount;
   }
 
   async getAllSupplierAccounts(): Promise<InMemorySupplierAccount[]> {
@@ -115,19 +91,15 @@ export class SupplierBalanceService {
         updatedAt: account.updatedAt,
       }));
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        this.logger.error(`Supplier account listing failed: ${error?.message || error}`);
-        this.assertDatabaseForFinancialOperation();
-      }
-      this.logger.warn(`Local development supplier accounts fallback: ${error?.message || error}`);
-      return Array.from(this.memoryAccounts.values());
+      this.logger.error('Supplier account listing failed: ' + (error?.message || error));
+      this.assertDatabaseForFinancialOperation();
     }
   }
 
   async getSupplierBalance(
     providerCode: string,
     currency: CurrencyCode,
-  ): Promise<{ balance: number; creditLimit: number; available: number }> {
+  ): Promise<{ balance: number; creditLimit: number; available: number; accountType: SupplierAccountType }> {
     const tenantId = getCurrentTenantId();
     try {
       const provider = await this.prisma.provider.findUnique({
@@ -139,85 +111,75 @@ export class SupplierBalanceService {
         where: { providerId: provider.id, currency, tenantId: tenantId || null },
       });
       if (account) {
-        const balance = Number(account.balance);
-        const creditLimit = Number(account.creditLimit);
-        return { balance, creditLimit, available: balance + creditLimit };
-      }
-
-      // Legacy provider.balance is platform-wide and must never be used by a tenant.
-      if (!tenantId && provider.currency === currency) {
-        const balance = Number(provider.balance);
-        return { balance, creditLimit: 0, available: balance };
-      }
-
-      if (tenantId) return { balance: 0, creditLimit: 0, available: 0 };
-
-      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      if (memory) {
+        const balanceDecimal = new Prisma.Decimal(account.balance);
+        const creditLimitDecimal = new Prisma.Decimal(account.creditLimit);
         return {
-          balance: memory.balance,
-          creditLimit: memory.creditLimit,
-          available: memory.balance + memory.creditLimit,
+          balance: balanceDecimal.toNumber(),
+          creditLimit: creditLimitDecimal.toNumber(),
+          available: balanceDecimal.plus(creditLimitDecimal).toNumber(),
+          accountType: account.accountType as SupplierAccountType,
         };
       }
-      return { balance: 0, creditLimit: 0, available: 0 };
-    } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
-        this.logger.error(`Supplier balance read failed: ${error?.message || error}`);
-        throw error instanceof NotFoundException
-          ? error
-          : new ServiceUnavailableException('Supplier commercial balance is unavailable.');
-      }
 
-      this.logger.warn(`Local development supplier balance fallback: ${error?.message || error}`);
-      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      return memory
-        ? {
-            balance: memory.balance,
-            creditLimit: memory.creditLimit,
-            available: memory.balance + memory.creditLimit,
-          }
-        : { balance: 0, creditLimit: 0, available: 0 };
+      throw new ServiceUnavailableException('لا يوجد حساب مورد تجاري دائم لهذه العملة؛ تم إيقاف التنفيذ.');
+    } catch (error: any) {
+      this.logger.error('Supplier balance read failed: ' + (error?.message || error));
+      if (error instanceof NotFoundException || error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('Supplier commercial balance is unavailable.');
     }
   }
 
   async checkFulfillmentGating(
     providerCode: string,
     currency: CurrencyCode,
-    costPrice: number,
-  ): Promise<{ allowed: boolean; availableBalance: number; requiredAmount: number; message?: string }> {
-    if (!Number.isFinite(costPrice) || costPrice < 0) {
-      return {
-        allowed: false,
-        availableBalance: 0,
-        requiredAmount: costPrice,
-        message: 'Invalid supplier cost.',
-      };
-    }
-    if (costPrice === 0) {
-      return { allowed: true, availableBalance: 999999, requiredAmount: 0 };
+    costPrice: MonetaryInput,
+  ): Promise<{ allowed: boolean; availableBalance: number; requiredAmount: number; accountType?: SupplierAccountType; message?: string }> {
+    const required = this.toMoneyDecimal(costPrice, 'Supplier fulfillment cost');
+    if (required.isZero()) {
+      return { allowed: true, availableBalance: 0, requiredAmount: 0 };
     }
 
-    const { available, balance } = await this.getSupplierBalance(providerCode, currency);
-    if (available < costPrice) {
+    const tenantId = getCurrentTenantId();
+    const provider = await this.prisma.provider.findUnique({
+      where: { code: providerCode.toUpperCase() },
+    });
+    if (!provider) throw new NotFoundException(`Provider ${providerCode} was not found`);
+
+    const account = await this.prisma.supplierAccount.findFirst({
+      where: { providerId: provider.id, currency, tenantId: tenantId || null },
+    });
+    if (!account) {
+      throw new ServiceUnavailableException('لا يوجد حساب مورد تجاري دائم لهذه العملة؛ تم إيقاف التنفيذ.');
+    }
+
+    const balance = new Prisma.Decimal(account.balance);
+    const creditLimit = new Prisma.Decimal(account.creditLimit);
+    const available = balance.plus(creditLimit);
+    if (available.lessThan(required)) {
       this.logger.warn(
-        `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode} in tenant ${getCurrentTenantId() || 'platform'}.`,
+        `[FulfillmentGating] Insufficient commercial balance for provider ${providerCode} in tenant ${tenantId || 'platform'}.`,
       );
       return {
         allowed: false,
-        availableBalance: balance,
-        requiredAmount: costPrice,
-        message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ. المتاح: ${available} ${currency}، المطلوب: ${costPrice} ${currency}.`,
+        availableBalance: available.toNumber(),
+        requiredAmount: required.toNumber(),
+        message: `رصيد المنصة التجاري لدى المزود (${providerCode}) غير كافٍ. المتاح: ${available.toString()} ${currency}، المطلوب: ${required.toString()} ${currency}.`,
       };
     }
-    return { allowed: true, availableBalance: balance, requiredAmount: costPrice };
+    return {
+      allowed: true,
+      availableBalance: available.toNumber(),
+      requiredAmount: required.toNumber(),
+      accountType: account.accountType as SupplierAccountType,
+    };
   }
 
   async fundSupplierBalance(
     staffUserId: string,
     dto: SupplierDepositDto,
   ): Promise<{ success: boolean; newBalance: number; ledgerTxId: string; transaction: any }> {
-    if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
+    const fundingAmount = this.toMoneyDecimal(String(dto.amount), 'Supplier funding amount');
+    if (!fundingAmount.greaterThan(0)) {
       throw new BadRequestException('مبلغ التغذية يجب أن يكون أكبر من صفر');
     }
 
@@ -238,7 +200,7 @@ export class SupplierBalanceService {
         const balanceBeforeDecimal = existing
           ? new Prisma.Decimal(existing.balance)
           : new Prisma.Decimal(0);
-        const balanceAfterDecimal = balanceBeforeDecimal.plus(new Prisma.Decimal(dto.amount));
+        const balanceAfterDecimal = balanceBeforeDecimal.plus(fundingAmount);
 
         const account = existing
           ? await tx.supplierAccount.update({
@@ -254,21 +216,11 @@ export class SupplierBalanceService {
                 accountType: SupplierAccountType.PREPAID,
               },
             });
-        const balanceBefore = balanceBeforeDecimal.toNumber();
-        const balanceAfter = balanceAfterDecimal.toNumber();
-
-        // Legacy platform account balance is retained only for platform-scope operations.
-        if (!tenantId) {
-          await tx.provider.update({
-            where: { id: provider.id },
-            data: { balance: new Prisma.Decimal(balanceAfter) },
-          });
-        }
 
         const ledgerResult = await this.ledgerService.recordSupplierFunding({
           providerCode: actualProviderCode,
           currency: dto.currency,
-          amount: dto.amount,
+          amount: fundingAmount.toString(),
           referenceNumber: dto.referenceNumber,
           channelCode: undefined,
           performedByUserId: staffUserId,
@@ -283,16 +235,16 @@ export class SupplierBalanceService {
             accountId: account.id,
             type: 'PREPAID_TOPUP',
             currency: dto.currency,
-            amount: new Prisma.Decimal(dto.amount),
-            balanceBefore,
-            balanceAfter,
+            amount: fundingAmount,
+            balanceBefore: balanceBeforeDecimal,
+            balanceAfter: balanceAfterDecimal,
             referenceId: dto.referenceNumber,
             ledgerTxId,
             notes: dto.notes || `تغذية رصيد تجاري عبر السند ${dto.referenceNumber}`,
           },
         });
 
-        return { account, transaction, ledgerTxId, balanceAfter };
+        return { account, transaction, ledgerTxId, balanceAfter: balanceAfterDecimal.toNumber() };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       return {
@@ -302,49 +254,14 @@ export class SupplierBalanceService {
         transaction: result.transaction,
       };
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
-        this.logger.error(`Supplier funding failed: ${error?.message || error}`);
-        throw error;
-      }
-      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
-        throw error;
-      }
+      this.logger.error('Supplier funding failed: ' + (error?.message || error));
+      throw error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException ||
+        error instanceof ServiceUnavailableException
+        ? error
+        : new ServiceUnavailableException('تعذر تغذية رصيد المورد ذرياً؛ لم يتم إنشاء نتيجة تجريبية.');
 
-      // Local unscoped mock-only development fallback.
-      const key = this.getAccountKey(providerCode, dto.currency);
-      const memory = this.memoryAccounts.get(key) || {
-        id: `sa-${key.toLowerCase()}`,
-        providerId: dto.providerId,
-        providerCode,
-        currency: dto.currency,
-        balance: 0,
-        creditLimit: 0,
-        accountType: SupplierAccountType.PREPAID,
-        updatedAt: new Date(),
-      };
-      const balanceBefore = memory.balance;
-      memory.balance += dto.amount;
-      memory.updatedAt = new Date();
-      this.memoryAccounts.set(key, memory);
-      const transaction: InMemorySupplierTransaction = {
-        id: `stx-${Date.now()}`,
-        providerCode,
-        type: 'PREPAID_TOPUP',
-        currency: dto.currency,
-        amount: dto.amount,
-        balanceBefore,
-        balanceAfter: memory.balance,
-        referenceId: dto.referenceNumber,
-        notes: dto.notes || `Local demo funding ${dto.referenceNumber}`,
-        createdAt: new Date(),
-      };
-      this.memoryTransactions.unshift(transaction);
-      return {
-        success: true,
-        newBalance: memory.balance,
-        ledgerTxId: 'LOCAL-DEMO-ONLY',
-        transaction,
-      };
     }
   }
 
@@ -352,16 +269,15 @@ export class SupplierBalanceService {
     orderId: string,
     providerCode: string,
     currency: CurrencyCode,
-    costPrice: number,
+    costPriceInput: MonetaryInput,
+    existingTx?: Prisma.TransactionClient,
   ): Promise<{ success: boolean; newBalance: number }> {
-    if (!Number.isFinite(costPrice) || costPrice < 0) {
-      throw new BadRequestException('Supplier fulfillment cost is invalid.');
-    }
-    if (costPrice === 0) return { success: true, newBalance: 0 };
+    const costPrice = this.toMoneyDecimal(costPriceInput, 'Supplier fulfillment cost');
+    if (costPrice.isZero()) return { success: true, newBalance: 0 };
 
     const tenantId = getCurrentTenantId();
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const execute = async (tx: Prisma.TransactionClient) => {
         const provider = await tx.provider.findUnique({
           where: { code: providerCode.toUpperCase() },
         });
@@ -372,21 +288,28 @@ export class SupplierBalanceService {
         });
 
         if (!account) {
-          if (tenantId) {
-            throw new NotFoundException('Tenant supplier account has not been funded.');
+          throw new NotFoundException('يجب إنشاء وتمويل حساب المورد الدائم قبل تنفيذ الطلب.');
+        }
+
+        const previousCharge = await tx.supplierTransaction.findFirst({
+          where: {
+            accountId: account.id,
+            type: 'ORDER_FULFILLMENT',
+            referenceId: orderId,
+          },
+        });
+        if (previousCharge) {
+          if (
+            previousCharge.currency !== currency ||
+            !new Prisma.Decimal(previousCharge.amount).equals(costPrice)
+          ) {
+            throw new ConflictException('يوجد خصم سابق لنفس الطلب بقيمة أو عملة مختلفة؛ يتطلب الأمر مطابقة يدوية.');
           }
-          const balanceBefore = new Prisma.Decimal(provider.balance);
-          const balanceAfter = balanceBefore.minus(new Prisma.Decimal(costPrice));
-          if (balanceAfter.isNegative()) throw new BadRequestException('Supplier balance is insufficient.');
-          await tx.provider.update({
-            where: { id: provider.id },
-            data: { balance: balanceAfter },
-          });
-          return { success: true, newBalance: balanceAfter.toNumber() };
+          return { success: true, newBalance: Number(previousCharge.balanceAfter) };
         }
 
         const balanceBefore = new Prisma.Decimal(account.balance);
-        const balanceAfter = balanceBefore.minus(new Prisma.Decimal(costPrice));
+        const balanceAfter = balanceBefore.minus(costPrice);
         const creditLimit = new Prisma.Decimal(account.creditLimit);
         if (balanceAfter.plus(creditLimit).isNegative()) {
           throw new BadRequestException('Supplier commercial balance and credit limit are insufficient.');
@@ -408,7 +331,7 @@ export class SupplierBalanceService {
             accountId: account.id,
             type: 'ORDER_FULFILLMENT',
             currency,
-            amount: new Prisma.Decimal(costPrice),
+            amount: costPrice,
             balanceBefore: new Prisma.Decimal(balanceBefore),
             balanceAfter: new Prisma.Decimal(balanceAfter),
             referenceId: orderId,
@@ -416,37 +339,19 @@ export class SupplierBalanceService {
           },
         });
         return { success: true, newBalance: balanceAfter.toNumber() };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      };
+      if (existingTx) return await execute(existingTx);
+      return await this.prisma.$transaction(execute, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || tenantId) {
+      if (existingTx || process.env.NODE_ENV === 'production' || tenantId) {
         this.logger.error(`Supplier fulfillment deduction failed: ${error?.message || error}`);
         throw error;
       }
       if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
         throw error;
       }
-      const memory = this.memoryAccounts.get(this.getAccountKey(providerCode, currency));
-      if (!memory) return { success: true, newBalance: 0 };
-      if (memory.balance + memory.creditLimit < costPrice) {
-        throw new BadRequestException('Local mock supplier balance is insufficient.');
-      }
-      const balanceBefore = memory.balance;
-      memory.balance -= costPrice;
-      memory.updatedAt = new Date();
-      const transaction: InMemorySupplierTransaction = {
-        id: `stx-${Date.now()}`,
-        providerCode: providerCode.toUpperCase(),
-        type: 'ORDER_FULFILLMENT',
-        currency,
-        amount: costPrice,
-        balanceBefore,
-        balanceAfter: memory.balance,
-        referenceId: orderId,
-        notes: `Local mock fulfillment cost ${orderId}`,
-        createdAt: new Date(),
-      };
-      this.memoryTransactions.unshift(transaction);
-      return { success: true, newBalance: memory.balance };
+      throw new ServiceUnavailableException('تعذر خصم رصيد المورد من قاعدة البيانات؛ لم يتم استخدام مخزن تجريبي.');
+
     }
   }
 
@@ -473,13 +378,9 @@ export class SupplierBalanceService {
           createdAt: row.createdAt,
         }));
     } catch (error: any) {
-      if (process.env.NODE_ENV === 'production' || getCurrentTenantId()) {
-        this.logger.error(`Supplier transaction listing failed: ${error?.message || error}`);
-        this.assertDatabaseForFinancialOperation();
-      }
-      return providerCode
-        ? this.memoryTransactions.filter((row) => row.providerCode === providerCode.toUpperCase())
-        : this.memoryTransactions;
+      this.logger.error('Supplier transaction listing failed: ' + (error?.message || error));
+      this.assertDatabaseForFinancialOperation();
+
     }
   }
 }

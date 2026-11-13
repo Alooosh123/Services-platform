@@ -1,4 +1,224 @@
+# نتيجة تشغيل Windows الفعلية وتصحيح تسجيل العميل — 13 نوفمبر 2026
+
+**نتيجة التشغيل المحلي التي أرسلها المستخدم:**
+- نجحت مزامنة المصدر إلى commit `cd1b457b1751952aa15bde9ff807b407cc7134e9` مع الحفاظ على `.env` وملف Compose المحلي.
+- PostgreSQL وRedis بحالة healthy؛ `SELECT` و`PING` نجحا.
+- أنشئت نسخة احتياطية محلية SHA-256، وأجري اختبار استعادة ناجح إلى قاعدة مؤقتة: 61 جدولاً عاماً و19 هجرة في النسخة المستعادة.
+- طبقت Prisma الهجرات الثماني المعلقة، فأصبح العدد 27/27 وظهر `Database schema is up to date`.
+- نجح بناء الخلفية والحزم والواجهات الثلاث، وNext.js 15.5.29 ولّد كل الصفحات الثابتة المطلوبة.
+- نجح Backend readiness برد HTTP 200، لكن فحص `POST /api/auth/register` أعاد HTTP 503. مخرجات المستخدم لم تتضمن محتوى رد HTTP أو `.local-run/backend.stdout.log` و`.local-run/backend.stderr.log`، لذلك لا نسجل سبباً نهائياً لهذا الخطأ.
+
+**تصحيحات ما بعد الفحص المحلي:**
+- أوضح سجل `npm ci` أن npm 11 كان يحجب سكربتات التثبيت لست حزم، منها `argon2` و`bcrypt` وPrisma. مسار التسجيل يستعمل `argon2.hash` فعلياً، لذلك أضفنا سياسة `allowScripts` مثبتة على الإصدارات التي راجعناها: `argon2@0.45.2` و`bcrypt@6.0.0` و`@prisma/client@5.22.0` و`@prisma/engines@5.22.0` و`prisma@5.22.0`. وحظرنا `@scarf/scarf` الاختيارية صراحةً.
+- أزلنا override `lodash@4.18.0` الموسوم من ناشره بأنه إصدار سيئ، واعتمدنا `lodash@4.18.1`. تم تحديث `package-lock.json` وأصبح لا يحتوي `lodash@4.18.0`.
+- أضيف إلى سكربت الإكمال اختبار تشغيل محلي فعلي لتجزئة والتحقق من كلمات المرور باستخدام Argon2id وbcrypt بعد `npm ci` وقبل تشغيل API.
+- عند فشل التسجيل أو الدخول، يعرض السكربت الآن جسم استجابة HTTP وسجلَي backend stdout/stderr (آخر 100 سطر) من دون عرض `.env` أو كلمات المرور أو الرموز.
+- **مهم:** حجب سكربتات التثبيت كان خللاً مؤكداً في إعداد البيئة، لكنه ليس حتى الآن سبباً مثبتاً للـ503؛ سيبيّن اختبار Argon2/ bcrypt ورسالة HTTP وسجلات الخلفية المرحلة التي تتعطل فيها العملية.
+
+**CI بعد هذه التعديلات:** Run #1003 على commit `d65639e18fa17f87663053e9c5476cb46f8c3330` نجح بجميع الوظائف السبع: فحص PowerShell 5.1، تحديث ملف القفل، فحص الأنواع والأمان، Flutter، تطبيق الهجرات، اختبارات Backend (44 مجموعة / 299 اختباراً)، وبناء Monorepo. اعتماديات التشغيل: 0 ثغرات؛ بقيت 9 نتائج LOW في اعتماديات التطوير.
+
+**الإجراء المحلي التالي:** إعادة تشغيل `bootstrap-local-services-platform.ps1` من مجلد المشروع. سيزامن السكربت السياسة والسكربت المصححَين، ثم يعيد التثبيت واختبار التشفير؛ قاعدة البيانات حالياً على 27 هجرة، ولذلك يجب أن يعلن Prisma أنها up-to-date دون إعادة تطبيق هجرات قديمة. لا حاجة لحذف الحاويات أو الـvolumes أو إعادة ضبط القاعدة.
+
+**الحالة:** Local DB / backup restore / migrations / monorepo build = PASS؛ Local customer registration = NOT YET VERIFIED؛ Production/live payments/MikroTik = NO-GO حتى التعاقدات والتكاملات والاختبارات الخارجية المطلوبة.
+
+---
+
+# نتيجة بوابات الجودة بعد تقوية الدقة المالية — 13 نوفمبر 2026
+
+**CI Run #994 — PASS**  
+Commit: `b307ff62b10e194724844955bbf24f96aeae9517`  
+Workflow: https://github.com/Alooosh123/Services-platform/actions/runs/43494557249
+
+جميع الوظائف السبع نجحت:
+- Safe Dependency Lockfile Refresh.
+- Windows PowerShell 5.1 Script Syntax.
+- Lint, Types & Security Audit.
+- Flutter Customer App Analysis & Tests.
+- Prisma Migration Apply & Safety Check.
+- Backend Unit, Security & Stress Tests.
+- Build Monorepo Packages & Apps.
+
+**أرقام الاختبارات:** 44 مجموعة Backend ناجحة، و299 اختباراً ناجحاً. اجتاز Flutter التحليل والاختبارات، واجتازت هجرات Prisma الـ27 التطبيق والتحقق في PostgreSQL معزول، واكتمل بناء Monorepo.
+
+**فحص الاعتماديات:** لا توجد ثغرات في اعتماديات التشغيل `npm audit --omit=dev` (0 vulnerabilities). بقيت 9 نتائج LOW في نطاق التطوير مرتبطة بحزمة `deepmerge`؛ فحص CI عند مستوى HIGH لم يمنع البناء. لا نستخدم `npm audit fix --force` لتجنب ترقية كاسرة غير مدروسة.
+
+**تقوية الدقة المالية:** تمت إزالة التحويلات غير الضرورية بين Prisma Decimal وJavaScript Number من مسارات قيد الأستاذ العام، الشحن، التسوية، رد المبالغ، حجز/تحرير رصيد المحفظة، تمويل/خصم رصيد المورد، التسعير والعمولات وحدود Pilot. الحسابات الداخلية تقارن وتجمع باستخدام `Prisma.Decimal`، والمدخلات الداخلية تسمح بالسلاسل العشرية لحفظ الدقة. أضيفت اختبارات لمبلغ `90071992547409.9999` ولمنع المقادير التي تتجاوز أربع منازل عشرية. تبقى حدود API/DTO التي تعرض أرقام JSON بحاجة إلى مراعاة حدود دقة JSON/JavaScript عند تصميم واجهات مبالغ ضخمة.
+
+**حالة Windows المحلية (لم تتغير):** لم ينجح المستخدم بعد في تشغيل قارئ قفل الحزم المصحح على جهازه بعد آخر محاولة؛ التوقف السابق حدث قبل النسخ الاحتياطي وتحديث ملفات المصدر. لم تُطبق الهجرات الثماني الإضافية محلياً؛ آخر دليل محلي هو 19 هجرة مطبقة من أصل 27. سكربت `scripts/bootstrap-local-services-platform.ps1` هو المسار الموحد لاستكمال المزامنة، النسخ الاحتياطي، اختبار الاستعادة إلى قاعدة مؤقتة، تطبيق الهجرات المعلقة فقط، التثبيت، البناء، وتشغيل اختبارات الجاهزية. يجب تسجيل النتيجة من الجهاز المحلي قبل ادعاء نجاح تشغيله محلياً.
+
+**حدود الإنتاج:** PR #4 لا يزال Draft وغير مدمج على `production-completion`. لم يتم اعتماد مزود دفع حقيقي أو تنفيذ تحويلات مالية حية. لا توجد وحدة MikroTik/RouterOS مخصصة في المستودع ولا اختبار مع جهاز فعلي. تبقى المستندات الرسمية واتفاقيات التجار ومفاتيح sandbox/production ومراجعات الامتثال والاختبارات المعزولة مع الأجهزة الخارجية شروطاً قبل GO. لا تفعل قنوات الدفع أو الوكلاء الآليين ولا تسمح بتسوية أموال حقيقية من دونها.
+
+**قرار الإطلاق:** CI code-quality = PASS على الالتزام أعلاه؛ Windows local runtime = NOT YET VERIFIED؛ production/live providers/MikroTik = NO-GO.
+
+---
+
+# حزمة التشغيل المحلية الموحدة وفحص سكربتات Windows — 13 نوفمبر 2026
+
+- أضيف `scripts/bootstrap-local-services-platform.ps1` لتوحيد الإجراء المحلي: ينزّل سكربت المزامنة الحالي من GitHub، يزامن المصدر مع الحفاظ على `.env` وملف Docker Compose المحلي، ثم يشغّل سكربت التثبيت والنسخ الاحتياطي واختبار الاستعادة والهجرات والبناء وفحوص API وواجهات الويب.
+- أضيف إلى GitHub Actions فحص مستقل على `windows-latest` باستخدام **Windows PowerShell 5.1** لتحليل ملفات `sync-latest-branch-windows.ps1` و`complete-local-services-platform.ps1` و`bootstrap-local-services-platform.ps1`. ويعتمد بناء Monorepo على نجاح هذا الفحص.
+- هذا الفحص برمجي في CI؛ لا يشغّل Docker أو قاعدة بيانات جهاز المطور، ولا يثبت أن خطوات Windows التشغيلية اكتملت محلياً.
+- **آخر حالة محلية مثبتة:** نجح Git clone، لكن قارئ إصدار الحزمة في السكربت السابق فشل قبل أي نسخة احتياطية أو تحديث للمصدر. أُصلح القارئ باستخدام ملف Node مؤقت بدلاً من `node -e`. لم يرسل المستخدم بعد نتيجة تشغيل النسخة الجديدة.
+- لا تزال آخر قاعدة محلية معروفة عند 19 هجرة مطبقة؛ لا تُسجّل الهجرات الثماني الإضافية كتطبيق محلي حتى ينجح سكربت الإكمال ويُظهر `prisma migrate status` الحالة النظيفة.
+- يبقى قرار الإنتاج `NO-GO` إلى أن تكتمل مراجعات مزودي الدفع والامتثال، وإثبات الاستعادة، واختبارات Staging، والإعدادات التشغيلية والتعاقدية الحقيقية.
+
+---
+
+# آخر تصحيح لتهيئة Windows — 13 نوفمبر 2026
+
+- نجح Git shallow clone على جهاز Windows وجلب مصدر الفرع، لكن محاولة قراءة `package-lock.json` توقفت بسبب إزالة PowerShell لعلامات الاقتباس عند تمرير كود JavaScript عبر `node -e`. وفق مخرجات المستخدم، حدث التوقف قبل النسخ الاحتياطي وتحديث ملفات المصدر؛ لذلك لم تتغير ملفات المشروع أو قاعدة البيانات.
+- عولج ذلك في `scripts/sync-latest-branch-windows.ps1` باستخدام ملف CommonJS مؤقت داخل مجلد Windows المؤقت وتشغيله مباشرة عبر Node، لتجنب قواعد تمرير الوسائط الأصلية في Windows PowerShell.
+- عُزز `scripts/complete-local-services-platform.ps1` بفحص استعادة PostgreSQL فعلي إلى قاعدة مؤقتة مستقلة ينشئها السكربت ثم يحذفها، والتحقق من الجداول وسجل Prisma قبل السماح بالهجرات المحلية. كما أصبح اختبار جاهزية HTTP يقبل 2xx فقط بدلاً من اعتبار 4xx نجاحاً.
+- تم اختبار منطق قارئ JSON بصورة منفصلة باستخدام Node 22 على ملف قفل اصطناعي، وأعاد إصدار الحزمة بنجاح. هذا لا يعادل بعد اختبار السكربت كاملاً على Windows.
+- التزامات المعالجة: قارئ قفل Windows في commit `43790315154886c98241708fd6e6e96beea6521d`، وفحص النسخ الاحتياطي/الاستعادة في commit `619c7ec53416137d37914eae0b5f058090f73b0f`.
+- **الحالة المحلية:** لم يرسل المستخدم بعد نتيجة تشغيل النسخة المصححة؛ ما زال المصدر المحلي بحاجة إلى مزامنة. تبقى قاعدة البيانات المحلية على 19 هجرة وفق آخر دليل، ولم تُطبق الهجرات الثماني الإضافية.
+- **CI:** بدأ GitHub Actions تشغيل PR #4 للالتزام `619c7ec53416137d37914eae0b5f058090f73b0f`، ورقمه #934، وكانت حالته قيد الانتظار عند آخر تحقق. لا نسجل نجاحاً قبل اكتماله.
+
+---
+
+# سجل معالجة مزامنة مصدر Windows — 13 نوفمبر 2026
+
+- فشلت محاولة تنزيل أرشيف GitHub على جهاز Windows برسالة `curl: (56) Recv failure: Connection was reset` أثناء الاتصال بمضيف الأرشيف.
+- وفق سجل PowerShell، توقفت العملية قبل النسخ الاحتياطي أو مزامنة الملفات، وأكدت أداة المزامنة عدم تعديل ملفات مصدر المشروع.
+- تم تحديث `scripts/sync-latest-branch-windows.ps1` لاستخدام Git shallow clone عبر `github.com` بدلاً من تنزيل ZIP من مضيف الأرشيف.
+- النسخة الجديدة تتحقق من إصدارات Next.js وReact وReact DOM قبل أي تعديل محلي، ثم تنشئ نسخة من ملفات المصدر وتستثني `.env` و`docker/docker-compose.yml` وبيانات التشغيل المحلية من النسخ فوقها.
+- **الحالة:** التحديث البرمجي محفوظ على فرع العمل؛ لم يُثبت بعد نجاح Git clone أو مزامنة جهاز Windows. لا تشغّل ترحيلات قاعدة البيانات أو سكربت إكمال التشغيل حتى تنجح المزامنة والتحقق من عدد الترحيلات.
+
+---
+
+## معالجة مهلة تنزيل الأرشيف على Windows — 13 نوفمبر 2026
+
+- فشل أول تشغيل لـ `scripts/sync-latest-branch-windows.ps1` في تنزيل أرشيف GitHub عبر `Invoke-WebRequest` بسبب انتهاء المهلة.
+- لم يصل السكربت إلى مرحلة فك الأرشيف أو نسخ أي ملف من المصدر، وبالتالي لا يدل هذا الفشل على تعديل ملفات المشروع. أنشأ فقط مجلدات العمل المؤقتة ضمن `.local-run` وربما ملف تنزيل جزئي.
+- تم تحديث سكربت المزامنة لاستخدام `curl.exe` مع إعادة المحاولة، مهلة اتصال 30 ثانية، ومهلة تنزيل قصوى 1200 ثانية. التنزيل يتم إلى ملف مرحلي منفصل ولا يبدأ فك الأرشيف أو مزامنة الملفات قبل نجاح التنزيل والتحقق من حجمه.
+- ملف المشروع المحلي `.env` وملف Compose لا يزالان محميين من الاستبدال. لا حذف لملفات المصدر القديمة أو وحدات Docker.
+- رابط السكربت المحدث: https://raw.githubusercontent.com/Alooosh123/Services-platform/fix/production-hardening-20261108/scripts/sync-latest-branch-windows.ps1
+
+---
+
+## نتيجة أول تشغيل محلي كامل — 13 نوفمبر 2026
+
+> مصدر الأدلة: سجل PowerShell المرفق من صاحب المشروع، وليس اتصالاً مباشراً بجهاز Windows.
+
+- نجح تشغيل PostgreSQL وRedis محلياً؛ PostgreSQL أصبحت `healthy` ونفذ استعلام SQL على `digital_topup_db`، وRedis أعاد `PONG`.
+- نجح `npm ci` في تثبيت 799 حزمة، ونجح `prisma generate` بإصدار Prisma Client 5.22.0، كما نجح `prisma validate`.
+- أُنشئت نسخة ما قبل الهجرة في `.local-run/backups/pre-migrate-20261113-213330.sql` بحجم 643 بايت وبصمة SHA256 مسجلة في سجل المستخدم. كانت القاعدة في تلك اللحظة حديثة الإنشاء.
+- نجح `prisma migrate deploy` في تطبيق 19 هجرة محلية، وأكد `prisma migrate status` أن مخطط تلك النسخة المحلية محدث.
+- توقف بناء Monorepo عند توليد الصفحات الثابتة لتطبيقات Next.js الثلاثة. أظهر السجل Next.js 14.2.35، مع أخطاء React `useContext` ورسائل `<Html> should not be imported outside of pages/_document`. لا تُعد هذه مرحلة بناء ناجحة.
+- ملف القفل في رأس فرع GitHub الحالي يثبت Next.js 15.5.29 وReact/ReactDOM 19.3.1، كما يحتوي فرع GitHub على 27 هجرة Prisma؛ في المقابل، المجلد المحلي المستخدم في هذا التشغيل احتوى على 19 هجرة فقط. هذا دليل على أن مصدر المجلد المحلي وملف القفل أقدم من الفرع الحالي، وهو سبب يجب معالجته قبل إعادة البناء.
+- أضيف `scripts/sync-latest-branch-windows.ps1` لتحديث مصدر المشروع بأمان، مع الحفاظ على `.env` و`docker/docker-compose.yml` المحلي و`.local-run` وبيانات Docker وعدم حذف الملفات المحلية.
+- تم تعديل `scripts/complete-local-services-platform.ps1` لعزل `NODE_ENV` عن عملية Next.js build؛ يبني Next.js في وضع الإنتاج الافتراضي، ثم يضبط وضع التطوير فقط لخوادم التشغيل.
+- GitHub Actions Run #899 كان قيد التنفيذ وقت تحديث هذا التقرير؛ لا نسجل نتيجة نهائية قبل ظهورها.
+
+**التوجيه:** شغّل مزامنة المصدر أولاً، ثم سكربت الإكمال الموجود في مجلد `scripts`. سيعيد `npm ci` تثبيت الإصدارات المقفلة الحديثة، ثم يطبق الهجرات الثماني المتبقية محلياً بعد إنشاء نسخة احتياطية جديدة، ثم يعيد البناء واختبارات API. لا تستخدم `db push` ولا `migrate reset` ولا تحذف volumes.
+
+---
+
+## أداة تشغيل Windows المحلية — 13 نوفمبر 2026
+
+أضيف السكربت `scripts/complete-local-services-platform.ps1` لتشغيل مراحل البيئة المحلية بالتسلسل: فحص loopback، PostgreSQL وRedis، تثبيت الاعتماديات، Prisma generate/validate، نسخة PostgreSQL احتياطية قبل الهجرات، `migrate deploy` المحلي، بناء monorepo، تشغيل Backend والواجهات، واختبار تسجيل العميل ودخوله. يرفض السكربت قواعد البيانات البعيدة أو `NODE_ENV=production`، ولا ينفذ seed reset أو يفعّل أي مزود دفع.
+
+- Raw download: https://raw.githubusercontent.com/Alooosh123/Services-platform/fix/production-hardening-20261108/scripts/complete-local-services-platform.ps1
+- ملف التشغيل والسجلات والنسخ الاحتياطية المحلي: `.local-run/` (مضاف إلى `.gitignore`).
+- لم يُشغّل السكربت على جهاز المطور من هذه الجلسة؛ يلزم تنفيذ PowerShell محلياً والتحقق من النتائج.
+
+---
+
+# تحديث حالة التشغيل المحلي — 13 نوفمبر 2026
+
+> مصدر هذا التحديث: مخرجات PowerShell التي أرسلها صاحب المشروع أثناء تنفيذ الإعداد المحلي. لا تمثل هذه النتائج اختباراً أجريته على جهازه عن بُعد.
+
+- Docker Desktop 4.99.0 وDocker Engine 29.9.3 يعملان باستخدام Linux containers.
+- تم تنزيل الصورتين `postgres:16-alpine` و`redis:7-alpine` بنجاح بعد معالجة إعداد DNS داخل Docker Desktop.
+- الحاويتان `topup_postgres` و`topup_redis` تعملان وحالتهما `healthy`.
+- PostgreSQL 16.15 يقبل الاتصالات، ونجح استعلام SQL على قاعدة `digital_topup_db` بالمستخدم `postgres`.
+- Redis أعاد `PONG`.
+- ملف البيئة المحلي يحتوي على اتصال PostgreSQL عبر `localhost:5433` إلى `digital_topup_db`، ولم يُكشف أو يُعدّل ملف `.env`.
+- لم يبدأ بعد تثبيت اعتماديات Node، أو توليد Prisma Client، أو تطبيق هجرات قاعدة البيانات المحلية، أو تشغيل Backend والواجهات. لا يوجد حتى الآن إثبات محلي لتسجيل حساب أو تسجيل الدخول.
+- تم إنشاء وحدتي تخزين محليتين جديدتين بواسطة Docker Compose، ولم تُحذف أي حاوية أو وحدة تخزين.
+- التحذير الخاص بحقل Compose `version` غير مانع؛ Docker Compose يتجاهله.
+
+**المرحلة المحلية الحالية:** قاعدة البيانات وRedis جاهزتان؛ المرحلة التالية هي تثبيت الحزم، توليد Prisma Client، أخذ نسخة محلية قبل الهجرات، تطبيق الهجرات على عنوان loopback المحلي فقط، ثم بناء وتشغيل API والواجهات واختبار تسجيل العميل.
+
+**قيود الإطلاق:** لا يتغير قرار `NO-GO` للإنتاج. لا تفعيل لمحافظ أو مزودي دفع، ولا إيداع أو شحن آلي أو ترحيل قاعدة إنتاجية دون الموافقات والتكاملات الرسمية واختبارات Staging والاستعادة المذكورة في هذا التقرير.
+
+---
+
 # تقرير حالة المشروع الشامل (Project Status Report)
+
+## أحدث تحقق فعلي — 12 نوفمبر 2026 (Run #813)
+
+> الالتزام المختبر: `a77bc3a2be474fbba2a00020f72db87aefc59909` على الفرع `fix/production-hardening-20261108`. اكتملت وظائف CI الست كلها بنجاح في GitHub Actions. هذه نتيجة Runner مؤقت، ولا تثبت تشغيل جهاز المطور أو Staging أو الإنتاج.
+
+- **GitHub Actions:** Run #813 — جميع الوظائف الست ناجحة: Safe Dependency Lockfile Refresh، Lint/Types/Security Audit، Backend Unit/Security/Stress، Flutter Analyze/Tests، Prisma Migration Apply/Safety، وBuild Monorepo.
+- **Backend:** `npm run db:seed` نجح بعد تشديد رفض كلمات المرور الفارغة/النمطية، ثم نجحت **44 مجموعة اختبار و296 اختباراً**.
+- **Flutter:** نجح `flutter analyze` و`flutter test`.
+- **PostgreSQL/Prisma:** تم التحقق من المخطط وتطبيق **27 هجرة** على PostgreSQL 16 مؤقتة، ثم التحقق من سجل الهجرات.
+- **Docker Compose:** نجح فحص `docker compose -f docker/docker-compose.yml config --quiet` في CI بعد تعديل ملف Compose.
+- **Dependency audit:** `npm audit --omit=dev --audit-level=low` أعاد **0 vulnerabilities**. التدقيق الكامل نجح عند مستوى High، مع بقاء **9 نتائج LOW** في أدوات تطوير متعدية مرتبطة بـ `deepmerge@4.3.1`. لم تُستخدم ترقيات إجبارية قد تكسر Nest CLI أو Jest.
+- **Build:** نجح بناء جميع الحزم والتطبيقات.
+- **تغييرات hardening المصاحبة:** جعل كلمة مرور PostgreSQL مطلوبة، ربط منافذ PostgreSQL/Redis/Adminer بـ loopback، تحسين healthcheck، رفض كلمات مرور Seed الافتراضية، تفريغ قيم كلمات مرور Seed وقاعدة البيانات في `.env.example` حتى يحددها المطور محلياً، وإضافة توثيق تشغيل Windows وحل DNS وتحديث دليل النشر وإزالة بيانات الدخول التجريبية الثابتة.
+- **التحقق المحلي:** Docker Desktop وLinux Engine و`hello-world` نجحت على جهاز صاحب المشروع، لكن سحب `postgres:16-alpine` و`redis:7-alpine` لا يزال متوقفاً بسبب فشل DNS إلى `registry-1.docker.io`. لذلك لم تثبت بعد صحة PostgreSQL/Redis محلياً أو تشغيل API والتطبيقات على الجهاز.
+- **الإطلاق:** ما زال `NO-GO`. لا يوجد نشر Staging/Production أو استعادة احتياطية حية أو تكامل مالي/مزود شحن معتمد.
+
+روابط الإثبات:
+- [GitHub Actions Run #813](https://github.com/Alooosh123/Services-platform/actions/runs/43293514243)
+- [Commit a77bc3a](https://github.com/Alooosh123/Services-platform/commit/a77bc3a2be474fbba2a00020f72db87aefc59909)
+- [PR #4](https://github.com/Alooosh123/Services-platform/pull/4)
+
+---
+
+## تحقق سابق — 12 نوفمبر 2026 (Run #783)
+
+> الالتزام المختبر: `fff26535b12251e4df2a53bbbfaa85c0ba8497af` على الفرع `fix/production-hardening-20261108`. نجحت الوظائف الست كاملة في GitHub Actions. هذا يثبت التحقق على Runner مؤقت في GitHub فقط، ولا يثبت تشغيل Docker المحلي أو Staging أو الإنتاج.
+
+- **GitHub Actions:** الوظائف الست ناجحة: Safe Dependency Lockfile Refresh، Backend Unit/Security/Stress، Flutter Analyze/Tests، Prisma Migrations، Lint/Types/Security Audit، وبناء جميع workspaces/apps.
+- **Backend:** 44 مجموعة اختبارات و296 اختباراً ناجحاً.
+- **Flutter:** `flutter pub get` و`flutter analyze` واختبارات الوحدات ناجحة على Flutter 3.50.0. تم تحديث الاستيراد إلى `material_ui: ^1.11.0` وتوافق `intl: ^0.20.3`، وإزالة استيراد Widgets غير الضروري.
+- **PostgreSQL/Prisma:** تم التحقق من المخطط وتطبيق 27 هجرة على PostgreSQL 16 مؤقتة والتحقق من أن سجل الهجرات نظيف. لا يشمل ذلك قاعدة محلية أو إنتاجية.
+- **Dependency audit:** `npm audit --omit=dev --audit-level=low` أعاد **0 vulnerabilities**. التدقيق الكامل عند مستوى high نجح، مع بقاء **9 ثغرات LOW** في اعتماديات تطوير متعدية عبر `deepmerge@4.3.1`. لم تُخفَ النتائج ولم تُستخدم ترقيات إجبارية.
+- **Build:** نجح بناء جميع تطبيقات وحزم Monorepo في Run #783.
+- **Docker production safety:** تم جعل خدمة Prisma migration في `docker/docker-compose.prod.yml` تعمل فقط عبر profile صريح `manual-migration`، وإزالة اعتماد Backend التلقائي عليها. أُحدّث دليل النشر ليشترط تشغيل قاعدة البيانات أولاً، ثم نسخة احتياطية قابلة للفحص وتجربة استعادة، ثم الهجرة اليدوية والتحقق قبل تشغيل التطبيقات. لم تُشغّل هذه الخطوات على VPS.
+- **قرار الإطلاق:** يبقى `NO-GO`. لا يوجد بعد إثبات تشغيل محلي على جهاز صاحب المشروع، أو نشر Staging، أو استعادة نسخة فعلية، أو تكامل محافظ/مزودين حقيقيين، أو تهيئة Email/WhatsApp/FCM/APNs.
+
+روابط الإثبات:
+- [GitHub Actions Run #783](https://github.com/Alooosh123/Services-platform/actions/runs/43182192215)
+- [Commit fff2653](https://github.com/Alooosh123/Services-platform/commit/fff26535b12251e4df2a53bbbfaa85c0ba8497af)
+- [PR #4](https://github.com/Alooosh123/Services-platform/pull/4)
+
+---
+
+## تحقق سابق — 10 نوفمبر 2026 (Run #763، مرجع تاريخي)
+
+
+> هذه أحدث نتيجة CI موثقة للفرع `fix/production-hardening-20261108` عند Commit `d259ca98b288f15e14bc0b59049d4529e58a80c4`. وهي تثبت جودة الكود على بيئة اختبار مؤقتة فقط؛ لا تثبت تشغيل الإنتاج أو تفعيل أي محفظة مالية.
+
+- **GitHub Actions:** نجحت الوظائف الست كاملة في Run #763: تحديث ملف القفل، Backend tests، Flutter analyze/tests، Prisma migrations، quality/security audit، وبناء جميع workspaces/apps.
+- **Backend:** 44 مجموعة اختبارات و296 اختباراً ناجحاً. تشمل `wallet-sender-account.e2e.spec.ts` و`notifications.service.spec.ts`.
+- **PostgreSQL test:** تم التحقق من المخطط وتطبيق **27 هجرة** من البداية على قاعدة PostgreSQL 16 مؤقتة، بما فيها `20261208000000_payment_sender_account_owner_approval` و`20261209000000_wallet_transfer_evidence_source_integrity`. القاعدة المؤقتة ليست قاعدة الإنتاج.
+- **Dependency audit:** تدقيق اعتماديات التشغيل `npm audit --omit=dev --audit-level=low` أعاد **0 vulnerabilities**. التدقيق الكامل عند مستوى high نجح، لكنه ما زال يعرض **9 ثغرات low** في اعتماديات تطوير متعدية تخص `deepmerge@4.3.1` عبر `jest-config` و`fork-ts-checker-webpack-plugin`. لا يوجد إصدار إصلاح موثق في GitHub Advisory حتى تاريخ هذا التحديث؛ لم يتم إخفاء التنبيه أو استخدام ترقيات إجبارية.
+- **NestJS:** جرى الانتقال المتوافق إلى خط NestJS 11 مع `@nestjs/jwt` و`@nestjs/passport` من خط 11 لتوافق Jest/CommonJS. متطلب Node أصبح `>=20.19.0 <25`.
+- **SMS/OTP:** أزيل نجاح SMS الوهمي؛ محول الإنتاج يرفض الإرسال إلى أن يجهز مزود موثق، ويتم إبطال تحدي OTP عند فشل الإرسال. لا يوجد SMS حقيقي متصل.
+- **Notifications:** إشعارات الإنتاج تتطلب الحفظ والقراءة من Prisma الدائم، ولا تعود إلى بيانات Demo/الذاكرة عند تعطل قاعدة البيانات. أضيفت اختبارات فشل التخزين وعزل المستخدم.
+- **Wallet sender approval:** اختبار PostgreSQL يثبت تسجيل العميل، منع الإيداع قبل اعتماد المالك، وصول إشعارات الأطراف، ثم إنشاء طلب إيداع جديد باستخدام المعرّف المحفوظ تلقائياً. هذا اختبار تكاملي آلي، وليس تجربة على عميل أو حوالة مالية حقيقية.
+
+### قيود قانونية وتقنية جديدة — 10 نوفمبر 2026
+
+- تقارير يمنية بتاريخ 29 أكتوبر تنقل عن قرار النائب العام رقم 20 لسنة 2026 وتعميم البنك المركزي `CBY/A/12/2026` بتاريخ 28 أكتوبر إدراج **Easy Wallet التابعة لشركة ثروات** ضمن كيانات جُمّدت أموالها وحُظر التعامل معها. لم أعثر على نسخة أصلية موقعة من التعميم في الصفحة العامة للبنك المركزي؛ لذلك تبقى هذه إشارة قانونية عالية الخطورة يلزم التحقق منها بنسخة رسمية ومحامٍ/الجهة الرقابية المختصة. لا تفعّل `EASY` أو تستقبل أموالاً عبرها قبل رفع هذا الحظر بمستند رسمي.
+- لا تخلط بين **Saba Cash التابعة لسبأفون** المذكورة في تلك التقارير وبين **Cash Pay التابعة لـTamkeen/Cash Wallet**؛ هما اسمان وجهتان مختلفتان. وجود Cash Pay API معلن على موقعها لا يكفي وحده للتفعيل؛ يلزم عقد تاجر ومواصفات API وSandbox وموافقة تنظيمية حديثة.
+- بوابة YemenPay تعرض وثائق API عامة، لكن مستودع SDK العام يتضمن أوضاع محاكاة صريحة: كلمة مرسل `success` تحقق نجاحاً فورياً، وأسماء أخرى تشغل محاكاة بنسبة نجاح تلقائي 80%. هذا ليس إثباتاً مالياً موثوقاً ولا يجوز استخدامه في Auto-credit. كما تتطلب وثائق API العامة `merchant_secret_key` ضمن طلب التحقق؛ يلزم تدقيق تعاقدي/أمني مستقل قبل النظر في استخدامها.
+- لا توجد حتى الآن وثائق API/Sandbox موقعة أو حسابات تجار ومفاتيح اختبار/إنتاج من Jaib/Jawali/Cash Pay/OneCash. لا توجد خدمة ingestion مكتملة لWebhook موقع أو كشف حساب رسمي تدخل سجلات `WalletTransferEvidence`؛ وبذلك يبقى Auto-credit معطلاً.
+
+### قرار الإطلاق الحالي: `NO-GO`
+
+لم تُطبق هجرات الإنتاج، ولم يجر اختبار على قاعدة العميل أو شبكة المحفظة الحقيقية، ولا يوجد SMTP/WhatsApp/FCM، ولا مضيف Staging/Production أو DNS/TLS/Secret Manager أو وظيفة Deploy في CI. طلب الدمج #4 ما زال Draft وغير مدمج، وقاعدته الحالية `production-completion` وليست `main`. لا تغيّر قاعدة PR أو تدمجه تلقائياً قبل مراجعة اختلاف تاريخ الفرعين وسجل التغييرات.
+
+روابط الإثبات:
+- CI #763: https://github.com/Alooosh123/Services-platform/actions/runs/42907140507
+- PR #4: https://github.com/Alooosh123/Services-platform/pull/4
+- سجل الاعتمادات والتنظيم: `docs/INTEGRATIONS.md` و`docs/PROVIDER_OUTREACH_REGISTER_AR.md`
+
+---
+
 ## منصة الشحن والخدمات الرقمية — اليمن (Yemen Market Digital TopUp Platform v1.0)
 **تاريخ التحديث:** 6 نوفمبر 2026 | **الإصدار:** 1.0.1 | **الحالة الحالية:** `NO-GO — NOT PRODUCTION READY`؛ لا يوجد اعتماد إنتاجي
 
@@ -131,3 +351,13 @@
 - لم يتم تنفيذ ترقية جماعية لاعتماديات Node؛ لا يجوز تطبيق `npm audit fix --force` دون تحليل تغييرات SemVer واختبارات التوافق.
 
 **حالة الإطلاق:** ما زالت `NO-GO` حتى نجاح CI، واختبارات العزل المالي والمتاجر، ومراجعة الثغرات، واختبار Staging والاستعادة.
+
+
+## Local registration root cause and permanent currency-reference fix (13 Nov 2026)
+
+- The latest local bootstrap reached a successful dependency install, Argon2id/bcrypt native preflight, 27-migration restore drill, no-pending-migration check, and production builds for backend plus all three web apps.
+- The customer registration smoke test then failed with PostgreSQL foreign-key error `wallets_currency_fkey`. PostgreSQL and Redis readiness were both healthy; the detailed backend log identified the wallet-to-currency foreign key, not a connectivity failure.
+- Root cause: the schema created the `currencies` table and the registration flow created YER/USD/SAR wallets, but there was no migration guaranteeing those three required reference rows. The seed script also returned early when users or currencies already existed, which could leave a partially initialized currency reference set unrepaired.
+- Added migration `20261210000000_seed_required_currency_reference_data` to insert YER/USD/SAR idempotently using `ON CONFLICT DO NOTHING`. This preserves existing currency configuration and all financial/user data.
+- Updated the seed early-return path to insert any missing supported currencies with `createMany(skipDuplicates: true)`, preserving existing records.
+- The fix must pass the migration, backend, security and full build workflows, then be applied locally with the normal safe bootstrap. Local customer registration/login must be rerun to verify the end-to-end path. No registration success is claimed until that smoke test passes.

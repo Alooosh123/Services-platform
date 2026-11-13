@@ -19,8 +19,19 @@ export function Navbar() {
   const [yerBalance, setYerBalance] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadAccountData = async () => {
+    const loadNotifications = async () => {
       if (!getCustomerToken()) return;
+      const notifications = await apiRequest<{ unreadCount?: number }>('/notifications?limit=1');
+      setUnreadCount(notifications.unreadCount || 0);
+    };
+
+    const loadAccountData = async () => {
+      if (!getCustomerToken()) {
+        setUnreadCount(0);
+        setCustomerName(null);
+        setYerBalance(null);
+        return;
+      }
 
       const userJson = window.localStorage.getItem('customer_user');
       if (userJson) {
@@ -32,13 +43,10 @@ export function Navbar() {
         }
       }
 
-      const [notifications, wallets] = await Promise.allSettled([
-        apiRequest<{ unreadCount?: number }>('/notifications?limit=1'),
+      const [wallets] = await Promise.allSettled([
         apiRequest<Array<{ currency: string; availableBalance?: number; balance: number }>>('/wallet/balances'),
+        loadNotifications(),
       ]);
-      if (notifications.status === 'fulfilled') {
-        setUnreadCount(notifications.value.unreadCount || 0);
-      }
       if (wallets.status === 'fulfilled') {
         const yerWallet = wallets.value.find((wallet) => wallet.currency === 'YER');
         if (yerWallet) {
@@ -48,8 +56,15 @@ export function Navbar() {
     };
 
     void loadAccountData();
+    // Refresh the in-app notification badge while the customer remains signed in.
+    const notificationPoll = window.setInterval(() => {
+      void loadNotifications().catch(() => undefined);
+    }, 30000);
     window.addEventListener('customer-session-changed', loadAccountData);
-    return () => window.removeEventListener('customer-session-changed', loadAccountData);
+    return () => {
+      window.clearInterval(notificationPoll);
+      window.removeEventListener('customer-session-changed', loadAccountData);
+    };
   }, []);
 
   return (

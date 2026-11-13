@@ -11,6 +11,7 @@ import {
   ReconciliationStatus,
   DiscrepancyType,
   PaymentChannelMode,
+  PaymentSenderIdentifierType,
   SupplierAccountType,
   SupplierTransactionType,
   ServiceRequestStatus,
@@ -88,11 +89,18 @@ export interface OrderSnapshot {
   paymentMethodCode: PaymentChannelCode;
 }
 
+/**
+ * Exact monetary input for internal ledger operations.
+ * Strings preserve PostgreSQL Decimal precision across application boundaries.
+ * Public HTTP DTOs may continue to expose validated JSON numbers.
+ */
+export type MonetaryInput = number | string;
+
 export interface DoubleEntryItem {
   accountCode: string;
   walletId?: string;
-  debitAmount: number;
-  creditAmount: number;
+  debitAmount: MonetaryInput;
+  creditAmount: MonetaryInput;
   currency: CurrencyCode;
   notes?: string;
 }
@@ -214,6 +222,7 @@ export interface PaymentChannelInfo {
   feePercentage?: number;
   feeFixed?: number;
   isVerifiedLegal?: boolean;
+  senderIdentifierType?: PaymentSenderIdentifierType;
 }
 
 export interface CreateCheckoutDto {
@@ -240,7 +249,10 @@ export interface OrderRefundDto {
 export interface UpdateProviderDto {
   name?: string;
   baseUrl?: string;
+  /** Legacy single-key field; encrypted at rest and never returned in clear text. */
   apiKey?: string;
+  /** Multi-field credentials such as merchantId, clientId, apiSecret and webhookSecret. Encrypted at rest. */
+  credentials?: Record<string, string>;
   isActive?: boolean;
   type?: string;
 }
@@ -431,6 +443,7 @@ export interface CreateDynamicChannelDto {
   minAmount: number;
   maxAmount: number;
   mode?: PaymentChannelMode;
+  senderIdentifierType?: PaymentSenderIdentifierType;
   isLegalVerified?: boolean;
 }
 

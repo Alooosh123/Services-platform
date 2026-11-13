@@ -3,8 +3,10 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import {
   NotificationType,
   NotificationChannel,
@@ -31,7 +33,13 @@ export class NotificationsService {
   private memoryNotifications: Map<string, InMemoryNotification> = new Map();
 
   constructor(private prisma: PrismaService) {
-    this.seedDefaultNotifications();
+    if (!this.requiresDurableStorage()) {
+      this.seedDefaultNotifications();
+    }
+  }
+
+  private requiresDurableStorage(): boolean {
+    return process.env.NODE_ENV === 'production' || Boolean(getCurrentTenantId());
   }
 
   private seedDefaultNotifications() {
@@ -105,11 +113,17 @@ export class NotificationsService {
           channel,
         },
       });
-    } catch {
-      this.logger.debug(`Prisma unavailable, saving notification ${id} in memory.`);
+    } catch (error: any) {
+      if (this.requiresDurableStorage()) {
+        this.logger.error(`Failed to persist notification ${id}: ${error?.message || error}`);
+        throw new ServiceUnavailableException(
+          'تعذر حفظ الإشعار في قاعدة البيانات؛ لم يتم تأكيد إرساله. حاول مرة أخرى بعد استعادة الاتصال.',
+        );
+      }
+      this.logger.debug(`Prisma unavailable, saving notification ${id} in local development memory.`);
+      this.memoryNotifications.set(id, record);
     }
 
-    this.memoryNotifications.set(id, record);
     this.logger.log(`[Notification Emitted] To user ${userId}: "${title}" [${type}]`);
     return record;
   }
@@ -128,23 +142,31 @@ export class NotificationsService {
         take: limit,
       });
 
-      if (dbList && dbList.length > 0) {
-        const unreadCount = dbList.filter((n) => n.status === NotificationStatus.UNREAD).length;
-        const mapped = dbList.map((n) => ({
-          id: n.id,
-          userId: n.userId,
-          type: n.type as NotificationType,
-          title: n.title,
-          message: n.message,
-          data: n.data as any,
-          status: n.status as NotificationStatus,
-          channel: n.channel as NotificationChannel,
-          createdAt: n.createdAt.toISOString(),
-          readAt: n.readAt ? n.readAt.toISOString() : undefined,
-        }));
+      const unreadCount = dbList.filter((n) => n.status === NotificationStatus.UNREAD).length;
+      const mapped = dbList.map((n) => ({
+        id: n.id,
+        userId: n.userId,
+        type: n.type as NotificationType,
+        title: n.title,
+        message: n.message,
+        data: n.data as any,
+        status: n.status as NotificationStatus,
+        channel: n.channel as NotificationChannel,
+        createdAt: n.createdAt.toISOString(),
+        readAt: n.readAt ? n.readAt.toISOString() : undefined,
+      }));
+
+      // An empty database result is authoritative; do not resurrect stale demo
+      // notifications from process memory in production.
+      if (this.requiresDurableStorage() || dbList.length > 0) {
         return { notifications: mapped, unreadCount };
       }
-    } catch {}
+    } catch (error: any) {
+      if (this.requiresDurableStorage()) {
+        this.logger.error(`Failed to read notifications for user ${userId}: ${error?.message || error}`);
+        throw new ServiceUnavailableException('تعذر تحميل الإشعارات من قاعدة البيانات.');
+      }
+    }
 
     const list = Array.from(this.memoryNotifications.values())
       .filter((n) => n.userId === userId)
@@ -176,7 +198,11 @@ export class NotificationsService {
       const notif = await this.prisma.notification.findUnique({
         where: { id: notificationId },
       });
-      if (notif) {
+      if (!notif) {
+        if (this.requiresDurableStorage()) {
+          throw new NotFoundException('الإشعار غير موجود');
+        }
+      } else {
         if (notif.userId !== userId) {
           throw new ForbiddenException('غير مصرح لك بتعديل إشعار مستخدم آخر (BOLA Protection)');
         }
@@ -186,8 +212,12 @@ export class NotificationsService {
         });
         return true;
       }
-    } catch (err: any) {
-      if (err instanceof ForbiddenException) throw err;
+    } catch (error: any) {
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) throw error;
+      if (this.requiresDurableStorage()) {
+        this.logger.error(`Failed to mark notification ${notificationId} as read: ${error?.message || error}`);
+        throw new ServiceUnavailableException('تعذر تحديث حالة الإشعار في قاعدة البيانات.');
+      }
     }
 
     const mem = this.memoryNotifications.get(notificationId);
@@ -213,7 +243,16 @@ export class NotificationsService {
         data: { status: NotificationStatus.READ, readAt: new Date() },
       });
       count = result.count;
-    } catch {}
+    } catch (error: any) {
+      if (this.requiresDurableStorage()) {
+        this.logger.error(`Failed to mark all notifications as read for user ${userId}: ${error?.message || error}`);
+        throw new ServiceUnavailableException('تعذر تحديث الإشعارات في قاعدة البيانات.');
+      }
+    }
+
+    if (this.requiresDurableStorage()) {
+      return { updatedCount: count };
+    }
 
     for (const mem of this.memoryNotifications.values()) {
       if (mem.userId === userId && mem.status === NotificationStatus.UNREAD) {

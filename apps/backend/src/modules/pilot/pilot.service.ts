@@ -14,6 +14,7 @@ import {
   PilotConfigurationDto,
   PilotVerificationCycleResultDto,
   GoNoGoAssessmentResultDto,
+  MonetaryInput,
 } from '@digital-topup/shared';
 import {
   UpdatePilotConfigDto,
@@ -171,7 +172,7 @@ export class PilotService {
    */
   async validateOrderAgainstPilot(
     userId: string,
-    amount: number,
+    amount: MonetaryInput,
     currency: CurrencyCode,
     productId?: string,
     channelCode?: PaymentChannelCode,
@@ -193,17 +194,31 @@ export class PilotService {
       }
     }
 
-    // Limit check for YER
-    if (currency === CurrencyCode.YER && amount > config.maxOrderAmountYER) {
+    const amountDecimal = new Prisma.Decimal(amount);
+    if (
+      !amountDecimal.isFinite() ||
+      !amountDecimal.greaterThan(0) ||
+      amountDecimal.decimalPlaces() > 4
+    ) {
+      throw new BadRequestException('قيمة الطلب يجب أن تكون رقماً عشرياً موجباً صالحاً بأربع منازل كحد أقصى.');
+    }
+
+    // Limit checks use Decimal comparisons; config values are converted only at this boundary.
+    if (
+      currency === CurrencyCode.YER &&
+      amountDecimal.greaterThan(new Prisma.Decimal(config.maxOrderAmountYER))
+    ) {
       throw new BadRequestException(
-        `قيمة الطلب (${amount.toLocaleString()} YER) تتجاوز السقف المحدد للمرحلة التجريبية (${config.maxOrderAmountYER.toLocaleString()} YER).`,
+        `قيمة الطلب (${amountDecimal.toString()} YER) تتجاوز السقف المحدد للمرحلة التجريبية (${config.maxOrderAmountYER.toLocaleString()} YER).`,
       );
     }
 
-    // Limit check for USD
-    if (currency === CurrencyCode.USD && amount > config.maxOrderAmountUSD) {
+    if (
+      currency === CurrencyCode.USD &&
+      amountDecimal.greaterThan(new Prisma.Decimal(config.maxOrderAmountUSD))
+    ) {
       throw new BadRequestException(
-        `قيمة الطلب ($${amount}) تتجاوز السقف المحدد للمرحلة التجريبية ($${config.maxOrderAmountUSD}).`,
+        `قيمة الطلب (${amountDecimal.toString()}) تتجاوز السقف المحدد للمرحلة التجريبية (${config.maxOrderAmountUSD}).`,
       );
     }
 
