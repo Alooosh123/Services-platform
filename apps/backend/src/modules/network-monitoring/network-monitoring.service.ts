@@ -23,7 +23,7 @@ export class NetworkMonitoringService {
     try {
       const snapshot = await this.client.fetchSnapshot();
       const diagnostics = this.diagnosis.diagnose(snapshot);
-      const status = diagnostics.some((d) => d.severity === 'CRITICAL') ? 'DEGRADED' : 'HEALTHY';
+      const status = diagnostics.some((d) => d.severity !== 'INFO') ? 'DEGRADED' : 'HEALTHY';
       await this.persist(snapshot, status, diagnostics, observedAt);
       return { status, readOnly: true, observedAt: observedAt.toISOString(), device: snapshot, diagnostics };
     } catch (error) {
