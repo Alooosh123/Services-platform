@@ -78,6 +78,10 @@ async function runMysql(args: string[], env: NodeJS.ProcessEnv, inputFile?: stri
     const child = spawn(process.env.MYSQL_BIN || 'mysql', args, { env, stdio: [inputFile ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let settled = false;
     const fail = (error: Error) => { if (!settled) { settled = true; child.kill(); reject(error); } };
+    if (!child.stdout || !child.stderr) {
+      fail(new Error('MySQL client output streams could not be opened.'));
+      return;
+    }
     child.stdout.on('data', (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-8000); });
     child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-8000); });
     child.on('error', (error) => fail(new Error('Unable to start MySQL client: ' + error.message)));
