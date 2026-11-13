@@ -370,7 +370,7 @@ export class PayoutsService {
     if (payout.approvedByUserId === staffUserId) {
       throw new ForbiddenException('يجب أن ينفذ/يراجع السحب موظف مستقل عن الموظف الذي اعتمده.');
     }
-    if (process.env.NODE_ENV === 'production' || payout.channelCode === PaymentChannelCode.WALLET) {
+    if (process.env.NODE_ENV === 'production') {
       return {
         success: false,
         status: PayoutStatus.APPROVED,
@@ -605,8 +605,11 @@ export class PayoutsService {
   ): Promise<{ success: boolean; payout: InMemoryPayout }> {
     const payout = await this.getPayoutById(payoutId);
 
-    if (payout.status === PayoutStatus.CONFIRMED) {
-      throw new BadRequestException('لا يمكن رفض طلب سحب تم تأكيده وتسويته مسبقاً');
+    if (![PayoutStatus.REQUESTED, PayoutStatus.APPROVED].includes(payout.status)) {
+      throw new ConflictException('لا يمكن رفض طلب سحب بدأ تنفيذه أو أصبحت نتيجته غير مؤكدة. يجب إحالته إلى المطابقة المالية أولاً.');
+    }
+    if (!reason || reason.trim().length < 8) {
+      throw new BadRequestException('سبب رفض طلب السحب مطلوب ويجب ألا يقل عن 8 أحرف.');
     }
 
     if (payout.walletId) {
