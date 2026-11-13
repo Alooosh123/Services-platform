@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNotEmpty } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsUUID } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class ReviewDepositDto {
@@ -6,6 +6,11 @@ export class ReviewDepositDto {
   @IsOptional()
   @IsString()
   reviewNotes?: string;
+
+  @ApiProperty({ description: 'معرّف الموافقة المالية المستقلة المطلوبة قبل قيد الإيداع', required: false })
+  @IsOptional()
+  @IsUUID()
+  approvalId?: string;
 }
 
 export class RejectDepositDto {

@@ -50,8 +50,8 @@ export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapte
     balance: false,
     reconcile: false,
   };
-  protected verificationStatus: ChannelVerificationStatus = ChannelVerificationStatus.VERIFIED;
-  protected financeApprovalRequired: boolean = false;
+  protected verificationStatus: ChannelVerificationStatus = ChannelVerificationStatus.PENDING_REVIEW;
+  protected financeApprovalRequired: boolean = true;
   protected activeAccountNumber: string | null = null;
   protected pendingAccountNumber: string | null = null;
   protected pendingFeePercentage: number | null = null;
@@ -93,9 +93,7 @@ export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapte
   }
 
   proposeAccountChange(newAccountNumber: string, feePercentage?: number): void {
-    this.logger.warn(
-      `[FourEyesPrinciple] Channel ${this.getChannelCode()} proposed account change to ${newAccountNumber}. Pending Finance Review.`,
-    );
+    this.logger.warn(`[FourEyesPrinciple] Channel ${this.getChannelCode()} proposed an account change. Pending Finance Review.`);
     this.pendingAccountNumber = newAccountNumber;
     if (feePercentage !== undefined) this.pendingFeePercentage = feePercentage;
     this.financeApprovalRequired = true;
@@ -218,18 +216,17 @@ export class JaibPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.JAIB,
       name: 'Jaib Wallet (CAC Bank)',
       nameAr: 'محفظة جيب - بنك التسليف التعاوني الزراعي CAC',
-      accountNumber: '770123456',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'قم بفتح تطبيق جيب، اختر تحويل أموال إلى محفظة أخرى، أدخل رقم الحساب 770123456 باسم (منصة الشحن والخدمات الرقمية اليمنية المحدودة)، ثم انسخ رقم الحوالة وأرفق صورة الإشعار للمراجعة الفورية.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات مستفيد حقيقية وتحقق منها واعتمدها مالياً قبل عرضها للعملاء.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -255,18 +252,17 @@ export class JawaliPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.JAWALI,
       name: 'Jawali Wallet (YKB Bank)',
       nameAr: 'محفظة جوالي - بنك اليمن والكويت',
-      accountNumber: '733987654',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق جوالي إلى الحساب رقم 733987654 باسم (منصة الشحن والخدمات الرقمية اليمنية المحدودة)، ثم أدخل الرقم المرجعي للعملية وصورة إشعار السداد.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات مستفيد حقيقية وتحقق منها واعتمدها مالياً قبل عرضها للعملاء.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -292,18 +288,17 @@ export class CashPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.CASH,
       name: 'Cash Wallet (Saba Bank)',
       nameAr: 'محفظة كاش - بنك سبأ الإسلامي',
-      accountNumber: '711223344',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق كاش إلى الحساب رقم 711223344 باسم (منصة الشحن والخدمات الرقمية اليمنية المحدودة)، ثم أدخل رقم الحوالة وصورة السند.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات مستفيد حقيقية وتحقق منها واعتمدها مالياً قبل عرضها للعملاء.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -329,18 +324,17 @@ export class OneCashPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.ONE_CASH,
       name: 'One Cash (YOU Telecom)',
       nameAr: 'ون كاش - شركة YOU',
-      accountNumber: '739112233',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'حول المبلغ عبر خدمة ون كاش إلى الرقم 739112233، ثم أدخل رقم الإشعار للتحقق المالي السريع.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات مستفيد حقيقية وتحقق منها واعتمدها مالياً قبل عرضها للعملاء.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 1500000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 8000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -366,18 +360,17 @@ export class EasyPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.EASY,
       name: 'Easy Wallet',
       nameAr: 'محفظة إيزي للدفع الإلكتروني',
-      accountNumber: '775544332',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'حول إلى محفظة إيزي رقم 775544332، وأدخل رقم العملية للتحقق المالي من قبل المشرفين.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات مستفيد حقيقية وتحقق منها واعتمدها مالياً قبل عرضها للعملاء.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 1500000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 8000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -428,7 +421,7 @@ export class SandboxPaymentAdapter extends BasePaymentChannelAdapter {
       dailyLimit: 50000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 

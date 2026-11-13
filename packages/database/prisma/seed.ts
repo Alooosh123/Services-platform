@@ -229,7 +229,15 @@ async function main() {
   ];
 
   for (const pm of paymentMethodsData) {
-    await prisma.paymentMethod.create({ data: pm });
+    await prisma.paymentMethod.upsert({
+      where: { code: pm.code },
+      create: pm,
+      update: {
+        name: pm.name, nameAr: pm.nameAr, type: pm.type,
+        supportedCurrencies: pm.supportedCurrencies, instructionsAr: pm.instructionsAr,
+        isActive: pm.isActive, isMock: pm.isMock,
+      },
+    });
   }
 
   // Seed Genuine Payment Channel Receiver Configurations
@@ -312,7 +320,25 @@ async function main() {
   ];
 
   for (const cfg of channelConfigsData) {
-    await prisma.paymentChannelConfig.create({ data: cfg });
+    await prisma.paymentChannelConfig.upsert({
+      where: { code: cfg.code },
+      create: cfg,
+      // Reseeding intentionally disables previous example/external channels.
+      update: {
+        name: cfg.name,
+        nameAr: cfg.nameAr,
+        accountNumber: 'NOT_CONFIGURED',
+        accountHolderName: 'غير مهيأ',
+        instructionsAr: cfg.instructionsAr,
+        supportedCurrencies: cfg.supportedCurrencies,
+        mode: PaymentChannelMode.MANUAL,
+        verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+        financeApprovalRequired: true,
+        minAmount: cfg.minAmount,
+        maxAmount: cfg.maxAmount,
+        isActive: false,
+      },
+    });
   }
 
   // 5. Seed Chart of Accounts for Strict Double-Entry Ledger

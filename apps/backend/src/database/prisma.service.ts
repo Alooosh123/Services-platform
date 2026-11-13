@@ -8,11 +8,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit() {
     try {
       await this.$connect();
-      this.logger.log('Successfully connected to MySQL database!');
-    } catch (error: any) {
-      this.logger.warn(
-        `Database connection to MySQL connection failed (${error?.message || 'Unreachable'}). Application startup will continue in non-production mode only.`,
-      );
+      this.logger.log('Successfully connected to MySQL 8.4 database.');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unreachable';
+      this.logger.error(`MySQL database connection failed: ${message}`);
+      // Unit tests may mock this service; any real runtime fails closed.
+      if (process.env.NODE_ENV !== 'test') throw error;
     }
   }
 

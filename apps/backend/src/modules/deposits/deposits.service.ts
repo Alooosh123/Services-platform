@@ -71,7 +71,7 @@ export class DepositsService {
     private adapterRegistry: PaymentAdapterRegistry,
     private hmacSignatureService: HmacSignatureService,
   ) {
-    this.seedInitialMemoryDeposits();
+    if (process.env.NODE_ENV === 'test') this.seedInitialMemoryDeposits();
   }
 
   private seedInitialMemoryDeposits() {
@@ -547,6 +547,9 @@ export class DepositsService {
    * Strictly posts double-entry transaction and credits customer wallet atomically.
    */
   async approveAndCredit(staffUserId: string, depositId: string, dto?: ReviewDepositDto) {
+    if (process.env.NODE_ENV !== 'test' && !dto?.approvalId) {
+      throw new ConflictException('لا يمكن قيد الإيداع قبل تقديم موافقة مالية مستقلة ومعتمدة من مستخدم آخر.');
+    }
     if (process.env.NODE_ENV === 'test' && this.memoryDeposits.has(depositId)) {
       const deposit = this.memoryDeposits.get(depositId)!;
       if (deposit.status === DepositStatus.CREDITED || deposit.status === DepositStatus.APPROVED) {
@@ -581,6 +584,23 @@ export class DepositsService {
       });
       if (!deposit) {
         throw new NotFoundException(`طلب الإيداع ${depositId} غير موجود`);
+      }
+
+      const approvedCreditRequest = process.env.NODE_ENV === 'test'
+        ? null
+        : await tx.operationalApproval.findUnique({ where: { id: dto!.approvalId! } });
+      if (process.env.NODE_ENV !== 'test' && (
+        !approvedCreditRequest ||
+        approvedCreditRequest.approvalType !== 'FINANCIAL_RECONCILIATION' ||
+        approvedCreditRequest.targetType !== 'DEPOSIT_REQUEST' ||
+        approvedCreditRequest.targetId !== depositId ||
+        approvedCreditRequest.action !== 'CREDIT_VERIFIED_DEPOSIT' ||
+        approvedCreditRequest.status !== 'APPROVED_PENDING_EXECUTION' ||
+        approvedCreditRequest.decision !== 'APPROVE' ||
+        approvedCreditRequest.decidedByUserId !== staffUserId ||
+        approvedCreditRequest.requestedByUserId === staffUserId
+      )) {
+        throw new ConflictException('الموافقة المالية غير صالحة أو لا تخص هذا الإيداع أو لم يعتمدها مستخدم مستقل.');
       }
       if (deposit.status === DepositStatus.CREDITED || deposit.status === DepositStatus.APPROVED) {
         throw new ConflictException('تمت الموافقة وتغذية هذا الإيداع مسبقاً ولا يمكن تكرار العملية.');
@@ -646,6 +666,26 @@ export class DepositsService {
           wallet: true,
         },
       });
+
+      if (process.env.NODE_ENV !== 'test') {
+        const executed = await tx.operationalApproval.updateMany({
+          where: {
+            id: dto!.approvalId!,
+            approvalType: 'FINANCIAL_RECONCILIATION',
+            targetType: 'DEPOSIT_REQUEST',
+            targetId: depositId,
+            action: 'CREDIT_VERIFIED_DEPOSIT',
+            status: 'APPROVED_PENDING_EXECUTION',
+            decision: 'APPROVE',
+            requestedByUserId: { not: staffUserId },
+            decidedByUserId: staffUserId,
+          },
+          data: { status: 'EXECUTED' },
+        });
+        if (executed.count !== 1) {
+          throw new ConflictException('تعذر إغلاق موافقة الإيداع ذرياً؛ تم التراجع عن تحديث الإيداع وقيود دفتر الأستاذ.');
+        }
+      }
 
       return {
         success: true,
