@@ -326,6 +326,8 @@ model User {
   reviewedServiceRequests  ServiceRequest[]       @relation("UserReviewedServiceRequests")
   priceRuleVersions        PriceRuleVersion[]
   commissionsEarned        Order[]                @relation("AgentCommissionRecipient")
+  approvalsRequested       OperationalApproval[] @relation("ApprovalRequester")
+  approvalsDecided         OperationalApproval[] @relation("ApprovalDecider")
 
   @@index([parentAgentId])
   @@index([tierId, role])
@@ -1590,4 +1592,51 @@ model SaaSInvoice {
   @@index([tenantId])
   @@index([status])
   @@map("saas_invoices")
+}
+
+
+model NetworkSnapshot {
+  id               String   @id @default(uuid())
+  status           String
+  deviceIdentity   String?
+  routerOsVersion  String?
+  cpuLoadPercent   Int?
+  freeMemoryBytes  BigInt?
+  totalMemoryBytes BigInt?
+  uptime           String?
+  interfaceCount   Int      @default(0)
+  interfaces       Json
+  diagnostics      Json
+  observedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  @@index([observedAt])
+  @@index([status, observedAt])
+  @@map("network_snapshots")
+}
+
+model OperationalApproval {
+  id                String   @id @default(uuid())
+  approvalType      String
+  targetType        String
+  targetId          String?
+  action            String
+  reason            String
+  requesterRole     String
+  requestedByUserId String
+  decidedByUserId   String?
+  status            String   @default("PENDING")
+  decision          String?
+  decisionNotes     String?
+  requestedAt       DateTime @default(now())
+  decidedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  requester User  @relation("ApprovalRequester", fields: [requestedByUserId], references: [id])
+  decider   User? @relation("ApprovalDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([approvalType, status, requestedAt])
+  @@index([targetType, targetId])
+  @@map("operational_approvals")
 }
