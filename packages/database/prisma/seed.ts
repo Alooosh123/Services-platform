@@ -7,9 +7,12 @@ import {
   LedgerTransactionType,
   PaymentStatus,
   DepositStatus,
+  ChannelVerificationStatus,
+  PaymentChannelMode,
 } from '@prisma/client';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 
 // Load root or local .env
@@ -38,13 +41,12 @@ async function seedTiers() {
 }
 
 async function ensureSuperAdmin() {
-  const email = process.env.SEED_SUPER_ADMIN_EMAIL || 'admin@digitaltopup.com';
+  const email = process.env.SEED_SUPER_ADMIN_EMAIL;
   const password = process.env.SEED_SUPER_ADMIN_PASSWORD;
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('Development seed is disabled in production.');
-  }
+  if (process.env.NODE_ENV === 'production') throw new Error('Development seed is disabled in production.');
+  if (!email || !password || password.length < 20) throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique SEED_SUPER_ADMIN_PASSWORD of at least 20 characters.');
 
-  const passwordHash = await bcrypt.hash(password || 'Admin@123456', 10);
+  const passwordHash = await bcrypt.hash(password, 12);
   return prisma.user.upsert({
     where: { email },
     create: {
@@ -170,8 +172,8 @@ async function main() {
       nameAr: 'محفظة جيب (بنك التسليف التعاوني الزراعي CAC)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'قم بالتحويل إلى رقم حساب المحفظة: 770123456، ثم أرفق رقم الحوالة وصورة الإشعار.',
-      isActive: true,
+      instructionsAr: 'القناة غير مهيأة. ستتاح بعد إضافة حساب المستفيد الحقيقي واعتماده.',
+      isActive: false,
       isMock: false,
     },
     {
@@ -180,8 +182,8 @@ async function main() {
       nameAr: 'محفظة جوالي (بنك اليمن والكويت)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'قم بالتحويل إلى حساب جوالي: 733987654، ثم أرفق رقم الإشعار للتأكيد الفوري.',
-      isActive: true,
+      instructionsAr: 'القناة غير مهيأة. ستتاح بعد إضافة حساب المستفيد الحقيقي واعتماده.',
+      isActive: false,
       isMock: false,
     },
     {
@@ -190,8 +192,8 @@ async function main() {
       nameAr: 'محفظة كاش (بنك سبأ الإسلامي)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'أرسل الحوالة إلى محفظة كاش رقم: 711223344، وأدخل رقم العملية.',
-      isActive: true,
+      instructionsAr: 'القناة غير مهيأة. ستتاح بعد إضافة حساب المستفيد الحقيقي واعتماده.',
+      isActive: false,
       isMock: false,
     },
     {
@@ -200,8 +202,8 @@ async function main() {
       nameAr: 'ون كاش (شركة YOU)',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'التحويل عبر ون كاش إلى الرقم: 739112233، ثم كتابة رقم الإشعار.',
-      isActive: true,
+      instructionsAr: 'القناة غير مهيأة. ستتاح بعد إضافة حساب المستفيد الحقيقي واعتماده.',
+      isActive: false,
       isMock: false,
     },
     {
@@ -210,8 +212,8 @@ async function main() {
       nameAr: 'محفظة إيزي',
       type: 'MANUAL',
       supportedCurrencies: [CurrencyCode.YER],
-      instructionsAr: 'حول المبلغ إلى محفظة إيزي رقم 775544332 وأدخل رقم العملية.',
-      isActive: true,
+      instructionsAr: 'القناة غير مهيأة. ستتاح بعد إضافة حساب المستفيد الحقيقي واعتماده.',
+      isActive: false,
       isMock: false,
     },
     {
@@ -236,61 +238,76 @@ async function main() {
       code: PaymentChannelCode.JAIB,
       name: 'Jaib Wallet (CAC Bank)',
       nameAr: 'محفظة جيب - بنك التسليف التعاوني الزراعي',
-      accountNumber: '770123456',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'قم بالتحويل عبر تطبيق جيب إلى الحساب رقم 770123456 باسم (منصة الشحن والخدمات الرقمية)، ثم قم بإدخال رقم الحوالة وأرفق صورة الإشعار للمراجعة الفورية.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات المستفيد الحقيقية وتحقق منها واعتمدها من الإدارة المالية قبل الإتاحة للعملاء.',
       supportedCurrencies: ['YER'],
+      mode: PaymentChannelMode.MANUAL,
+      verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+      financeApprovalRequired: true,
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
     },
     {
       code: PaymentChannelCode.JAWALI,
       name: 'Jawali Wallet (YKB Bank)',
       nameAr: 'محفظة جوالي - بنك اليمن والكويت',
-      accountNumber: '733987654',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'قم بالتحويل عبر تطبيق جوالي إلى الحساب رقم 733987654، ثم أرفق الرقم المرجعي للعملية وصورة الإشعار.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات المستفيد الحقيقية وتحقق منها واعتمدها من الإدارة المالية قبل الإتاحة للعملاء.',
       supportedCurrencies: ['YER'],
+      mode: PaymentChannelMode.MANUAL,
+      verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+      financeApprovalRequired: true,
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
     },
     {
       code: PaymentChannelCode.CASH,
       name: 'Cash Wallet (Saba Bank)',
       nameAr: 'محفظة كاش - بنك سبأ الإسلامي',
-      accountNumber: '711223344',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'قم بالتحويل عبر محفظة كاش إلى الرقم 711223344 باسم (منصة الشحن والخدمات الرقمية)، ثم أدخل رقم الحوالة وصورة السند.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات المستفيد الحقيقية وتحقق منها واعتمدها من الإدارة المالية قبل الإتاحة للعملاء.',
       supportedCurrencies: ['YER'],
+      mode: PaymentChannelMode.MANUAL,
+      verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+      financeApprovalRequired: true,
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
     },
     {
       code: PaymentChannelCode.ONE_CASH,
       name: 'One Cash (YOU Telecom)',
       nameAr: 'ون كاش - شركة YOU',
-      accountNumber: '739112233',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'حول المبلغ عبر ون كاش إلى الرقم 739112233، ثم أدخل رقم الإشعار للتحقق المالي السريع.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات المستفيد الحقيقية وتحقق منها واعتمدها من الإدارة المالية قبل الإتاحة للعملاء.',
       supportedCurrencies: ['YER'],
+      mode: PaymentChannelMode.MANUAL,
+      verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+      financeApprovalRequired: true,
       minAmount: 500,
       maxAmount: 1500000,
-      isActive: true,
+      isActive: false,
     },
     {
       code: PaymentChannelCode.EASY,
       name: 'Easy Wallet',
       nameAr: 'محفظة إيزي للدفع الإلكتروني',
-      accountNumber: '775544332',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية',
-      instructionsAr: 'حول إلى محفظة إيزي رقم 775544332، وأدخل رقم العملية للتحقق المالي من قبل المشرفين.',
+      accountNumber: 'NOT_CONFIGURED',
+      accountHolderName: 'غير مهيأ',
+      instructionsAr: 'القناة غير مفعلة. أدخل بيانات المستفيد الحقيقية وتحقق منها واعتمدها من الإدارة المالية قبل الإتاحة للعملاء.',
       supportedCurrencies: ['YER'],
+      mode: PaymentChannelMode.MANUAL,
+      verificationStatus: ChannelVerificationStatus.PENDING_REVIEW,
+      financeApprovalRequired: true,
       minAmount: 500,
       maxAmount: 1500000,
-      isActive: true,
+      isActive: false,
     },
   ];
 
@@ -426,83 +443,56 @@ async function main() {
     ],
   });
 
-  // 6. Seed Users with Multi-Currency Wallets
-  console.log('Seeding Users and Wallets...');
-  const passwordHash = await bcrypt.hash('Admin@123456', 10);
-  const customerPasswordHash = await bcrypt.hash('Customer@123456', 10);
-
-  const adminEmail = process.env.SEED_SUPER_ADMIN_EMAIL || 'admin@digitaltopup.com';
-  const adminPasswordHash = await bcrypt.hash(
-    process.env.SEED_SUPER_ADMIN_PASSWORD || 'Admin@123456',
-    10,
-  );
+  // 6. Seed non-login synthetic identities and one explicitly configured bootstrap administrator.
+  console.log('Seeding users and wallets...');
+  const adminEmail = process.env.SEED_SUPER_ADMIN_EMAIL;
+  const adminPassword = process.env.SEED_SUPER_ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword || adminPassword.length < 20) throw new Error('Set SEED_SUPER_ADMIN_EMAIL and a unique SEED_SUPER_ADMIN_PASSWORD of at least 20 characters.');
+  const adminPasswordHash = await bcrypt.hash(adminPassword, 12);
+  const syntheticPasswordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+  const syntheticCustomerPasswordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
   const superAdmin = await prisma.user.upsert({
     where: { email: adminEmail },
     create: {
-      email: adminEmail,
-      phone: '+967770000001',
-      passwordHash: adminPasswordHash,
-      fullName: 'Super Administrator',
-      fullNameAr: 'المدير العام للمنصة',
-      role: UserRole.SUPER_ADMIN,
-      isVerified: true,
-      emailVerifiedAt: new Date(),
-      phoneVerifiedAt: new Date(),
-      wallets: {
-        create: [
-          { currency: CurrencyCode.YER, balance: 0.0 },
-          { currency: CurrencyCode.USD, balance: 0.0 },
-          { currency: CurrencyCode.SAR, balance: 0.0 },
-        ],
-      },
+      email: adminEmail, phone: null, passwordHash: adminPasswordHash,
+      fullName: 'Super Administrator', fullNameAr: 'المدير العام للمنصة',
+      role: UserRole.SUPER_ADMIN, isVerified: true, isActive: true, emailVerifiedAt: new Date(),
+      wallets: { create: [
+        { currency: CurrencyCode.YER, balance: 0.0 },
+        { currency: CurrencyCode.USD, balance: 0.0 },
+        { currency: CurrencyCode.SAR, balance: 0.0 },
+      ] },
     },
     update: {},
   });
-
   const financeOfficer = await prisma.user.create({
     data: {
-      email: 'finance@digitaltopup.com',
-      phone: '+967770000002',
-      passwordHash: passwordHash,
-      fullName: 'Chief Financial Officer',
-      fullNameAr: 'مدير التدقيق المالي والعمليات',
-      role: UserRole.FINANCE,
-      isVerified: true,
-      emailVerifiedAt: new Date(),
-      phoneVerifiedAt: new Date(),
-      wallets: {
-        create: [
-          { currency: CurrencyCode.YER, balance: 0.0 },
-          { currency: CurrencyCode.USD, balance: 0.0 },
-          { currency: CurrencyCode.SAR, balance: 0.0 },
-        ],
-      },
+      email: 'seed-finance-' + crypto.randomUUID() + '@example.invalid', phone: null,
+      passwordHash: syntheticPasswordHash, fullName: 'Disabled Synthetic Finance User',
+      fullNameAr: 'حساب مالي تجريبي معطل', role: UserRole.FINANCE,
+      isVerified: false, isActive: false, emailVerifiedAt: null, phoneVerifiedAt: null,
+      wallets: { create: [
+        { currency: CurrencyCode.YER, balance: 0.0 },
+        { currency: CurrencyCode.USD, balance: 0.0 },
+        { currency: CurrencyCode.SAR, balance: 0.0 },
+      ] },
     },
   });
-
   const testCustomer = await prisma.user.create({
     data: {
-      email: 'customer@gmail.com',
-      phone: '+967770000003',
-      passwordHash: customerPasswordHash,
-      fullName: 'Ahmed Mohammed (Test Gamer)',
-      fullNameAr: 'أحمد محمد (مستخدم تجريبي)',
-      role: UserRole.CUSTOMER,
-      tier: { connect: { code: 'B2C' } },
-      isVerified: true,
-      emailVerifiedAt: new Date(),
-      phoneVerifiedAt: new Date(),
-      wallets: {
-        create: [
-          { currency: CurrencyCode.YER, balance: 50000.0, lockedBalance: 0.0 },
-          { currency: CurrencyCode.USD, balance: 100.0, lockedBalance: 0.0 },
-          { currency: CurrencyCode.SAR, balance: 200.0, lockedBalance: 0.0 },
-        ],
-      },
+      email: 'seed-customer-' + crypto.randomUUID() + '@example.invalid', phone: null,
+      passwordHash: syntheticCustomerPasswordHash, fullName: 'Disabled Synthetic Test Customer',
+      fullNameAr: 'عميل تجريبي معطل', role: UserRole.CUSTOMER,
+      tier: { connect: { code: 'B2C' } }, isVerified: false, isActive: false,
+      emailVerifiedAt: null, phoneVerifiedAt: null,
+      wallets: { create: [
+        { currency: CurrencyCode.YER, balance: 50000.0, lockedBalance: 0.0 },
+        { currency: CurrencyCode.USD, balance: 100.0, lockedBalance: 0.0 },
+        { currency: CurrencyCode.SAR, balance: 200.0, lockedBalance: 0.0 },
+      ] },
     },
     include: { wallets: true },
   });
-
   const yerWallet = testCustomer.wallets.find((w) => w.currency === CurrencyCode.YER)!;
   const usdWallet = testCustomer.wallets.find((w) => w.currency === CurrencyCode.USD)!;
 
@@ -901,8 +891,7 @@ async function main() {
 
   console.log('--- Yemen Market Database Seeder Completed Successfully ---');
   console.log(`Super Admin: ${adminEmail}`);
-  console.log('Finance Officer: finance@digitaltopup.com');
-  console.log('Test Customer: customer@gmail.com');
+  console.log('Synthetic finance/customer seed identities are disabled and have random unusable credentials.');
   console.log(`Initial Customer Balances: 50,000 YER | 100.00 USD | 200.00 SAR`);
 }
 
