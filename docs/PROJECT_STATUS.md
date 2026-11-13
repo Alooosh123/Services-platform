@@ -1,3 +1,13 @@
+## أداة تشغيل Windows المحلية — 13 نوفمبر 2026
+
+أضيف السكربت `scripts/complete-local-services-platform.ps1` لتشغيل مراحل البيئة المحلية بالتسلسل: فحص loopback، PostgreSQL وRedis، تثبيت الاعتماديات، Prisma generate/validate، نسخة PostgreSQL احتياطية قبل الهجرات، `migrate deploy` المحلي، بناء monorepo، تشغيل Backend والواجهات، واختبار تسجيل العميل ودخوله. يرفض السكربت قواعد البيانات البعيدة أو `NODE_ENV=production`، ولا ينفذ seed reset أو يفعّل أي مزود دفع.
+
+- Raw download: https://raw.githubusercontent.com/Alooosh123/Services-platform/fix/production-hardening-20261108/scripts/complete-local-services-platform.ps1
+- ملف التشغيل والسجلات والنسخ الاحتياطية المحلي: `.local-run/` (مضاف إلى `.gitignore`).
+- لم يُشغّل السكربت على جهاز المطور من هذه الجلسة؛ يلزم تنفيذ PowerShell محلياً والتحقق من النتائج.
+
+---
+
 # تحديث حالة التشغيل المحلي — 13 نوفمبر 2026
 
 > مصدر هذا التحديث: مخرجات PowerShell التي أرسلها صاحب المشروع أثناء تنفيذ الإعداد المحلي. لا تمثل هذه النتائج اختباراً أجريته على جهازه عن بُعد.
