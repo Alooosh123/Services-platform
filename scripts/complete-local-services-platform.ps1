@@ -58,7 +58,7 @@ function Wait-Http([string]$Url, [string]$Label, [int]$TimeoutSeconds, [int]$Pro
         }
         try {
             $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5
-            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
                 Write-Host "$Label responded: HTTP $($response.StatusCode)" -ForegroundColor Green
                 return
             }
@@ -187,7 +187,44 @@ if (-not (Test-Path $backup) -or (Get-Item $backup).Length -lt 100) { throw 'Bac
 $backupHash = (Get-FileHash $backup -Algorithm SHA256).Hash
 Write-Host "Backup: $backup"
 Write-Host "Backup SHA256: $backupHash"
-& docker exec topup_postgres rm -f $insideBackup | Out-Null
+
+Write-Section 'RESTORE DRILL IN A DISPOSABLE LOCAL DATABASE'
+$restoreDatabase = 'topup_restore_verify_' + (Get-Date -Format 'yyyyMMddHHmmss')
+$restorePath = "/tmp/services-platform-restore-$stamp.sql"
+$restoreDatabaseCreated = $false
+try {
+    & docker exec topup_postgres createdb -U $pgUser $restoreDatabase
+    Assert-Exit 'Create disposable restore-verification database'
+    $restoreDatabaseCreated = $true
+
+    & docker cp $backup "topup_postgres:$restorePath"
+    Assert-Exit 'Copy verified backup into PostgreSQL container'
+
+    & docker exec topup_postgres psql -v ON_ERROR_STOP=1 -U $pgUser -d $restoreDatabase -f $restorePath
+    Assert-Exit 'Restore backup into disposable database'
+
+    $restoredTableCount = & docker exec topup_postgres psql -v ON_ERROR_STOP=1 -U $pgUser -d $restoreDatabase -Atc 'SELECT count(*) FROM information_schema.tables WHERE table_schema = ''public'';'
+    Assert-Exit 'Verify restored table catalog'
+    $restoredTableCount = [int](($restoredTableCount | Out-String).Trim())
+
+    $restoredMigrationCount = & docker exec topup_postgres psql -v ON_ERROR_STOP=1 -U $pgUser -d $restoreDatabase -Atc 'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL;'
+    Assert-Exit 'Verify restored Prisma migration history'
+    $restoredMigrationCount = [int](($restoredMigrationCount | Out-String).Trim())
+
+    if ($restoredTableCount -lt 1 -or $restoredMigrationCount -lt 1) {
+        throw "Restore verification was incomplete (tables=$restoredTableCount, migrations=$restoredMigrationCount). Local migrations were not run."
+    }
+    Write-Host "Restore drill: PASS ($restoredTableCount public tables, $restoredMigrationCount applied migrations)" -ForegroundColor Green
+}
+finally {
+    if ($restoreDatabaseCreated) {
+        & docker exec topup_postgres dropdb --if-exists -U $pgUser $restoreDatabase
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not remove disposable restore database $restoreDatabase. It is isolated and contains only the restore test."
+        }
+    }
+    & docker exec topup_postgres rm -f $insideBackup $restorePath | Out-Null
+}
 
 Write-Section 'APPLY LOCAL MIGRATIONS'
 & $script:NpmCommand run db:migrate:deploy
