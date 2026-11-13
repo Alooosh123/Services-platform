@@ -719,7 +719,7 @@ export class DepositsService {
         userId: deposit.userId,
         walletId: deposit.walletId,
         currency: deposit.currency as CurrencyCode,
-        amount: Number(deposit.amount),
+        amount: deposit.amount.toString(),
         paymentChannel: deposit.paymentMethodCode as PaymentChannelCode,
         referenceId: deposit.id,
         performedByUserId: staffUserId,
