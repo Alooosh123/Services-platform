@@ -548,16 +548,20 @@ model PaymentChannelConfig {
   minAmount               Decimal                   @default(1.0000) @db.Decimal(18, 4)
   maxAmount               Decimal                   @default(10000000.0000) @db.Decimal(18, 4)
   mode                    PaymentChannelMode        @default(MANUAL)
-  verificationStatus      ChannelVerificationStatus @default(VERIFIED)
+  verificationStatus      ChannelVerificationStatus @default(PENDING_REVIEW)
   verifiedByFinanceUserId String?
   verifiedAt              DateTime?
-  financeApprovalRequired Boolean                   @default(false)
+  financeApprovalRequired Boolean                   @default(true)
+  feePercentage           Decimal                   @default(0.0000) @db.Decimal(6, 4)
   pendingAccountNumber    String?
   pendingInstructionsAr   String?
   pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
+  pendingProposedByUserId String?
+  pendingProposedAt       DateTime?
+  pendingChangeReason     String?
   killSwitchReason        String?
   killSwitchAt            DateTime?
-  isActive                Boolean                   @default(true)
+  isActive                Boolean                   @default(false)
   createdAt               DateTime                  @default(now())
   updatedAt               DateTime                  @updatedAt
 
