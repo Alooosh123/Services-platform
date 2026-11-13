@@ -47,5 +47,5 @@ finance review rather than creating a negative wallet.
 Binance Pay is not activated by this implementation. Configure no Binance
 payment method until its certificate-based request and callback verification
 adapter is implemented and tested. Real provider onboarding, live credentials,
-chain monitor verification, and PostgreSQL migration execution remain required
+chain monitor verification, and MySQL data cutover and reconciliation remain required
 before production use.
