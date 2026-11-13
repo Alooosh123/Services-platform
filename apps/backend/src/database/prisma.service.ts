@@ -8,10 +8,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit() {
     try {
       await this.$connect();
-      this.logger.log('Successfully connected to PostgreSQL database!');
+      this.logger.log('Successfully connected to MySQL database!');
     } catch (error: any) {
       this.logger.warn(
-        `Database connection to PostgreSQL at localhost:5432 failed (${error?.message || 'Unreachable'}). Server will continue in Demo/Simulation Mode. Swagger UI is accessible at /api/docs.`,
+        `Database connection to MySQL connection failed (${error?.message || 'Unreachable'}). Application startup will continue in non-production mode only.`,
       );
     }
   }
