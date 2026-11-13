@@ -605,7 +605,7 @@ export class DepositsService {
         userId: deposit.userId,
         walletId: deposit.walletId,
         currency: deposit.currency,
-        amount: Number(deposit.amount),
+        amount: String(deposit.amount),
         paymentChannel: deposit.paymentMethodCode,
         referenceId: deposit.id,
         performedByUserId: staffUserId,
