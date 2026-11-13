@@ -226,7 +226,7 @@ describe('DepositsService (Phase 2)', () => {
     expect(approved.deposit.status).toBe(DepositStatus.CREDITED);
     expect(ledgerService.recordTopup).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount: 25000,
+        amount: '25000',
         currency: CurrencyCode.YER,
         paymentChannel: PaymentChannelCode.JAIB,
       }),
