@@ -138,6 +138,11 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Build Shared Types and Generate Prisma Client
+        run: |
+          npm run build --workspace=packages/shared
+          npm run db:generate
+
       - name: Push Test Schema
         run: npx prisma db push --schema=packages/database/prisma/schema.prisma
 
@@ -208,14 +213,31 @@ jobs:
           npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
           npx prisma migrate status --schema=packages/database/prisma/schema.prisma
 
-      - name: Install MySQL client tools for backup/restore drill
+      - name: Configure MySQL CLI wrappers using the existing MySQL 8.4 service
         run: |
-          sudo apt-get update
-          sudo apt-get install -y mysql-client
+          MYSQL_SERVICE_CONTAINER_ID="$(docker ps --filter 'ancestor=mysql:8.4' --format '{{.ID}}' | head -n 1)"
+          test -n "$MYSQL_SERVICE_CONTAINER_ID"
+          mkdir -p "$RUNNER_TEMP/mysql-tools"
+          cat > "$RUNNER_TEMP/mysql-tools/mysqldump" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker exec -i -e MYSQL_PWD="${MYSQL_PWD:-}" "${MYSQL_SERVICE_CONTAINER_ID:?}" mysqldump "$@"
+          EOF
+          cat > "$RUNNER_TEMP/mysql-tools/mysql" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker exec -i -e MYSQL_PWD="${MYSQL_PWD:-}" "${MYSQL_SERVICE_CONTAINER_ID:?}" mysql "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/mysql-tools/mysqldump" "$RUNNER_TEMP/mysql-tools/mysql"
+          {
+            echo "MYSQL_SERVICE_CONTAINER_ID=$MYSQL_SERVICE_CONTAINER_ID"
+            echo "MYSQLDUMP_BIN=$RUNNER_TEMP/mysql-tools/mysqldump"
+            echo "MYSQL_BIN=$RUNNER_TEMP/mysql-tools/mysql"
+          } >> "$GITHUB_ENV"
 
       - name: Create isolated empty restore target
         run: |
-          MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --execute "CREATE DATABASE digital_topup_restore_test"
+          MYSQL_PWD="$MYSQL_ROOT_PASSWORD" "$MYSQL_BIN" --host 127.0.0.1 --port 3306 --user root --execute "CREATE DATABASE digital_topup_restore_test"
 
       - name: Execute encrypted MySQL backup
         run: npm run db:backup
@@ -228,7 +250,7 @@ jobs:
 
       - name: Verify restored schema and double-entry totals
         run: |
-          TABLE_COUNT="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()")"
+          TABLE_COUNT="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" "$MYSQL_BIN" --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()")"
           test "$TABLE_COUNT" -gt 0
           BALANCE_CHECK="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT IF(ABS(COALESCE(SUM(debitAmount),0)-COALESCE(SUM(creditAmount),0)) <= 0.0001, 'PASS', 'FAIL') FROM ledger_entries")"
           test "$BALANCE_CHECK" = "PASS"
