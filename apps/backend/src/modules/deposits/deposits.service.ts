@@ -192,6 +192,8 @@ export class DepositsService {
         where: {
           isActive: true,
           verificationStatus: ChannelVerificationStatus.VERIFIED,
+          financeApprovalRequired: false,
+          accountNumber: { not: 'NOT_CONFIGURED' },
           mode: { notIn: [PaymentChannelMode.DISABLED, PaymentChannelMode.BLOCKED_EXTERNAL] },
         },
       });
@@ -1151,8 +1153,11 @@ export class DepositsService {
       if (!current) throw new NotFoundException('Payment channel configuration was not found.');
       const updated = await tx.paymentChannelConfig.update({
         where: { id: current.id },
-        data: { mode: PaymentChannelMode.MANUAL, killSwitchReason: null,
-          isActive: current.verificationStatus === ChannelVerificationStatus.VERIFIED && !current.financeApprovalRequired },
+        data: {
+          mode: PaymentChannelMode.MANUAL,
+          isActive: current.verificationStatus === ChannelVerificationStatus.VERIFIED &&
+            !current.financeApprovalRequired && !current.killSwitchReason,
+        },
       });
       await this.recordChannelAudit(tx, actorUserId, 'PAYMENT_CHANNEL_SAFE_FAILOVER', current.id,
         { mode: current.mode, isActive: current.isActive },
@@ -1317,6 +1322,7 @@ export class DepositsService {
           isActive: false,
           mode: PaymentChannelMode.DISABLED,
           pendingAccountNumber: null,
+          pendingInstructionsAr: null,
           pendingFeePercentage: null,
           pendingProposedByUserId: null,
           pendingProposedAt: null,
