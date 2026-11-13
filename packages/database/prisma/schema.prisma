@@ -543,7 +543,7 @@ model PaymentChannelConfig {
   nameAr                  String
   accountNumber           String // E.g. "770123456"
   accountHolderName       String // E.g. "منصة الشحن الرقمية المحدودة"
-  instructionsAr          String
+  instructionsAr          String                    @db.Text
   supportedCurrencies     Json // ["YER"] or ["YER","USD"]
   minAmount               Decimal                   @default(1.0000) @db.Decimal(18, 4)
   maxAmount               Decimal                   @default(10000000.0000) @db.Decimal(18, 4)
@@ -554,11 +554,11 @@ model PaymentChannelConfig {
   financeApprovalRequired Boolean                   @default(true)
   feePercentage           Decimal                   @default(0.0000) @db.Decimal(6, 4)
   pendingAccountNumber    String?
-  pendingInstructionsAr   String?
+  pendingInstructionsAr   String?                   @db.Text
   pendingFeePercentage    Decimal?                  @db.Decimal(6, 4)
   pendingProposedByUserId String?
   pendingProposedAt       DateTime?
-  pendingChangeReason     String?
+  pendingChangeReason     String?                   @db.Text
   killSwitchReason        String?
   killSwitchAt            DateTime?
   isActive                Boolean                   @default(false)
@@ -1112,7 +1112,7 @@ model ReconciliationItem {
   status           ReconciliationStatus @default(PENDING_REVIEW)
   discrepancyType  DiscrepancyType?
   internalTxId     String?
-  notes            String?
+  notes            String?              @db.Text
   resolvedAt       DateTime?
   resolvedByUserId String?
   createdAt        DateTime             @default(now())
@@ -1625,15 +1625,15 @@ model OperationalApproval {
   targetType        String
   targetId          String?
   action            String
-  reason            String
+  reason            String   @db.Text
   requesterRole     String
   requestedByUserId String
   decidedByUserId   String?
   status            String   @default("PENDING")
   decision          String?
-  decisionNotes     String?
+  decisionNotes     String?  @db.Text
   executionReference String?
-  executionNotes    String?
+  executionNotes    String?  @db.Text
   executedByUserId  String?
   executedAt        DateTime?
   requestedAt       DateTime @default(now())
