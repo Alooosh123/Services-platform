@@ -312,6 +312,5 @@ describe('Phase 06 — Dynamic Catalog, Package Margins & Dynamic Payment Channe
       expect(killedProd).toBeUndefined(); // Filtered out from public purchases!
     });
 
-;
   });
 });
