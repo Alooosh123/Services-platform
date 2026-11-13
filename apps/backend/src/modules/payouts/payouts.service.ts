@@ -18,6 +18,7 @@ import {
   PaymentChannelMode,
   CreatePayoutDto,
   ApprovePayoutDto,
+  UserRole,
 } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
@@ -815,6 +816,57 @@ export class PayoutsService {
       throw new BadRequestException('سبب رفض طلب السحب مطلوب ويجب ألا يقل عن 8 أحرف.');
     }
 
+    if (process.env.NODE_ENV === 'production') {
+      return this.prisma.$transaction(async (tx) => {
+        const current = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+        if (!current) throw new NotFoundException('طلب السحب غير موجود.');
+        if (![PayoutStatus.REQUESTED, PayoutStatus.APPROVED].includes(current.status as PayoutStatus)) {
+          throw new ConflictException('تغيرت حالة طلب السحب؛ لا يمكن تحرير الحجز بعد بدء التنفيذ.');
+        }
+        const changed = await tx.payoutRequest.updateMany({
+          where: { id: payoutId, status: current.status },
+          data: {
+            status: PayoutStatus.CANCELLED,
+            failureReason: reason.trim(),
+            approvedByUserId: staffUserId,
+          },
+        });
+        if (changed.count !== 1) throw new ConflictException('تمت معالجة طلب السحب بواسطة موظف آخر.');
+        if (current.walletId) {
+          await this.ledgerService.releaseWalletHold(current.walletId, Number(current.amount), tx);
+        }
+        const updated = await tx.payoutRequest.findUnique({ where: { id: payoutId } });
+        if (!updated) throw new ServiceUnavailableException('تعذر قراءة طلب السحب بعد الإلغاء.');
+        return {
+          success: true,
+          payout: {
+            id: updated.id,
+            payoutNumber: updated.payoutNumber,
+            userId: updated.userId,
+            walletId: updated.walletId,
+            currency: updated.currency as CurrencyCode,
+            amount: Number(updated.amount),
+            feeAmount: Number(updated.feeAmount),
+            channelCode: updated.channelCode as PaymentChannelCode,
+            destinationAccount: updated.destinationAccount,
+            beneficiaryName: updated.beneficiaryName,
+            idempotencyKey: updated.idempotencyKey,
+            status: updated.status as PayoutStatus,
+            approvedByUserId: updated.approvedByUserId,
+            approvalNotes: updated.approvalNotes,
+            externalReference: updated.externalReference,
+            failureReason: updated.failureReason,
+            ledgerTxId: updated.ledgerTxId,
+            executedByUserId: updated.executedByUserId,
+            executedAt: updated.executedAt,
+            executionNotes: updated.executionNotes,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+          },
+        };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }
+
     if (payout.walletId) {
       await this.ledgerService.releaseWalletHold(payout.walletId, payout.amount);
     }
@@ -827,6 +879,28 @@ export class PayoutsService {
     await this.syncPayoutToDb(payout);
 
     return { success: true, payout };
+  }
+
+  async getPayoutByIdForUser(
+    payoutId: string,
+    requestingUserId: string,
+    requestingRole: UserRole,
+  ): Promise<InMemoryPayout> {
+    const payout = await this.getPayoutById(payoutId);
+    const privilegedRoles = [
+      UserRole.OWNER,
+      UserRole.GENERAL_MANAGER,
+      UserRole.FINANCE_MANAGER,
+      UserRole.FINANCE,
+      UserRole.ADMIN,
+      UserRole.SUPER_ADMIN,
+      UserRole.AUDITOR,
+    ];
+    if (payout.userId !== requestingUserId && !privilegedRoles.includes(requestingRole)) {
+      // Do not disclose whether another customer's payout ID exists.
+      throw new NotFoundException('طلب السحب غير موجود.');
+    }
+    return payout;
   }
 
   async getPayoutById(payoutId: string): Promise<InMemoryPayout> {
