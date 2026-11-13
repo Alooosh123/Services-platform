@@ -17,15 +17,28 @@
 
 1. حدّث جهاز الاختبار إلى إصدار RouterOS مدعوم، واضبط اسماً معروفاً للجهاز وتوقيتاً صحيحاً.
 2. جهّز شهادة TLS موثوقة للـ `www-ssl`، وثبّت شهادة CA المقابلة في بيئة backend. لا تعطّل `rejectUnauthorized` ولا تستخدم HTTP/REST-plain.
-3. أنشئ مجموعة مخصصة للمراقبة وفق وثائق RouterOS، بسياسات القراءة وواجهة API/REST فقط، من دون `write` أو `policy` أو `sensitive` أو `reboot` أو صلاحيات إدارة المستخدمين.
-4. أنشئ مستخدم خدمة مستقلّاً داخل هذه المجموعة بكلمة مرور قوية وفريدة.
-5. فعّل خدمة `www-ssl` فقط، وقيّد عنوان الوصول إلى عنوان خادم التطبيق/شبكة الاختبار، وامنع المنفذ 443 من واجهة WAN. لا تفتح خدمة `www` غير المشفرة.
+3. لا تستخدم مجموعة RouterOS الافتراضية المسماة `read`: توضح وثائق MikroTik أنها قد تتضمن صلاحيات إضافية مثل `reboot` و`sensitive`. أنشئ مجموعة مخصصة بسياسات `read,api,rest-api` فقط، من دون `write` أو `policy` أو `sensitive` أو `reboot` أو `test` أو إدارة المستخدمين.
+4. أنشئ مستخدم خدمة مستقلّاً داخل هذه المجموعة بكلمة مرور قوية وفريدة، وقيّد المستخدم بعنوان backend الثابت عبر خاصية `address`.
+5. فعّل `www-ssl` فقط، وقيّد الخدمة بعنوان خادم التطبيق عبر `available-from`، واضبط TLS على 1.2 على الأقل أو `only-1.2`، وعطّل REST غير المشفر بخيار `rest-plain=no`. لا تفتح `www` غير المشفر ولا تفتح منفذ الإدارة على WAN.
+
+مثال أوامر RouterOS 7.25+ بعد استبدال العناوين وكلمة المرور بقيم بيئة الاختبار:
+
+```routeros
+/user/group/add name=platform-rest-read policy=read,api,rest-api
+/user/add name=platform-monitor group=platform-rest-read address=192.168.88.10/32 password="<unique-long-secret>"
+/ip/service/set www-ssl disabled=no available-from=192.168.88.10/32 tls-version=only-1.2
+/ip/service/webserver/set rest-plain=no
+/ip/service/disable www
+```
+
+سياسة `api` المطلوبة هنا هي صلاحية مجموعة المستخدم كي يسمح RouterOS لمغلف REST بإنشاء جلسة API داخلية؛ لا يعني ذلك ضرورة فتح خدمة `/ip/service api` على الشبكة. لا تمنح الحساب `write`، وبذلك ترفض أوامر تغيير الإعدادات حتى لو أخطأ عميل المراقبة.
 6. اختبر الطلبات الثلاثة للقراءة من نفس حاوية/خادم التطبيق مع التحقق من الشهادة؛ تأكد أن الحساب لا يستطيع تغيير إعداد عبر RouterOS CLI/API.
 
 أمثلة مرجعية من وثائق MikroTik الرسمية:
 
 - [REST API](https://manual.mikrotik.com/docs/developer-guides/rest-api/)
 - [المستخدمون والصلاحيات](https://manual.mikrotik.com/docs/authentication-authorization-accounting/user/)
+- [تحديثات دليل RouterOS في 28 سبتمبر 2026، بما فيها مراجعة REST API على RouterOS 7.25](https://manual.mikrotik.com/changelog/changelog-2026-09-28/)
 - [مراقبة الموارد والسجلات](https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/)
 - [Ethernet](https://manual.mikrotik.com/docs/wired-connections/ethernet/)
 
