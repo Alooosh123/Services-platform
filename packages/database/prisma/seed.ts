@@ -173,25 +173,12 @@ async function main() {
   await seedSaasPlans();
 
   if (!resetSeedData && (existingUsers > 0 || existingCurrencies > 0)) {
-    // Reference currencies are required by Wallet.currency foreign keys. Repair
-    // missing rows without overwriting existing currency settings or balances.
+    // Wallet.currency has a foreign key to currencies; repair missing references
+    // without overwriting existing currency settings or any financial balances.
     await prisma.currency.createMany({
       data: [
-        {
-          code: CurrencyCode.YER,
-          name: 'Yemeni Rial',
-          nameAr: 'ريال يمني',
-          symbol: 'YR',
-          symbolAr: 'ر.ي',
-          decimals: 2,
-          isBase: false,
-          isActive: true,
-        },
-        {
-          code: CurrencyCode.USD,
-          name: 'US Dollar',
-          nameAr: 'دولار أمريكي',
-          symbol: '
+        { code: CurrencyCode.YER, name: 'Yemeni Rial', nameAr: 'ريال يمني', symbol: 'YR', symbolAr: 'ر.ي', decimals: 2, isBase: false, isActive: true },
+        { code: CurrencyCode.USD, name: 'US Dollar', nameAr: 'دولار أمريكي', symbol: '
 
   if (resetSeedData) {
     console.warn('RESET_DATABASE_SEED=true: deleting existing development seed data.');
@@ -1042,8 +1029,7 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-,
-          symbolAr: '
+, symbolAr: '
 
   if (resetSeedData) {
     console.warn('RESET_DATABASE_SEED=true: deleting existing development seed data.');
@@ -1894,21 +1880,8 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-,
-          decimals: 2,
-          isBase: true,
-          isActive: true,
-        },
-        {
-          code: CurrencyCode.SAR,
-          name: 'Saudi Rial',
-          nameAr: 'ريال سعودي',
-          symbol: 'SAR',
-          symbolAr: 'ر.س',
-          decimals: 2,
-          isBase: false,
-          isActive: true,
-        },
+, decimals: 2, isBase: true, isActive: true },
+        { code: CurrencyCode.SAR, name: 'Saudi Rial', nameAr: 'ريال سعودي', symbol: 'SAR', symbolAr: 'ر.س', decimals: 2, isBase: false, isActive: true },
       ],
       skipDuplicates: true,
     });
