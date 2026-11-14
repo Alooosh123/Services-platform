@@ -4,6 +4,7 @@ import { PhoneNormalizer } from './utils/phone-normalizer.util';
 import { SandboxSmsAdapter } from './adapters/sandbox-sms.adapter';
 import { ProductionSmsAdapter } from './adapters/production-sms.adapter';
 import { PrismaService } from '../../database/prisma.service';
+import { RedisIdempotencyStore } from '../../security/redis-idempotency.store';
 import { BadRequestException } from '@nestjs/common';
 
 describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
@@ -24,6 +25,16 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
         SandboxSmsAdapter,
         ProductionSmsAdapter,
         { provide: PrismaService, useValue: mockPrisma },
+        {
+          provide: RedisIdempotencyStore,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            setValue: jest.fn().mockResolvedValue(undefined),
+            deleteValue: jest.fn().mockResolvedValue(undefined),
+            consumeOnce: jest.fn().mockResolvedValue(true),
+            incrementWithTtl: jest.fn().mockResolvedValue(1),
+          },
+        },
       ],
     }).compile();
 
