@@ -11,6 +11,7 @@
 - Manual deposit flow: deposit request starts pending; independent approval required before posting the double-entry ledger; approval closure shares the same transaction as the wallet/ledger credit.
 - Operational approvals: requester/approver separation, concurrent decision protection, manual network closeout evidence, and reconciliation item closeout with exact Decimal checks.
 - Production reconciliation: memory fallback prohibited; durable batch and child IDs are used for approval targets.
+- Payout workflows: production sandbox payouts are blocked; the payout request and wallet hold are created atomically, finance approval uses a compare-and-set state transition, manual payout closeout posts the double-entry ledger and payout evidence in one MySQL transaction, payout UNKNOWN states retain the wallet hold, and payout read endpoints enforce owner/staff access.
 - Podman: Podman Compose and Containerfiles documented for local deployment; no successful run on the operator's Windows machine is evidenced in CI.
 
 ## Not evidenced / still blocked
