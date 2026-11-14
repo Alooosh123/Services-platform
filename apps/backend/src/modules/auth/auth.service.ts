@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -194,7 +195,10 @@ export class AuthService {
       }
     } catch (err: any) {
       if (err instanceof ConflictException) throw err;
-      this.logger.warn(`Prisma offline during register: continuing with memory store (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر التحقق من وجود الحساب في قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during register: continuing with test/development memory store (${err?.message})`);
 
       for (const u of this.memoryUsers.values()) {
         if ((dto.email && u.email === dto.email) || (dto.phone && u.phone === dto.phone)) {
@@ -229,7 +233,10 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during user.create: saving to memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر إنشاء الحساب في قاعدة البيانات الدائمة؛ لم يتم إنشاء حساب مؤقت.');
+      }
+      this.logger.warn(`Prisma offline during user.create: saving to test/development memory (${err?.message})`);
 
       const newId = `user-cust-${Date.now()}`;
       const memoryUser: InMemoryUser = {
@@ -285,10 +292,13 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during login: checking memory users (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر التحقق من بيانات الدخول عبر قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during login: checking test/development memory users (${err?.message})`);
     }
 
-    if (!user) {
+    if (!user && process.env.NODE_ENV !== 'production') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -340,10 +350,13 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر التحقق من الدخول الإداري عبر قاعدة البيانات الدائمة.');
+      }
       this.logger.warn(`Prisma offline during admin login (${err?.message})`);
     }
 
-    if (!user) {
+    if (!user && process.env.NODE_ENV !== 'production') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -616,7 +629,10 @@ export class AuthService {
         createdAt: created.createdAt,
       };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during createStaff: saving to memory (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر إنشاء الحساب الإداري في قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during createStaff: saving to test/development memory (${err?.message})`);
 
       const newId = `user-staff-${Date.now()}`;
       const memoryStaff: InMemoryUser = {
@@ -763,9 +779,13 @@ export class AuthService {
       });
       if (dbUser) return dbUser;
     } catch {
-      // offline fallback
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة هوية المستخدم من قاعدة البيانات الدائمة.');
+      }
+      // test/development fallback only
     }
 
+    if (process.env.NODE_ENV === 'production') return null;
     const memUser = this.memoryUsers.get(userId);
     if (memUser) return memUser;
 
