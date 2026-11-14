@@ -155,7 +155,7 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
       expect(verifyRes.success).toBe(true);
       expect(verifyRes.phone).toBe('+967771999888');
       expect(verifyRes.verificationMethod).toBe('SMS_OTP');
-      expect(verifyRes.disclaimer).toContain('لا يُعد إثباتاً قانونياً شاملاً للهوية');
+      expect(verifyRes.disclaimer).toContain('لا يُعد إثبات هوية رسمي شامل');
     });
 
     it('should enforce Single-Use: forbid verifying the same OTP challenge twice (Anti-Replay)', async () => {
