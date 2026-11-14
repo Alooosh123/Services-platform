@@ -146,6 +146,26 @@ describe('Durable payment channel administration and four-eyes review', () => {
     }));
   });
 
+  it('never clears or overrides an active emergency kill switch when approving receiver details', async () => {
+    tx.paymentChannelConfig.findUnique.mockResolvedValue({
+      ...channel,
+      killSwitchReason: 'incident-2026-11-13',
+      killSwitchAt: new Date(),
+      isActive: false,
+      mode: PaymentChannelMode.DISABLED,
+    });
+    const result = await service.approveChannelFinanceReview('finance-2', PaymentChannelCode.JAIB, {
+      approved: true,
+      financeNotes: 'تمت مراجعة مستند حساب الاستقبال واعتماده بصورة مستقلة.',
+    });
+    expect(result.channel.isActive).toBe(false);
+    expect(result.channel.mode).toBe(PaymentChannelMode.DISABLED);
+    expect(result.channel.killSwitchReason).toBe('incident-2026-11-13');
+    const updateData = tx.paymentChannelConfig.update.mock.calls[0][0].data;
+    expect(updateData).not.toHaveProperty('killSwitchReason');
+    expect(updateData).not.toHaveProperty('killSwitchAt');
+  });
+
   it('rejects API mode even when called outside the controller', async () => {
     await expect(service.switchChannelMode(PaymentChannelCode.JAIB, PaymentChannelMode.API, 'owner-1'))
       .rejects.toThrow(BadRequestException);
