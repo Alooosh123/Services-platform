@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { RedisIdempotencyStore } from '../../security/redis-idempotency.store';
 import { PrivacyService } from '../privacy/privacy.service';
 import { WalletService } from '../wallet/wallet.service';
 import { OrdersService } from '../orders/orders.service';
@@ -170,6 +171,16 @@ describe('P09: Security, Anti-Fraud, Compliance & Pen-Testing (Master AT-08, AT-
         AiRiskEvaluatorService,
         DeterministicRulesEngine,
         PhoneVerificationService,
+        {
+          provide: RedisIdempotencyStore,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            setValue: jest.fn().mockResolvedValue(undefined),
+            deleteValue: jest.fn().mockResolvedValue(undefined),
+            consumeOnce: jest.fn().mockResolvedValue(true),
+            incrementWithTtl: jest.fn().mockResolvedValue(1),
+          },
+        },
         SandboxSmsAdapter,
         ProductionSmsAdapter,
         {
