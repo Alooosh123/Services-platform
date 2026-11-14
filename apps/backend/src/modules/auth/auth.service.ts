@@ -473,7 +473,6 @@ export class AuthService {
       throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
     }
 
-    const isProduction = process.env.NODE_ENV === 'production';
     const disableBypass = process.env.DISABLE_MFA_BYPASS === 'true';
     let isTotpValid = false;
 
