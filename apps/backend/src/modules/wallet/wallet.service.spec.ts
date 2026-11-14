@@ -1,7 +1,6 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
-import { CurrencyCode, PaymentChannelCode } from '@digital-topup/shared';
+import { CurrencyCode, PaymentChannelCode, PaymentStatus } from '@digital-topup/shared';
 import { WalletService } from './wallet.service';
-import { PaymentStatus } from '@digital-topup/shared';
 
 describe('WalletService', () => {
   const wallet = {
@@ -112,7 +111,7 @@ describe('WalletService', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
-    prisma.$transaction.mockImplementation(async (callback: (tx: typeof tx) => Promise<unknown>) => callback(tx));
+    prisma.$transaction.mockImplementation(async (callback: (client: any) => Promise<unknown>) => callback(tx));
     const recordTopup = jest.fn().mockResolvedValue({ transaction: { id: 'ledger-atomic-1', status: 'POSTED' } });
     service = new WalletService(prisma, { recordTopup } as any);
     try {
