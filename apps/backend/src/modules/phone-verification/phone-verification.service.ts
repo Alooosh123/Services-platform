@@ -3,10 +3,12 @@ import {
   BadRequestException,
   Logger,
   UnauthorizedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../database/prisma.service';
+import { RedisIdempotencyStore } from '../../security/redis-idempotency.store';
 import { PhoneNormalizer, YemeniPhoneInfo } from './utils/phone-normalizer.util';
 import { SandboxSmsAdapter } from './adapters/sandbox-sms.adapter';
 import { ProductionSmsAdapter } from './adapters/production-sms.adapter';
@@ -42,6 +44,7 @@ export class PhoneVerificationService {
     private prisma: PrismaService,
     private sandboxSms: SandboxSmsAdapter,
     private productionSms: ProductionSmsAdapter,
+    private readonly redisStore: RedisIdempotencyStore,
   ) {
     // Select adapter based on environment
     this.smsAdapter =
@@ -61,17 +64,30 @@ export class PhoneVerificationService {
   async sendOtp(dto: SendPhoneOtpDto, userId?: string, ipAddress = '127.0.0.1') {
     const phoneInfo = PhoneNormalizer.normalizeYemeniPhone(dto.phone);
     const phone = phoneInfo.normalizedE164;
+    const isProduction = process.env.NODE_ENV === 'production';
 
-    // Rate Limiting 1: Max 3 OTP requests per phone in 15 minutes
-    this.checkPhoneRateLimit(phone);
+    if (isProduction) {
+      const phoneRequests = await this.redisStore.incrementWithTtl(
+        this.rateLimitKey('phone', phone),
+        15 * 60 * 1000,
+      );
+      if (phoneRequests > 3) {
+        throw new BadRequestException('تم تجاوز الحد الأقصى لطلب رموز التحقق لهذا الرقم (3 مرات خلال 15 دقيقة). يرجى الانتظار.');
+      }
+      const ipRequests = await this.redisStore.incrementWithTtl(
+        this.rateLimitKey('ip', ipAddress),
+        60 * 60 * 1000,
+      );
+      if (ipRequests > 10) {
+        throw new BadRequestException('تم تجاوز الحد الأقصى للطلبات من هذا العنوان. يرجى المحاولة لاحقاً (Anti-OTP Pumping).');
+      }
+    } else {
+      this.checkPhoneRateLimit(phone);
+      this.checkIpRateLimit(ipAddress);
+    }
 
-    // Rate Limiting 2: Max 10 OTP requests per IP in 60 minutes
-    this.checkIpRateLimit(ipAddress);
-
-    // Generate secure random 6-digit code
-    const rawCode = crypto.randomInt(100000, 999999).toString();
+    const rawCode = crypto.randomInt(100000, 1000000).toString();
     const otpHash = crypto.createHash('sha256').update(rawCode).digest('hex');
-
     const challengeId = uuidv4();
     const challenge: ActiveOtpChallenge = {
       id: challengeId,
@@ -79,22 +95,34 @@ export class PhoneVerificationService {
       userId,
       otpHash,
       attempts: 0,
-      expiresAt: new Date(Date.now() + 3 * 60 * 1000), // 3 minutes TTL
+      expiresAt: new Date(Date.now() + 3 * 60 * 1000),
       isUsed: false,
       ipAddress,
       createdAt: new Date(),
     };
 
-    this.challenges.set(challengeId, challenge);
-
-    // Record timestamps for rate limiting
-    this.recordPhoneRequest(phone);
-    this.recordIpRequest(ipAddress);
-
-    // Send SMS via active adapter
+    // Deliver first; a challenge is not made verifiable until a real provider reports success.
     const smsResult = await this.smsAdapter.sendVerificationSms(phone, rawCode);
-    const isDev = process.env.NODE_ENV !== 'production';
+    if (isProduction && (!smsResult.success || smsResult.simulated)) {
+      throw new ServiceUnavailableException('لم يؤكد مزود SMS تسليم الرسالة الحقيقية؛ لم يتم إنشاء تحدي تحقق.');
+    }
 
+    if (isProduction) {
+      const ttlMs = 3 * 60 * 1000;
+      try {
+        await this.redisStore.setValue(this.challengeKey(challengeId), JSON.stringify(challenge), ttlMs);
+        await this.redisStore.setValue(this.latestChallengeKey(phone), challengeId, ttlMs);
+      } catch {
+        // Do not return a challenge ID that cannot be recovered by all production instances.
+        throw new ServiceUnavailableException('تعذر حفظ تحدي OTP في Redis؛ اطلب رمزاً جديداً بعد استعادة الخدمة.');
+      }
+    } else {
+      this.challenges.set(challengeId, challenge);
+      this.recordPhoneRequest(phone);
+      this.recordIpRequest(ipAddress);
+    }
+
+    const isDev = !isProduction;
     return {
       success: true,
       challengeId,
@@ -108,70 +136,123 @@ export class PhoneVerificationService {
     };
   }
 
-  /**
-   * Verifies an OTP code with single-use enforcement, anti-replay, and brute-force lockout.
-   */
   async verifyOtp(dto: VerifyPhoneOtpDto, callerUserId?: string) {
     const phoneInfo = PhoneNormalizer.normalizeYemeniPhone(dto.phone);
     const phone = phoneInfo.normalizedE164;
+    const isProduction = process.env.NODE_ENV === 'production';
 
-    // Find the latest active unused challenge for this phone
-    const challenge = this.findLatestChallengeForPhone(phone);
-    if (!challenge || challenge.isUsed) {
+    let challenge: ActiveOtpChallenge | undefined;
+    let challengeId: string | null = null;
+    if (isProduction) {
+      challengeId = await this.redisStore.get(this.latestChallengeKey(phone));
+      if (challengeId) {
+        const serialized = await this.redisStore.get(this.challengeKey(challengeId));
+        if (serialized) {
+          try {
+            challenge = JSON.parse(serialized) as ActiveOtpChallenge;
+          } catch {
+            await this.redisStore.deleteValue(this.latestChallengeKey(phone));
+          }
+        }
+      }
+      if (challenge && (challenge.id !== challengeId || challenge.phone !== phone)) {
+        throw new UnauthorizedException('تحدي التحقق غير صالح لهذا الرقم.');
+      }
+    } else {
+      challenge = this.findLatestChallengeForPhone(phone);
+      challengeId = challenge?.id || null;
+    }
+
+    if (!challenge || challenge.isUsed || !challengeId) {
       throw new BadRequestException('لا يوجد طلب تحقق نشط لهذا الرقم، يرجى طلب رمز جديد');
     }
 
-    // Check expiration
+    const ttlMs = 3 * 60 * 1000;
+    const challengeKey = this.challengeKey(challengeId);
+    const latestKey = this.latestChallengeKey(phone);
+    const attemptsKey = this.attemptsKey(challengeId);
+    const usedKey = this.usedChallengeKey(challengeId);
+
     if (new Date() > challenge.expiresAt) {
-      this.challenges.delete(challenge.id);
+      if (isProduction) {
+        await this.redisStore.deleteValue(challengeKey);
+        await this.redisStore.deleteValue(latestKey);
+        await this.redisStore.deleteValue(attemptsKey);
+      } else {
+        this.challenges.delete(challenge.id);
+      }
       throw new BadRequestException('انتهت صلاحية رمز التحقق (3 دقائق). يرجى طلب رمز جديد.');
     }
 
-    // Brute-Force lockout: Max 3 failed attempts
-    if (challenge.attempts >= 3) {
-      this.challenges.delete(challenge.id);
+    const attempts = isProduction
+      ? Number(await this.redisStore.get(attemptsKey) || 0)
+      : challenge.attempts;
+    if (attempts >= 3) {
+      if (isProduction) {
+        await this.redisStore.consumeOnce(usedKey, ttlMs);
+        await this.redisStore.deleteValue(challengeKey);
+        await this.redisStore.deleteValue(latestKey);
+        await this.redisStore.deleteValue(attemptsKey);
+      } else {
+        this.challenges.delete(challenge.id);
+      }
       throw new BadRequestException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
     }
 
-    const isProduction = process.env.NODE_ENV === 'production';
     const submittedHash = crypto.createHash('sha256').update(dto.code.trim()).digest('hex');
-
-    // Timing-safe hash comparison
     const isCodeValid = crypto.timingSafeEqual(
       Buffer.from(submittedHash),
       Buffer.from(challenge.otpHash),
     );
 
     if (!isCodeValid) {
-      challenge.attempts += 1;
-      const remainingAttempts = 3 - challenge.attempts;
-
-      if (challenge.attempts >= 3) {
-        this.challenges.delete(challenge.id);
-        throw new BadRequestException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي.');
+      const nextAttempts = isProduction
+        ? await this.redisStore.incrementWithTtl(attemptsKey, ttlMs)
+        : attempts + 1;
+      if (isProduction) {
+        if (nextAttempts >= 3) {
+          await this.redisStore.consumeOnce(usedKey, ttlMs);
+          await this.redisStore.deleteValue(challengeKey);
+          await this.redisStore.deleteValue(latestKey);
+          await this.redisStore.deleteValue(attemptsKey);
+          throw new BadRequestException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي.');
+        }
+      } else {
+        challenge.attempts = nextAttempts;
+        if (nextAttempts >= 3) {
+          this.challenges.delete(challenge.id);
+          throw new BadRequestException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي.');
+        }
       }
-
-      throw new BadRequestException(`رمز التحقق غير صحيح. المتبقي: ${remainingAttempts} محاولات`);
+      throw new BadRequestException(`رمز التحقق غير صحيح. المتبقي: ${3 - nextAttempts} محاولات`);
     }
 
-    // SUCCESS: Single-use invalidation
-    challenge.isUsed = true;
-    this.challenges.delete(challenge.id);
+    if (isProduction) {
+      const consumed = await this.redisStore.consumeOnce(usedKey, ttlMs);
+      if (!consumed) {
+        throw new BadRequestException('تم استخدام رمز التحقق مسبقاً؛ اطلب رمزاً جديداً.');
+      }
+      await this.redisStore.deleteValue(challengeKey);
+      await this.redisStore.deleteValue(latestKey);
+      await this.redisStore.deleteValue(attemptsKey);
+    } else {
+      challenge.isUsed = true;
+      this.challenges.delete(challenge.id);
+    }
 
     const verifiedAt = new Date();
     const targetUserId = callerUserId || challenge.userId;
-
-    // Update database user record if available
     if (targetUserId) {
       try {
         await this.prisma.user.update({
           where: { id: targetUserId },
-          data: {
-            phoneVerifiedAt: verifiedAt,
-          },
+          data: { phoneVerifiedAt: verifiedAt },
         });
-      } catch (err: any) {
-        this.logger.warn(`Could not update User.phoneVerifiedAt in DB: ${err?.message}`);
+      } catch {
+        if (isProduction) {
+          throw new ServiceUnavailableException('تعذر حفظ حالة توثيق الهاتف في قاعدة البيانات؛ اطلب رمز تحقق جديداً بعد عودة الخدمة.');
+        }
+        this.logger.warn('Could not update User.phoneVerifiedAt in test/development database.');
       }
     }
 
@@ -182,23 +263,26 @@ export class PhoneVerificationService {
       verifiedAt,
       verificationMethod: 'SMS_OTP',
       message: 'تم تأكيد ملكية رقم الهاتف بنجاح',
-      disclaimer: 'تأكيد حيازة رقم الهاتف هو إجراء أمني لإثبات ملكية الشريحة ولا يُعد إثباتاً قانونياً شاملاً للهوية (KYC).',
+      disclaimer: 'تأكيد حيازة رقم الهاتف هو إجراء أمني لإثبات ملكية الشريحة ولا يُعد إثبات هوية رسمي شامل.',
     };
   }
 
-  /**
-   * Retrieves phone verification status for a user or phone number
-   */
   async getStatus(userId?: string, rawPhone?: string) {
     let user: any = null;
     if (userId) {
       try {
         user = await this.prisma.user.findUnique({ where: { id: userId } });
-      } catch {}
+      } catch {
+        if (process.env.NODE_ENV === 'production') {
+          throw new ServiceUnavailableException('تعذر قراءة حالة توثيق الهاتف من قاعدة البيانات الدائمة.');
+        }
+      }
     }
 
+    if (process.env.NODE_ENV === 'production' && userId && !user) {
+      throw new ServiceUnavailableException('تعذر العثور على حساب المستخدم في قاعدة البيانات الدائمة.');
+    }
     const isVerified = Boolean(user?.phoneVerifiedAt);
-
     return {
       userId,
       phone: user?.phone || rawPhone || null,
@@ -208,6 +292,31 @@ export class PhoneVerificationService {
       disclaimer: 'تأكيد حيازة رقم الهاتف هو إثبات لحيازة الشريحة (Possession Factor) ولا يُعد إثبات هوية رسمية.',
     };
   }
+
+  private hashKeyValue(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
+  }
+
+  private rateLimitKey(kind: 'phone' | 'ip', value: string): string {
+    return `phone-otp:rate:${kind}:${this.hashKeyValue(value)}`;
+  }
+
+  private challengeKey(challengeId: string): string {
+    return `phone-otp:challenge:${challengeId}`;
+  }
+
+  private latestChallengeKey(phone: string): string {
+    return `phone-otp:latest:${this.hashKeyValue(phone)}`;
+  }
+
+  private attemptsKey(challengeId: string): string {
+    return `phone-otp:attempts:${challengeId}`;
+  }
+
+  private usedChallengeKey(challengeId: string): string {
+    return `phone-otp:used:${challengeId}`;
+  }
+
 
   private findLatestChallengeForPhone(phone: string): ActiveOtpChallenge | undefined {
     let latest: ActiveOtpChallenge | undefined;
