@@ -12,6 +12,9 @@
 - Operational approvals: requester/approver separation, concurrent decision protection, manual network closeout evidence, and reconciliation item closeout with exact Decimal checks.
 - Production reconciliation: memory fallback prohibited; durable batch and child IDs are used for approval targets.
 - Payout workflows: production sandbox payouts are blocked; the payout request and wallet hold are created atomically, finance approval uses a compare-and-set state transition, manual payout closeout posts the double-entry ledger and payout evidence in one MySQL transaction, payout UNKNOWN states retain the wallet hold, and payout read endpoints enforce owner/staff access.
+- Wallet workflows: production in-memory wallet seeds/fallbacks are disabled; manual wallet-topup confirmation persists the double-entry ledger and topup state in one Serializable MySQL transaction, and freeze/unfreeze state plus audit log are recorded atomically.
+- Authentication and OTP: production MFA replay protection/attempt counters and SMS OTP challenges/rate limits use shared Redis TTL keys with atomic consume/increment; no OTP challenge is verifiable until a provider confirms actual SMS delivery. Production SMS adapter intentionally remains disabled until a certified provider contract and HTTP delivery implementation are supplied.
+- Emergency payment-channel kill switch: receiver-account approval cannot clear an active kill switch. A separate three-party Owner/General Manager request, approval and execution flow is persisted transactionally and always returns a channel to MANUAL only.
 - Podman: Podman Compose and Containerfiles documented for local deployment; no successful run on the operator's Windows machine is evidenced in CI.
 
 ## Not evidenced / still blocked
