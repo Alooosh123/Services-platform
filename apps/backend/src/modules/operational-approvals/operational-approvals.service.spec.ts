@@ -37,7 +37,24 @@ describe('OperationalApprovalsService four-eyes controls', () => {
     action: 'CONFIRM_MATCH',
   };
 
+  const channelConfig = {
+    id: '8bcb11f0-2e88-4a52-ae09-3c07a30f5a2a',
+    code: 'JAIB',
+    accountNumber: '770123456',
+    mode: 'DISABLED',
+    isActive: false,
+    verificationStatus: 'VERIFIED',
+    financeApprovalRequired: false,
+    pendingProposedByUserId: null,
+    killSwitchReason: 'incident-2026-11-13',
+    killSwitchAt: new Date(),
+  };
   const tx = {
+    paymentChannelConfig: {
+      findUnique: jest.fn().mockResolvedValue(channelConfig),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    auditLog: { create: jest.fn().mockResolvedValue({ id: 'audit-channel-release' }) },
     reconciliationItem: {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -50,6 +67,7 @@ describe('OperationalApprovalsService four-eyes controls', () => {
     },
   };
   const prisma = {
+    paymentChannelConfig: { findUnique: jest.fn().mockResolvedValue(channelConfig) },
     reconciliationItem: { findUnique: jest.fn() },
     depositRequest: { findUnique: jest.fn().mockResolvedValue({ id: depositId, status: 'UNDER_REVIEW' }) },
     operationalApproval: {
@@ -135,6 +153,61 @@ describe('OperationalApprovalsService four-eyes controls', () => {
     await expect(service.closeout(approverId, UserRole.FINANCE_MANAGER, approvalId, {
       executionReference: 'BANK-RECEIPT-8844',
     })).rejects.toThrow(ConflictException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('releases a payment channel kill switch only after requester, approver and executor are distinct', async () => {
+    prisma.operationalApproval.findUnique.mockResolvedValue({
+      ...pendingNetwork,
+      approvalType: 'PAYMENT_CHANNEL_REACTIVATION',
+      targetType: 'PAYMENT_CHANNEL_CONFIG',
+      targetId: channelConfig.id,
+      action: 'RELEASE_KILL_SWITCH',
+      requestedByUserId: requesterId,
+      decidedByUserId: approverId,
+      status: 'APPROVED_PENDING_EXECUTION',
+      decision: 'APPROVE',
+    });
+    tx.paymentChannelConfig.findUnique.mockResolvedValue(channelConfig);
+
+    const result = await service.closeout('independent-owner-3', UserRole.GENERAL_MANAGER, approvalId, {
+      executionReference: 'INCIDENT-REVIEW-AND-CHANNEL-RELEASE-002',
+      notes: 'تم التحقق من سبب الإيقاف واعتماد رفعه بعد مراجعة مستقلة.',
+    });
+
+    expect(result.status).toBe('EXECUTED');
+    expect(result.mode).toBe('MANUAL');
+    expect(result.automaticApiEnabled).toBe(false);
+    expect(tx.paymentChannelConfig.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: channelConfig.id, mode: 'DISABLED', isActive: false }),
+      data: expect.objectContaining({ mode: 'MANUAL', isActive: true, killSwitchReason: null }),
+    }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'PAYMENT_CHANNEL_KILL_SWITCH_RELEASED' }),
+    }));
+    expect(tx.operationalApproval.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: approvalId,
+        decidedByUserId: { not: 'independent-owner-3' },
+      }),
+    }));
+  });
+
+  it('does not allow the finance approver to execute their own channel reactivation approval', async () => {
+    prisma.operationalApproval.findUnique.mockResolvedValue({
+      ...pendingNetwork,
+      approvalType: 'PAYMENT_CHANNEL_REACTIVATION',
+      targetType: 'PAYMENT_CHANNEL_CONFIG',
+      targetId: channelConfig.id,
+      action: 'RELEASE_KILL_SWITCH',
+      requestedByUserId: requesterId,
+      decidedByUserId: approverId,
+      status: 'APPROVED_PENDING_EXECUTION',
+      decision: 'APPROVE',
+    });
+    await expect(service.closeout(approverId, UserRole.GENERAL_MANAGER, approvalId, {
+      executionReference: 'INCIDENT-REVIEW-SELF-EXECUTION',
+    })).rejects.toThrow('approver');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
