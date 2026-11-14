@@ -5,8 +5,10 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { Prisma } from '@prisma/client';
 import { LedgerService } from '../ledger/ledger.service';
 import { CurrencyCode, PaymentChannelCode, PaymentStatus } from '@digital-topup/shared';
 import { DepositFundsDto } from '../ledger/dto/ledger-adjustment.dto';
@@ -114,7 +116,10 @@ export class WalletService {
 
       return wallets.map((w) => this.enrichWallet(w));
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getWalletsByUserId: using memory wallets (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة محافظ العميل من قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during getWalletsByUserId: using test/development memory wallets (${err?.message})`);
 
       const userWallets: InMemoryWallet[] = [];
       for (const w of this.memoryWallets.values()) {
@@ -175,7 +180,10 @@ export class WalletService {
 
       return this.enrichWallet(wallet);
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during getWallet: using memory wallet (${err?.message})`);
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر قراءة المحفظة من قاعدة البيانات الدائمة.');
+      }
+      this.logger.warn(`Prisma offline during getWallet: using test/development memory wallet (${err?.message})`);
 
       for (const w of this.memoryWallets.values()) {
         if (w.userId === userId && w.currency === currency) {
@@ -205,108 +213,114 @@ export class WalletService {
     if (!reason || reason.trim().length === 0) {
       throw new BadRequestException('سبب التجميد مطلوب إجبارياً');
     }
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const updated = await this.prisma.$transaction(async (tx) => {
+          const wallet = await tx.wallet.update({
+            where: { id: walletId },
+            data: {
+              isFrozen: true,
+              frozenReason: reason.trim(),
+              frozenAt: new Date(),
+              version: { increment: 1 },
+            },
+          });
+          await tx.auditLog.create({
+            data: {
+              userId: staffUserId,
+              action: 'WALLET_FROZEN',
+              entityName: 'Wallet',
+              entityId: walletId,
+              newValues: { isFrozen: true, reason: reason.trim() },
+            },
+          });
+          return wallet;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return {
+          success: true,
+          message: 'تم تجميد المحفظة وتسجيل العملية في سجل التدقيق.',
+          wallet: this.enrichWallet(updated),
+        };
+      } catch {
+        throw new ServiceUnavailableException('تعذر تجميد المحفظة وتسجيل أثر التدقيق ذرياً في قاعدة البيانات.');
+      }
+    }
 
     try {
       const updated = await this.prisma.wallet.update({
         where: { id: walletId },
-        data: {
-          isFrozen: true,
-          frozenReason: reason,
-          frozenAt: new Date(),
-          version: { increment: 1 },
-        },
+        data: { isFrozen: true, frozenReason: reason, frozenAt: new Date(), version: { increment: 1 } },
       });
-
-      // Audit log
       try {
         await this.prisma.auditLog.create({
-          data: {
-            userId: staffUserId,
-            action: 'WALLET_FROZEN',
-            entityName: 'Wallet',
-            entityId: walletId,
-            newValues: { isFrozen: true, reason },
-          },
+          data: { userId: staffUserId, action: 'WALLET_FROZEN', entityName: 'Wallet', entityId: walletId, newValues: { isFrozen: true, reason } },
         });
       } catch {}
-
-      return {
-        success: true,
-        message: 'تم تجميد المحفظة بنجاح وتوقيف العمليات الصادرة',
-        wallet: this.enrichWallet(updated),
-      };
+      return { success: true, message: 'تم تجميد المحفظة بنجاح وتوقيف العمليات الصادرة', wallet: this.enrichWallet(updated) };
     } catch (err: any) {
-      this.logger.warn(`Prisma offline during freezeWallet: updating memory (${err?.message})`);
-
       const memWallet = this.memoryWallets.get(walletId);
-      if (!memWallet) {
-        throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
-      }
-
+      if (!memWallet) throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
       memWallet.isFrozen = true;
       memWallet.frozenReason = reason;
       memWallet.frozenAt = new Date();
       memWallet.updatedAt = new Date();
-
-      return {
-        success: true,
-        message: 'تم تجميد المحفظة بنجاح وتوقيف العمليات الصادرة',
-        wallet: this.enrichWallet(memWallet),
-      };
+      return { success: true, message: 'تم تجميد المحفظة بنجاح وتوقيف العمليات الصادرة', wallet: this.enrichWallet(memWallet) };
     }
   }
 
-  /**
-   * Admin: Unfreeze a customer wallet
-   */
   async unfreezeWallet(staffUserId: string, walletId: string) {
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const updated = await this.prisma.$transaction(async (tx) => {
+          const wallet = await tx.wallet.update({
+            where: { id: walletId },
+            data: {
+              isFrozen: false,
+              frozenReason: null,
+              frozenAt: null,
+              version: { increment: 1 },
+            },
+          });
+          await tx.auditLog.create({
+            data: {
+              userId: staffUserId,
+              action: 'WALLET_UNFROZEN',
+              entityName: 'Wallet',
+              entityId: walletId,
+              newValues: { isFrozen: false },
+            },
+          });
+          return wallet;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return {
+          success: true,
+          message: 'تم إلغاء تجميد المحفظة وتسجيل العملية في سجل التدقيق.',
+          wallet: this.enrichWallet(updated),
+        };
+      } catch {
+        throw new ServiceUnavailableException('تعذر إلغاء تجميد المحفظة وتسجيل أثر التدقيق ذرياً في قاعدة البيانات.');
+      }
+    }
+
     try {
       const updated = await this.prisma.wallet.update({
         where: { id: walletId },
-        data: {
-          isFrozen: false,
-          frozenReason: null,
-          frozenAt: null,
-          version: { increment: 1 },
-        },
+        data: { isFrozen: false, frozenReason: null, frozenAt: null, version: { increment: 1 } },
       });
-
-      // Audit log
       try {
         await this.prisma.auditLog.create({
-          data: {
-            userId: staffUserId,
-            action: 'WALLET_UNFROZEN',
-            entityName: 'Wallet',
-            entityId: walletId,
-            newValues: { isFrozen: false },
-          },
+          data: { userId: staffUserId, action: 'WALLET_UNFROZEN', entityName: 'Wallet', entityId: walletId, newValues: { isFrozen: false } },
         });
       } catch {}
-
-      return {
-        success: true,
-        message: 'تم إلغاء تجميد المحفظة واستئناف العمليات بنجاح',
-        wallet: this.enrichWallet(updated),
-      };
-    } catch (err: any) {
-      this.logger.warn(`Prisma offline during unfreezeWallet: updating memory (${err?.message})`);
-
+      return { success: true, message: 'تم إلغاء تجميد المحفظة واستئناف العمليات بنجاح', wallet: this.enrichWallet(updated) };
+    } catch {
       const memWallet = this.memoryWallets.get(walletId);
-      if (!memWallet) {
-        throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
-      }
-
+      if (!memWallet) throw new NotFoundException(`المحفظة برقم ${walletId} غير موجودة`);
       memWallet.isFrozen = false;
       memWallet.frozenReason = null;
       memWallet.frozenAt = null;
       memWallet.updatedAt = new Date();
-
-      return {
-        success: true,
-        message: 'تم إلغاء تجميد المحفظة واستئناف العمليات بنجاح',
-        wallet: this.enrichWallet(memWallet),
-      };
+      return { success: true, message: 'تم إلغاء تجميد المحفظة واستئناف العمليات بنجاح', wallet: this.enrichWallet(memWallet) };
     }
   }
 
@@ -384,6 +398,9 @@ export class WalletService {
       ) {
         throw new ConflictException(`رقم الحوالة المرجعي "${dto.referenceNumber}" مسجل مسبقاً لهذه الطريقة.`);
       }
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر حفظ طلب الإيداع في قاعدة البيانات الدائمة؛ لم يتم تسجيل الطلب.');
+      }
       this.logger.warn(`Prisma offline during requestTopup: simulated response (${err?.message})`);
 
       return {
@@ -406,21 +423,60 @@ export class WalletService {
    * Finance / Admin confirms topup and credits customer wallet via Double-Entry Ledger.
    */
   async confirmTopup(staffUserId: string, topupId: string) {
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const topup = await tx.walletTopup.findUnique({
+            where: { id: topupId },
+            include: { paymentMethod: true, wallet: true },
+          });
+          if (!topup) throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
+          if (topup.status === PaymentStatus.Confirmed) {
+            throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
+          }
+          if (topup.status !== PaymentStatus.AwaitingVerification) {
+            throw new ConflictException('حالة طلب الإيداع لا تسمح بالتأكيد المالي.');
+          }
+
+          const ledgerResult = await this.ledgerService.recordTopup({
+            userId: topup.userId,
+            walletId: topup.walletId,
+            currency: topup.currency as CurrencyCode,
+            amount: Number(topup.amount),
+            paymentChannel: topup.paymentMethod.code as PaymentChannelCode,
+            referenceId: topup.id,
+            performedByUserId: staffUserId,
+            notes: `Admin confirmed manual topup ref: ${topup.referenceNumber}`,
+          }, tx);
+
+          const changed = await tx.walletTopup.updateMany({
+            where: { id: topupId, status: PaymentStatus.AwaitingVerification },
+            data: { status: PaymentStatus.Confirmed, confirmedAt: new Date() },
+          });
+          if (changed.count !== 1) {
+            throw new ConflictException('تمت معالجة طلب الإيداع بواسطة موظف آخر؛ تم التراجع عن القيد.');
+          }
+          const updatedTopup = await tx.walletTopup.findUnique({ where: { id: topupId } });
+          return {
+            message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
+            topup: updatedTopup,
+            ledgerTransaction: ledgerResult.transaction,
+          };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      } catch (error) {
+        if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
+        throw new ServiceUnavailableException('تعذر تأكيد الإيداع وقيد الأستاذ ذرياً في قاعدة البيانات الدائمة.');
+      }
+    }
+
     try {
       const topup = await this.prisma.walletTopup.findUnique({
         where: { id: topupId },
         include: { paymentMethod: true, wallet: true },
       });
+      if (!topup) throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
+      if (topup.status === PaymentStatus.Confirmed) throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
 
-      if (!topup) {
-        throw new NotFoundException(`طلب الإيداع ${topupId} غير موجود`);
-      }
-
-      if (topup.status === PaymentStatus.Confirmed) {
-        throw new ConflictException(`طلب الإيداع ${topupId} مؤكد مسبقاً.`);
-      }
-
-      // Post Double-Entry Ledger Transaction
       const ledgerResult = await this.ledgerService.recordTopup({
         userId: topup.userId,
         walletId: topup.walletId,
@@ -434,10 +490,7 @@ export class WalletService {
 
       const updatedTopup = await this.prisma.walletTopup.update({
         where: { id: topupId },
-        data: {
-          status: PaymentStatus.Confirmed,
-          confirmedAt: new Date(),
-        },
+        data: { status: PaymentStatus.Confirmed, confirmedAt: new Date() },
       });
 
       return {
@@ -446,25 +499,14 @@ export class WalletService {
         ledgerTransaction: ledgerResult.transaction,
       };
     } catch (err: any) {
-      if (err instanceof NotFoundException || err instanceof ConflictException) {
-        throw err;
-      }
-      this.logger.warn(`Prisma offline during confirmTopup: simulated confirmation (${err?.message})`);
-
+      if (err instanceof NotFoundException || err instanceof ConflictException) throw err;
       return {
-        message: 'تم تأكيد الإيداع وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام.',
-        topup: {
-          id: topupId,
-          status: PaymentStatus.Confirmed,
-          confirmedAt: new Date(),
-        },
+        message: 'تعذر تأكيد الإيداع في وضع الاختبار/التطوير.',
+        topup: { id: topupId, status: PaymentStatus.AwaitingVerification },
       };
     }
   }
 
-  /**
-   * Instant dev / test balance deposit.
-   */
   async depositFunds(userId: string, dto: DepositFundsDto) {
     if (process.env.NODE_ENV === 'production') {
       throw new ForbiddenException(
