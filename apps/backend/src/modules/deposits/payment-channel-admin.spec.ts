@@ -154,6 +154,12 @@ describe('Durable payment channel administration and four-eyes review', () => {
       isActive: false,
       mode: PaymentChannelMode.DISABLED,
     });
+    tx.paymentChannelConfig.update.mockImplementationOnce(({ data }) => Promise.resolve({
+      ...channel,
+      killSwitchReason: 'incident-2026-11-13',
+      killSwitchAt: new Date(),
+      ...data,
+    }));
     const result = await service.approveChannelFinanceReview('finance-2', PaymentChannelCode.JAIB, {
       approved: true,
       financeNotes: 'تمت مراجعة مستند حساب الاستقبال واعتماده بصورة مستقلة.',
