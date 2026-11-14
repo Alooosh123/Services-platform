@@ -2,6 +2,17 @@
 
 هذا السجل يفرق بين ملفات/اختبارات أضيفت إلى المستودع وبين اختبارات بيئة حقيقية. نجاح CI لا يعد دليلاً على اتصال حساب بنكي أو راوتر فعلي أو نقل بيانات إنتاجية.
 
+## Latest verified CI run — 14 November 2026
+
+- Release branch: `release/security-db-runtime-hardening-2026-11-13`.
+- Verified commit: `5e512dfe6bdcb4939c3e98721e6aad260dd1c63e`.
+- GitHub Actions run: `43580888433` — quality gate, backend tests, MySQL migration/backup/restore, and monorepo build all completed successfully.
+- Dependency audit: production dependencies reported 0 vulnerabilities; full dependency tree reported 9 low-severity findings, with no high or critical findings. Audit gates remained strict.
+- Backend test suite: **40 test suites passed; 275 tests passed**.
+- MySQL 8.4: Prisma baseline generation/application and encrypted AES-256-GCM backup/restore into a separate empty restore database passed. Restored ledger checks group by transaction and currency rather than netting currencies together.
+- Build: `packages/database`, `packages/shared`, `apps/backend`, `apps/web-admin`, `apps/web-customer`, and `apps/web-saas` all built successfully. Next.js production builds for admin/customer/SaaS compiled successfully.
+- Staging deployment and production release jobs were skipped by their guard conditions; this CI run does not establish a live deployment, a RouterOS connection, or a real payment-provider settlement.
+
 ## Evidence from this branch
 
 - MySQL target schema: Prisma datasource and fresh MySQL baseline migration generation use MySQL 8.4; production database migration/data cutover has not been executed.
