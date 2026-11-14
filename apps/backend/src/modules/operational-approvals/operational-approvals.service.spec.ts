@@ -207,7 +207,7 @@ describe('OperationalApprovalsService four-eyes controls', () => {
     });
     await expect(service.closeout(approverId, UserRole.GENERAL_MANAGER, approvalId, {
       executionReference: 'INCIDENT-REVIEW-SELF-EXECUTION',
-    })).rejects.toThrow('approver');
+    })).rejects.toThrow('approval decider cannot execute');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
