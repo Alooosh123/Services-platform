@@ -48,6 +48,27 @@ export class OperationalApprovalsService {
       ) {
         throw new BadRequestException('Unsupported network change request.');
       }
+    } else if (dto.approvalType === 'PAYMENT_CHANNEL_REACTIVATION') {
+      if (!NETWORK_REQUEST_ROLES.includes(requesterRole)) {
+        throw new ForbiddenException('Only authorized network/payment managers may request emergency channel reactivation.');
+      }
+      if (dto.targetType !== 'PAYMENT_CHANNEL_CONFIG' || !dto.targetId || dto.action !== 'RELEASE_KILL_SWITCH') {
+        throw new BadRequestException('A channel reactivation approval must target one payment channel and use RELEASE_KILL_SWITCH.');
+      }
+      const channel = await this.prisma.paymentChannelConfig.findUnique({ where: { id: dto.targetId } });
+      if (!channel) throw new NotFoundException('Payment channel configuration was not found.');
+      if (
+        !channel.killSwitchReason ||
+        channel.verificationStatus !== 'VERIFIED' ||
+        channel.financeApprovalRequired ||
+        channel.pendingProposedByUserId ||
+        !channel.accountNumber ||
+        channel.accountNumber === 'NOT_CONFIGURED' ||
+        channel.isActive ||
+        channel.mode !== 'DISABLED'
+      ) {
+        throw new ConflictException('Only a verified, fully configured, disabled channel with an active kill switch can be submitted for reactivation.');
+      }
     } else {
       if (!FINANCE_REQUEST_ROLES.includes(requesterRole)) {
         throw new ForbiddenException('Only finance staff and managers may request financial approval.');
@@ -133,9 +154,9 @@ export class OperationalApprovalsService {
       throw new BadRequestException('A clear rejection reason is required.');
     }
 
-    if (request.approvalType === 'NETWORK_CHANGE') {
+    if (request.approvalType === 'NETWORK_CHANGE' || request.approvalType === 'PAYMENT_CHANNEL_REACTIVATION') {
       if (![SharedUserRole.OWNER, SharedUserRole.GENERAL_MANAGER].includes(approverRole)) {
-        throw new ForbiddenException('Network change approvals require a different owner or general manager.');
+        throw new ForbiddenException('Network and emergency channel approvals require a different owner or general manager.');
       }
     } else if (![SharedUserRole.OWNER, SharedUserRole.GENERAL_MANAGER, SharedUserRole.FINANCE_MANAGER].includes(approverRole)) {
       throw new ForbiddenException('Financial approvals require a finance manager, general manager, or owner.');
@@ -207,6 +228,107 @@ export class OperationalApprovalsService {
         routerMutationPerformedByPlatform: false,
         message: 'تم تسجيل مرجع التنفيذ اليدوي فقط. وكيل MikroTik لا يملك ولا يستدعي أي عملية كتابة.',
       };
+    }
+
+    if (request.approvalType === 'PAYMENT_CHANNEL_REACTIVATION') {
+      if (![SharedUserRole.OWNER, SharedUserRole.GENERAL_MANAGER].includes(executorRole)) {
+        throw new ForbiddenException('Emergency payment channel release requires a different owner or general manager.');
+      }
+      if (request.targetType !== 'PAYMENT_CHANNEL_CONFIG' || !request.targetId || request.action !== 'RELEASE_KILL_SWITCH') {
+        throw new BadRequestException('Unsupported payment channel reactivation approval target.');
+      }
+      if (request.decidedByUserId === executorId) {
+        throw new ForbiddenException('The approval decider cannot execute the emergency channel reactivation.');
+      }
+
+      return this.prisma.$transaction(async (tx) => {
+        const channel = await tx.paymentChannelConfig.findUnique({ where: { id: request.targetId! } });
+        if (!channel) throw new NotFoundException('Payment channel configuration was not found.');
+        if (
+          !channel.killSwitchReason ||
+          channel.verificationStatus !== 'VERIFIED' ||
+          channel.financeApprovalRequired ||
+          channel.pendingProposedByUserId ||
+          !channel.accountNumber ||
+          channel.accountNumber === 'NOT_CONFIGURED' ||
+          channel.isActive ||
+          channel.mode !== 'DISABLED'
+        ) {
+          throw new ConflictException('Payment channel state changed; it no longer qualifies for controlled reactivation.');
+        }
+
+        const now = new Date();
+        const activated = await tx.paymentChannelConfig.updateMany({
+          where: {
+            id: channel.id,
+            isActive: false,
+            mode: 'DISABLED',
+            killSwitchReason: channel.killSwitchReason,
+            verificationStatus: 'VERIFIED',
+            financeApprovalRequired: false,
+          },
+          data: {
+            isActive: true,
+            mode: 'MANUAL',
+            killSwitchReason: null,
+            killSwitchAt: null,
+          },
+        });
+        if (activated.count !== 1) {
+          throw new ConflictException('Payment channel changed concurrently; reactivation was not performed.');
+        }
+
+        await tx.auditLog.create({
+          data: {
+            userId: executorId,
+            action: 'PAYMENT_CHANNEL_KILL_SWITCH_RELEASED',
+            entityName: 'PAYMENT_CHANNEL_CONFIG',
+            entityId: channel.id,
+            oldValues: {
+              mode: channel.mode,
+              isActive: channel.isActive,
+              killSwitchReason: channel.killSwitchReason,
+            },
+            newValues: {
+              mode: 'MANUAL',
+              isActive: true,
+              approvalId: id,
+              requestedByUserId: request.requestedByUserId,
+              approvedByUserId: request.decidedByUserId,
+              executedByUserId: executorId,
+              reason: request.reason,
+              executionReference: dto.executionReference.trim(),
+            },
+          },
+        });
+
+        const updatedApproval = await tx.operationalApproval.updateMany({
+          where: {
+            id,
+            status: 'APPROVED_PENDING_EXECUTION',
+            requestedByUserId: { not: executorId },
+            decidedByUserId: { not: executorId },
+          },
+          data: {
+            status: 'EXECUTED',
+            executionReference: dto.executionReference.trim(),
+            executionNotes: dto.notes?.trim() || 'تم رفع Kill Switch بعد موافقة مستقلة وتوثيق دليل التنفيذ؛ بقيت القناة في MANUAL.',
+            executedByUserId: executorId,
+            executedAt: now,
+          },
+        });
+        if (updatedApproval.count !== 1) {
+          throw new ConflictException('Approval changed concurrently; kill switch release was rolled back.');
+        }
+        const updatedChannel = await tx.paymentChannelConfig.findUnique({ where: { id: channel.id } });
+        return {
+          status: 'EXECUTED',
+          channel: updatedChannel,
+          mode: 'MANUAL',
+          automaticApiEnabled: false,
+          message: 'تم رفع Kill Switch بموافقة ثنائية/ثلاثية مسجلة. القناة تعمل يدوياً فقط ولا يتم إرسال تحويلات آلية.',
+        };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }
 
     if (![SharedUserRole.OWNER, SharedUserRole.GENERAL_MANAGER, SharedUserRole.FINANCE_MANAGER].includes(executorRole)) {
