@@ -420,8 +420,18 @@ export class AuthService {
       throw new BadRequestException('رمز الجلسة المؤقت (tempToken) مطلوب');
     }
 
-    // SG-02: Challenge Replay Prevention
-    if (this.usedChallengeTokens.has(dto.tempToken)) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const challengeHash = createHash('sha256').update(dto.tempToken).digest('hex');
+    const usedKey = `auth:mfa:used:${challengeHash}`;
+    const attemptsKey = `auth:mfa:attempts:${challengeHash}`;
+    const challengeTtlMs = 5 * 60 * 1000;
+
+    // Replay protection and attempt counters are shared across all production app instances.
+    if (isProduction) {
+      if (await this.redisStore.get(usedKey)) {
+        throw new UnauthorizedException('تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.');
+      }
+    } else if (this.usedChallengeTokens.has(dto.tempToken)) {
       throw new UnauthorizedException('تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.');
     }
 
@@ -448,11 +458,18 @@ export class AuthService {
       throw new UnauthorizedException('المستخدم غير موجود');
     }
 
-    // SG-02: Brute-Force Rate Limiting (Max 3 failed attempts per challenge)
-    const currentAttempts = this.challengeAttempts.get(userId) || 0;
+    // SG-02: Brute-force counter is shared across instances in production.
+    const currentAttempts = isProduction
+      ? Number(await this.redisStore.get(attemptsKey) || 0)
+      : this.challengeAttempts.get(userId) || 0;
     if (currentAttempts >= 3) {
-      this.usedChallengeTokens.add(dto.tempToken);
-      this.challengeAttempts.delete(userId);
+      if (isProduction) {
+        await this.redisStore.consumeOnce(usedKey, challengeTtlMs);
+        await this.redisStore.deleteValue(attemptsKey);
+      } else {
+        this.usedChallengeTokens.add(dto.tempToken);
+        this.challengeAttempts.delete(userId);
+      }
       throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
     }
 
@@ -477,21 +494,39 @@ export class AuthService {
     }
 
     if (!isTotpValid) {
-      const nextAttempts = currentAttempts + 1;
-      this.challengeAttempts.set(userId, nextAttempts);
+      const nextAttempts = isProduction
+        ? await this.redisStore.incrementWithTtl(attemptsKey, challengeTtlMs)
+        : currentAttempts + 1;
 
-      if (nextAttempts >= 3) {
-        this.usedChallengeTokens.add(dto.tempToken);
-        this.challengeAttempts.delete(userId);
-        throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
+      if (isProduction) {
+        if (nextAttempts >= 3) {
+          await this.redisStore.consumeOnce(usedKey, challengeTtlMs);
+          await this.redisStore.deleteValue(attemptsKey);
+          throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
+        }
+      } else {
+        this.challengeAttempts.set(userId, nextAttempts);
+        if (nextAttempts >= 3) {
+          this.usedChallengeTokens.add(dto.tempToken);
+          this.challengeAttempts.delete(userId);
+          throw new UnauthorizedException('تم تجاوز الحد الأقصى للمحاولات (3 محاولات فاشلة). تم إبطال التحدي لأسباب أمنية.');
+        }
       }
 
       throw new UnauthorizedException(`رمز التحقق (TOTP) غير صحيح. المتبقي: ${3 - nextAttempts} محاولات`);
     }
 
-    // SUCCESS: Invalidate challenge token immediately to prevent replay
-    this.usedChallengeTokens.add(dto.tempToken);
-    this.challengeAttempts.delete(userId);
+    // Consume the MFA challenge atomically so two app instances cannot issue two sessions.
+    if (isProduction) {
+      const consumed = await this.redisStore.consumeOnce(usedKey, challengeTtlMs);
+      if (!consumed) {
+        throw new UnauthorizedException('تم استخدام رمز التحدي مسبقاً (Challenge Replay Blocked). يرجى تسجيل الدخول مجدداً.');
+      }
+      await this.redisStore.deleteValue(attemptsKey);
+    } else {
+      this.usedChallengeTokens.add(dto.tempToken);
+      this.challengeAttempts.delete(userId);
+    }
 
     const tokens = await this.generateTokens(user.id, user.email || user.phone || user.id, user.role);
 
