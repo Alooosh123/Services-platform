@@ -59,6 +59,15 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.payoutRequest.findUnique.mockReset().mockResolvedValue(null);
+    mockPrisma.payoutRequest.findMany.mockReset().mockResolvedValue([]);
+    mockPrisma.payoutRequest.count.mockReset().mockResolvedValue(0);
+    mockPrisma.payoutRequest.create.mockReset();
+    mockPrisma.payoutRequest.update.mockReset();
+    mockPrisma.payoutRequest.updateMany.mockReset();
+    mockPrisma.paymentChannelConfig.findUnique.mockReset();
+    mockPrisma.user.findUnique.mockReset().mockResolvedValue({ phoneVerifiedAt: null, createdAt: new Date() });
+    mockPrisma.$transaction.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
