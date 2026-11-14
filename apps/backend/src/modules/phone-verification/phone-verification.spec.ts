@@ -78,6 +78,7 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
         await expect(service.verifyOtp({ phone: '770123456', code: deliveredCodes[0] }, 'u-1'))
           .rejects.toThrow('لا يوجد طلب تحقق نشط لهذا الرقم');
       } finally {
+        service.setSmsAdapter(sandboxAdapter);
         if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = previousNodeEnv;
       }
@@ -86,7 +87,6 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
     it('never reports production SMS delivery success before the provider adapter does', async () => {
       const previousNodeEnv = process.env.NODE_ENV;
       process.env.NODE_ENV = 'production';
-      const sent: string[] = [];
       service.setSmsAdapter({
         providerCode: 'TEST_SMS_FAIL',
         sendVerificationSms: async (_phone: string, _code: string) => {
@@ -99,6 +99,7 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
           .rejects.toThrow('SMS gateway is not available');
         expect(mockRedisStore.setValue).toHaveBeenCalledTimes(previousSetCalls);
       } finally {
+        service.setSmsAdapter(sandboxAdapter);
         if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = previousNodeEnv;
       }
