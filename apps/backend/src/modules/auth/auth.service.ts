@@ -589,10 +589,15 @@ export class AuthService {
         },
       });
     } catch {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ServiceUnavailableException('تعذر حفظ إعداد MFA المشفر في قاعدة البيانات؛ لم يتم تفعيل المصادقة الثنائية.');
+      }
       const memUser = this.memoryUsers.get(userId);
       if (memUser) {
         memUser.twoFactorSecret = dto.secret;
         memUser.isTwoFactorEnabled = true;
+      } else {
+        throw new ServiceUnavailableException('تعذر حفظ إعداد MFA في قاعدة البيانات.');
       }
     }
 
