@@ -35,7 +35,8 @@ export class WalletService {
     private prisma: PrismaService,
     private ledgerService: LedgerService,
   ) {
-    // Seed initial test customer wallets in memory
+    // Seed initial memory wallets only for isolated non-production development/test environments.
+    if (process.env.NODE_ENV === 'production') return;
     const custId = 'user-customer-003';
     this.memoryWallets.set(`w-cust-yer`, {
       id: `w-cust-yer`,
