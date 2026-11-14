@@ -121,6 +121,17 @@ Content-Type: application/json
 - قرار الموافقة والتنفيذ يجب أن يصدر من شخصين مختلفين. لا يكفي مجرد رقم مرجعي يرسله العميل؛ يلزم أصل كشف حساب القناة/البنك وإثبات تنفيذ من حساب المنشأة.
 - جميع قيود السحب عبر `LedgerService` فقط. لا تعدل `wallets.balance` أو `lockedBalance` مباشرة.
 
+## 11. رفع Kill Switch لقناة دفع بعد حادثة
+
+لا يؤدي اعتماد تغيير رقم حساب الاستقبال إلى رفع Kill Switch. رفع الإيقاف عملية مستقلة تتطلب ثلاثة أطراف: مقدم الطلب، المعتمد، والمنفذ، ويجب أن تكون هوية كل منهم مختلفة.
+
+1. تأكد أولاً من انتهاء سبب الحادثة، وسلامة حساب الاستقبال، وصحة وثائق المستفيد. يجب أن تكون القناة VERIFIED، ولا يوجد تغيير pending، والحساب ليس NOT_CONFIGURED.
+2. استدعِ POST /api/operational-approvals مع approvalType=PAYMENT_CHANNEL_REACTIVATION وtargetType=PAYMENT_CHANNEL_CONFIG وtargetId (معرّف سجل القناة في MySQL) وaction=RELEASE_KILL_SWITCH وreason موضحاً سبب طلب رفع الإيقاف والأدلة التي تمت مراجعتها.
+3. يعتمد Owner أو General Manager الطلب عبر POST /api/operational-approvals/{approvalId}/decision مع decision=APPROVE وملاحظات مستقلة. لا يجوز لمقدم الطلب اعتماد طلبه.
+4. ينفذ Owner أو General Manager آخر (غير مقدم الطلب وغير المعتمد) POST /api/operational-approvals/{approvalId}/closeout مع مرجع تذكرة الحادثة/محضر الاختبار. يسجل النظام تغيير القناة في معاملة واحدة ويكتب AuditLog ويغلق الموافقة.
+5. تعود القناة إلى MANUAL فقط؛ لا يرفع النظام القناة إلى API. تحقق من ظهورها للعميل وتعليمات الدفع بعد اكتمال المعاملة.
+
+أي فشل أو تعارض متزامن يعيد المعاملة بالكامل ويُبقي Kill Switch مفعلاً. لا تمسح killSwitchReason يدوياً ولا تحدث payment_channel_configs مباشرة.
 ### مراقبة الطلبات
 
 - يقرأ العميل طلباته عبر `GET /api/payouts/my-payouts` فقط.
