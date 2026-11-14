@@ -18,6 +18,23 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
     },
   };
 
+  const redisValues = new Map<string, string>();
+  const mockRedisStore = {
+    get: jest.fn(async (key: string) => redisValues.get(key) ?? null),
+    setValue: jest.fn(async (key: string, value: string) => { redisValues.set(key, value); }),
+    deleteValue: jest.fn(async (key: string) => { redisValues.delete(key); }),
+    consumeOnce: jest.fn(async (key: string) => {
+      if (redisValues.has(key)) return false;
+      redisValues.set(key, '1');
+      return true;
+    }),
+    incrementWithTtl: jest.fn(async (key: string) => {
+      const next = Number(redisValues.get(key) || 0) + 1;
+      redisValues.set(key, String(next));
+      return next;
+    }),
+  };
+
   beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -27,19 +44,65 @@ describe('PhoneVerificationModule (Phase 4 - Module 01)', () => {
         { provide: PrismaService, useValue: mockPrisma },
         {
           provide: RedisIdempotencyStore,
-          useValue: {
-            get: jest.fn().mockResolvedValue(null),
-            setValue: jest.fn().mockResolvedValue(undefined),
-            deleteValue: jest.fn().mockResolvedValue(undefined),
-            consumeOnce: jest.fn().mockResolvedValue(true),
-            incrementWithTtl: jest.fn().mockResolvedValue(1),
-          },
+          useValue: mockRedisStore,
         },
       ],
     }).compile();
 
     service = module.get<PhoneVerificationService>(PhoneVerificationService);
     sandboxAdapter = module.get<SandboxSmsAdapter>(SandboxSmsAdapter);
+  });
+
+  describe('Production shared challenge store', () => {
+    it('persists OTP in Redis, shares attempts, and consumes a successful challenge exactly once', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      redisValues.clear();
+      const deliveredCodes: string[] = [];
+      service.setSmsAdapter({
+        providerCode: 'TEST_CERTIFIED_SMS',
+        sendVerificationSms: async (_phone: string, code: string) => {
+          deliveredCodes.push(code);
+          return { success: true, simulated: false, messageId: 'provider-msg-001' };
+        },
+      } as any);
+      try {
+        const sent = await service.sendOtp({ phone: '770123456' }, 'u-1', '192.0.2.10');
+        expect(sent.success).toBe(true);
+        expect(sent.devSandboxOtp).toBeUndefined();
+        expect(mockRedisStore.setValue).toHaveBeenCalledTimes(2);
+
+        const verified = await service.verifyOtp({ phone: '770123456', code: deliveredCodes[0] }, 'u-1');
+        expect(verified.success).toBe(true);
+        expect(mockPrisma.user.update).toHaveBeenCalled();
+        await expect(service.verifyOtp({ phone: '770123456', code: deliveredCodes[0] }, 'u-1'))
+          .rejects.toThrow('لا يوجد طلب تحقق نشط لهذا الرقم');
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousNodeEnv;
+      }
+    });
+
+    it('never reports production SMS delivery success before the provider adapter does', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      const sent: string[] = [];
+      service.setSmsAdapter({
+        providerCode: 'TEST_SMS_FAIL',
+        sendVerificationSms: async (_phone: string, _code: string) => {
+          throw new Error('SMS gateway is not available');
+        },
+      } as any);
+      const previousSetCalls = mockRedisStore.setValue.mock.calls.length;
+      try {
+        await expect(service.sendOtp({ phone: '770123456' }, 'u-1', '192.0.2.11'))
+          .rejects.toThrow('SMS gateway is not available');
+        expect(mockRedisStore.setValue).toHaveBeenCalledTimes(previousSetCalls);
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousNodeEnv;
+      }
+    });
   });
 
   describe('Yemeni Phone Normalization (E.164)', () => {
