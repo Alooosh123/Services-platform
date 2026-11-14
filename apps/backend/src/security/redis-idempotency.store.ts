@@ -23,6 +23,14 @@ redis.call("PEXPIRE", KEYS[2], ARGV[3])
 return 1
 `;
 
+const INCREMENT_WITH_TTL_SCRIPT = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+  redis.call("PEXPIRE", KEYS[1], ARGV[1])
+end
+return count
+`;
+
 const REVOKE_USER_REFRESH_SESSIONS_SCRIPT = `
 local tokenHashes = redis.call("SMEMBERS", KEYS[1])
 for _, tokenHash in ipairs(tokenHashes) do
@@ -53,6 +61,33 @@ export class RedisIdempotencyStore implements OnModuleDestroy {
   async get(key: string): Promise<string | null> {
     await this.ensureConnected();
     return this.client.get(key);
+  }
+
+  async setValue(key: string, value: string, ttlMs: number): Promise<void> {
+    await this.ensureConnected();
+    await this.client.set(key, value, { PX: ttlMs });
+  }
+
+  async deleteValue(key: string): Promise<void> {
+    await this.ensureConnected();
+    await this.client.del(key);
+  }
+
+  async consumeOnce(key: string, ttlMs: number): Promise<boolean> {
+    return this.acquire(key, '1', ttlMs);
+  }
+
+  async incrementWithTtl(key: string, ttlMs: number): Promise<number> {
+    await this.ensureConnected();
+    const result = await this.client.eval(INCREMENT_WITH_TTL_SCRIPT, {
+      keys: [key],
+      arguments: [String(ttlMs)],
+    });
+    const value = Number(result);
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new ServiceUnavailableException('Redis counter returned an invalid value.');
+    }
+    return value;
   }
 
   async ping(): Promise<number> {
