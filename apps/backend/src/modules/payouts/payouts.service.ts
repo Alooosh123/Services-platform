@@ -424,6 +424,31 @@ export class PayoutsService {
 
     const notes = dto?.reviewNotes || 'تمت الموافقة المالية على طلب السحب';
 
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const changed = await this.prisma.payoutRequest.updateMany({
+          where: {
+            id: payoutId,
+            status: PayoutStatus.REQUESTED,
+            userId: { not: staffUserId },
+          },
+          data: {
+            status: PayoutStatus.APPROVED,
+            approvedByUserId: staffUserId,
+            approvalNotes: notes,
+          },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException('تم اعتماد طلب السحب أو تغييره بواسطة موظف آخر؛ أعد تحميل حالته.');
+        }
+        const updated = await this.getPayoutById(payoutId);
+        return { success: true, payout: updated };
+      } catch (error) {
+        if (error instanceof ConflictException || error instanceof NotFoundException) throw error;
+        throw new ServiceUnavailableException('تعذر حفظ اعتماد طلب السحب في قاعدة البيانات الدائمة.');
+      }
+    }
+
     try {
       await this.prisma.payoutRequest.update({
         where: { id: payoutId },
@@ -434,9 +459,6 @@ export class PayoutsService {
         },
       });
     } catch {
-      if (process.env.NODE_ENV === 'production') {
-        throw new ServiceUnavailableException('تعذر حفظ اعتماد طلب السحب في قاعدة البيانات الدائمة.');
-      }
       // isolated test/development fallback
     }
 
