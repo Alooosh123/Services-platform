@@ -252,8 +252,8 @@ jobs:
         run: |
           TABLE_COUNT="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" "$MYSQL_BIN" --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()")"
           test "$TABLE_COUNT" -gt 0
-          BALANCE_CHECK="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT IF(ABS(COALESCE(SUM(debitAmount),0)-COALESCE(SUM(creditAmount),0)) <= 0.0001, 'PASS', 'FAIL') FROM ledger_entries")"
-          test "$BALANCE_CHECK" = "PASS"
+          UNBALANCED_TXN_COUNT="$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" "$MYSQL_BIN" --host 127.0.0.1 --port 3306 --user root --database digital_topup_restore_test --batch --skip-column-names --execute "SELECT COUNT(*) FROM (SELECT transactionId, currency FROM ledger_entries GROUP BY transactionId, currency HAVING ABS(SUM(debitAmount)-SUM(creditAmount)) > 0.0001) AS unbalanced_transactions")"
+          test "$UNBALANCED_TXN_COUNT" = "0"
 
       - name: Upload generated MySQL baseline and encrypted backup evidence
         uses: actions/upload-artifact@v4
