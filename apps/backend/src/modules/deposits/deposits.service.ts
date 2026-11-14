@@ -1347,16 +1347,14 @@ export class DepositsService {
           verifiedByFinanceUserId: adminUserId,
           verifiedAt: new Date(),
           financeApprovalRequired: false,
-          isActive: true,
-          mode: PaymentChannelMode.MANUAL,
+          isActive: !current.killSwitchReason,
+          mode: current.killSwitchReason ? PaymentChannelMode.DISABLED : PaymentChannelMode.MANUAL,
           pendingAccountNumber: null,
           pendingInstructionsAr: null,
           pendingFeePercentage: null,
           pendingProposedByUserId: null,
           pendingProposedAt: null,
           pendingChangeReason: null,
-          killSwitchReason: null,
-          killSwitchAt: null,
         } : {
           verificationStatus: ChannelVerificationStatus.REJECTED,
           verifiedByFinanceUserId: adminUserId,
@@ -1378,7 +1376,9 @@ export class DepositsService {
       return {
         success: true,
         message: approved
-          ? 'تم اعتماد بيانات المستفيد من شخص مستقل وتفعيل القناة في وضع MANUAL فقط. لا يوجد تكامل API آلي.'
+          ? (current.killSwitchReason
+            ? 'تم اعتماد بيانات المستفيد، لكن القناة بقيت معطلة بسبب Kill Switch. يلزم طلب رفع الإيقاف واعتماد مستقل منفصل.'
+            : 'تم اعتماد بيانات المستفيد من شخص مستقل وتفعيل القناة في وضع MANUAL فقط. لا يوجد تكامل API آلي.')
           : 'تم رفض التغيير وإبقاء القناة معطلة.',
         channel: this.channelConfigView(updated),
       };
