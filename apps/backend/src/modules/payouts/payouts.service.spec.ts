@@ -28,9 +28,14 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
     payoutRequest: {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
+    paymentChannelConfig: { findUnique: jest.fn() },
+    user: { findUnique: jest.fn().mockResolvedValue({ phoneVerifiedAt: null, createdAt: new Date() }) },
+    $transaction: jest.fn(),
   };
 
   const mockLedgerService = {
@@ -125,6 +130,96 @@ describe('Phase 05 — AT-18: Outbound Payouts, Failure & Unknown Safety', () =>
       expect(ownerRead.id).toBe(created.payout.id);
       expect(financeRead.id).toBe(created.payout.id);
     });
+  });
+
+  it('creates the production payout request and wallet hold in one MySQL transaction', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    const transactionClient = {
+      payoutRequest: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({
+          id: 'db-payout-atomic-1',
+          ...data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })),
+      },
+    };
+    mockPrisma.paymentChannelConfig.findUnique.mockResolvedValue({
+      code: PaymentChannelCode.JAIB,
+      accountNumber: '770123456',
+      isActive: true,
+      verificationStatus: 'VERIFIED',
+      financeApprovalRequired: false,
+      mode: 'MANUAL',
+      supportedCurrencies: ['YER'],
+      minAmount: 500,
+      maxAmount: 2000000,
+      killSwitchReason: null,
+    });
+    mockPrisma.$transaction.mockImplementation(async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+      callback(transactionClient),
+    );
+    try {
+      const result = await payoutsService.createPayoutRequest('user-customer-003', {
+        currency: CurrencyCode.YER,
+        amount: 5000,
+        channelCode: PaymentChannelCode.JAIB,
+        destinationAccount: '770123456',
+        beneficiaryName: 'Verified Receiver',
+        idempotencyKey: 'IDEMP-PROD-ATOMIC-001',
+      });
+      expect(result.payout.id).toBe('db-payout-atomic-1');
+      expect(mockLedgerService.holdWalletBalance).toHaveBeenCalledWith(
+        'w-cust-yer',
+        5000,
+        transactionClient,
+      );
+      expect(transactionClient.payoutRequest.create).toHaveBeenCalled();
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: expect.any(String),
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
+  it('uses a conditional database transition to prevent two finance approvers approving the same payout', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    mockPrisma.payoutRequest.findUnique.mockResolvedValue({
+      id: 'db-payout-cas-1',
+      payoutNumber: 'PO-20261114-0001',
+      userId: 'customer-1',
+      walletId: 'w-cust-yer',
+      currency: CurrencyCode.YER,
+      amount: 5000,
+      feeAmount: 0,
+      channelCode: PaymentChannelCode.JAIB,
+      destinationAccount: '770123456',
+      beneficiaryName: 'Verified Receiver',
+      idempotencyKey: 'IDEMP-PROD-CAS-001',
+      status: PayoutStatus.REQUESTED,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.payoutRequest.updateMany.mockResolvedValue({ count: 0 });
+    try {
+      await expect(payoutsService.approvePayout('finance-1', 'db-payout-cas-1'))
+        .rejects.toThrow('تم اعتماد طلب السحب أو تغييره بواسطة موظف آخر');
+      expect(mockPrisma.payoutRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'db-payout-cas-1',
+          status: PayoutStatus.REQUESTED,
+          userId: { not: 'finance-1' },
+        }),
+      }));
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   describe('AT-18: Outbound Payout Idempotency', () => {
