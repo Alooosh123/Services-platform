@@ -170,7 +170,7 @@ describe('OperationalApprovalsService four-eyes controls', () => {
     });
     tx.paymentChannelConfig.findUnique.mockResolvedValue(channelConfig);
 
-    const result = await service.closeout('independent-owner-3', UserRole.GENERAL_MANAGER, approvalId, {
+    const result: any = await service.closeout('independent-owner-3', UserRole.GENERAL_MANAGER, approvalId, {
       executionReference: 'INCIDENT-REVIEW-AND-CHANNEL-RELEASE-002',
       notes: 'تم التحقق من سبب الإيقاف واعتماد رفعه بعد مراجعة مستقلة.',
     });
