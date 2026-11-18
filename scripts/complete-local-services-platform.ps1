@@ -38,6 +38,51 @@ function Assert-PortFree([int]$Port) {
     }
 }
 
+function Stop-ProjectNodeProcesses {
+    # Only stop Node processes whose command line explicitly references this project.
+    # Never terminate every node.exe process: other projects may be running.
+    $escapedProjectPath = [regex]::Escape($script:ProjectPath)
+    $allNodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue)
+    $projectProcesses = @(
+        $allNodeProcesses | Where-Object {
+            $_.CommandLine -and $_.CommandLine -match $escapedProjectPath
+        }
+    )
+
+    if ($projectProcesses.Count -eq 0) {
+        Write-Host "No Node process explicitly referencing this project was found." -ForegroundColor Yellow
+        if ($allNodeProcesses.Count -gt 0) {
+            Write-Host "Other Node processes were left untouched:" -ForegroundColor DarkYellow
+            $allNodeProcesses |
+                Select-Object ProcessId, ParentProcessId, ExecutablePath |
+                Format-Table -AutoSize | Out-Host
+        }
+        return
+    }
+
+    Write-Host "Stopping stale Node processes explicitly tied to this project:" -ForegroundColor Yellow
+    $projectProcesses |
+        Select-Object ProcessId, ParentProcessId, CommandLine |
+        Format-List | Out-Host
+
+    foreach ($process in $projectProcesses) {
+        Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+
+    Start-Sleep -Seconds 3
+    $remaining = @(
+        Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and $_.CommandLine -match $escapedProjectPath
+        }
+    )
+    if ($remaining.Count -gt 0) {
+        $remaining | Select-Object ProcessId, ParentProcessId, CommandLine | Format-List | Out-Host
+        throw "Project Node processes are still running. Close the matching terminal/IDE process before dependency installation."
+    }
+    Write-Host "Project Node processes stopped." -ForegroundColor Green
+}
+
 function Start-LocalApp([string]$ScriptName, [string]$Label, [string]$LogDirectory) {
     $stdout = Join-Path $LogDirectory "$Label.stdout.log"
     $stderr = Join-Path $LogDirectory "$Label.stderr.log"
@@ -193,9 +238,29 @@ Assert-Exit 'Redis PING'
 if (($ping | Out-String).Trim() -ne 'PONG') { throw 'Redis did not return PONG.' }
 Write-Host 'Redis: PONG' -ForegroundColor Green
 
+Write-Section 'CLEAN STALE PROJECT NODE PROCESSES'
+Stop-ProjectNodeProcesses
+
 Write-Section 'INSTALL DEPENDENCIES AND GENERATE PRISMA'
-& $script:NpmCommand ci --no-audit --no-fund
-Assert-Exit 'npm ci'
+$npmInstallSucceeded = $false
+for ($attempt = 1; $attempt -le 2; $attempt++) {
+    & $script:NpmCommand ci --no-audit --no-fund
+    if ($LASTEXITCODE -eq 0) {
+        $npmInstallSucceeded = $true
+        break
+    }
+
+    $installExitCode = $LASTEXITCODE
+    Write-Warning "npm ci attempt $attempt failed with exit code $installExitCode."
+    if ($attempt -eq 1) {
+        Write-Host "Rechecking project-owned Node processes before one safe retry..." -ForegroundColor Yellow
+        Stop-ProjectNodeProcesses
+        Start-Sleep -Seconds 3
+    }
+}
+if (-not $npmInstallSucceeded) {
+    throw "npm ci failed after two attempts. No Prisma migration was run. Close project terminals/IDEs, restart Windows if the Prisma engine remains locked, then rerun this script. Exit code: $installExitCode"
+}
 
 Write-Section 'VERIFY NATIVE PASSWORD-HASHING DEPENDENCIES'
 $cryptoCheckPath = Join-Path $logDirectory 'verify-native-crypto.cjs'
