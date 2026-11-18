@@ -10,11 +10,10 @@ import { Prisma } from '@prisma/client';
 describe('Reconciliation persistence and financial controls', () => {
   let service: ReconciliationService;
   const mockPrisma: any = {
-    reconciliationBatch: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
+    reconciliationBatch: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
     reconciliationItem: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn(), count: jest.fn() },
     reconciliationAdjustment: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
     ledgerAccount: { findMany: jest.fn().mockResolvedValue([]) },
-    reconciliationBatch: { update: jest.fn() },
     auditLog: { create: jest.fn() },
     $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
   };
