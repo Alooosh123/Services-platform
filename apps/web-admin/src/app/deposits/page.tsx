@@ -20,6 +20,28 @@ import {
   Power,
 } from 'lucide-react';
 
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api').replace(/\/+$/, '');
+
+interface SenderAccountReview {
+  id: string;
+  channelCode: string;
+  identifierType: string;
+  identifier: string;
+  maskedIdentifier: string;
+  status: string;
+  createdAt: string;
+  consentGrantedAt: string;
+  user: {
+    id: string;
+    fullName: string;
+    fullNameAr?: string;
+    email?: string;
+    phone?: string;
+    isVerified: boolean;
+    phoneVerifiedAt?: string | null;
+  };
+}
+
 interface DepositItem {
   id: string;
   depositNumber: string;
@@ -54,127 +76,10 @@ interface DepositItem {
 }
 
 export default function AdminDepositsPage() {
-  const [deposits, setDeposits] = useState<DepositItem[]>([
-    {
-      id: 'dep-seed-001',
-      depositNumber: 'DEP-20261009-0001',
-      userId: 'user-customer-003',
-      walletId: 'w-cust-yer',
-      currency: 'YER',
-      amount: 50000,
-      paymentMethodCode: 'JAIB',
-      referenceNumber: 'REF-JAIB-112233',
-      proofImageUrl: '/images/proofs/sample-receipt-1.png',
-      senderName: 'أحمد محمد الحاشدي',
-      senderPhone: '+967770000003',
-      status: 'CREDITED',
-      reviewNotes: 'تم التحقق من استلام المبلغ وتغذيته في المحفظة بواسطة النظام المحاسبي المزدوج.',
-      ledgerTxId: 'LTX-INIT-YER-001',
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-      user: {
-        id: 'user-customer-003',
-        fullName: 'أحمد محمد (مستخدم تجريبي)',
-        email: 'customer@gmail.com',
-        phone: '+967770000003',
-      },
-    },
-    {
-      id: 'dep-seed-002',
-      depositNumber: 'DEP-20261009-0002',
-      userId: 'user-customer-003',
-      walletId: 'w-cust-yer',
-      currency: 'YER',
-      amount: 25000,
-      paymentMethodCode: 'JAWALI',
-      referenceNumber: 'REF-JAWALI-998877',
-      proofImageUrl: '/images/proofs/sample-receipt-2.png',
-      senderName: 'أحمد محمد الحاشدي',
-      senderPhone: '+967770000003',
-      status: 'PENDING',
-      createdAt: new Date(Date.now() - 7200000).toISOString(),
-      user: {
-        id: 'user-customer-003',
-        fullName: 'أحمد محمد (مستخدم تجريبي)',
-        email: 'customer@gmail.com',
-        phone: '+967770000003',
-      },
-    },
-    {
-      id: 'dep-seed-003',
-      depositNumber: 'DEP-20261009-0003',
-      userId: 'user-customer-003',
-      walletId: 'w-cust-yer',
-      currency: 'YER',
-      amount: 15000,
-      paymentMethodCode: 'CASH',
-      referenceNumber: 'REF-CASH-445566',
-      proofImageUrl: '/images/proofs/sample-receipt-3.png',
-      senderName: 'أحمد محمد الحاشدي',
-      senderPhone: '+967770000003',
-      status: 'UNDER_REVIEW',
-      reviewNotes: 'جاري مطابقة الحوالة مع كشف حساب بنك سبأ الإسلامي',
-      createdAt: new Date(Date.now() - 14400000).toISOString(),
-      user: {
-        id: 'user-customer-003',
-        fullName: 'أحمد محمد (مستخدم تجريبي)',
-        email: 'customer@gmail.com',
-        phone: '+967770000003',
-      },
-    },
-  ]);
-
-  const [activeView, setActiveView] = useState<'deposits' | 'channels'>('deposits');
-  const [channels, setChannels] = useState<any[]>([
-    {
-      code: 'JAIB',
-      name: 'محفظة جيب (بنك التضامن)',
-      currency: 'YER',
-      accountNumber: '770123456',
-      pendingAccountNumber: null,
-      verificationStatus: 'VERIFIED',
-      financeApprovalRequired: false,
-      mode: 'MANUAL',
-      isActive: true,
-      killSwitchReason: null,
-    },
-    {
-      code: 'KURAINI',
-      name: 'الكريمي إم فلوس (حساب مميز)',
-      currency: 'YER',
-      accountNumber: '1234567',
-      pendingAccountNumber: '300998877',
-      verificationStatus: 'PENDING_REVIEW',
-      financeApprovalRequired: true,
-      mode: 'MANUAL',
-      isActive: true,
-      killSwitchReason: null,
-    },
-    {
-      code: 'JAWALI',
-      name: 'محفظة جوالي (بنك اليمن والكويت)',
-      currency: 'YER',
-      accountNumber: '775112233',
-      pendingAccountNumber: null,
-      verificationStatus: 'VERIFIED',
-      financeApprovalRequired: false,
-      mode: 'MANUAL',
-      isActive: true,
-      killSwitchReason: null,
-    },
-    {
-      code: 'ONE_CASH',
-      name: 'ون كاش (بنك اليمن الدولي)',
-      currency: 'YER',
-      accountNumber: '779887766',
-      pendingAccountNumber: null,
-      verificationStatus: 'VERIFIED',
-      financeApprovalRequired: false,
-      mode: 'DISABLED',
-      isActive: false,
-      killSwitchReason: 'صيانة طارئة في محفظة ون كاش المصرفية (Emergency Network Maintenance)',
-    },
-  ]);
-
+  const [deposits, setDeposits] = useState<DepositItem[]>([]);
+  const [activeView, setActiveView] = useState<'deposits' | 'channels' | 'sender-accounts'>('deposits');
+  const [senderAccountRequests, setSenderAccountRequests] = useState<SenderAccountReview[]>([]);
+  const [channels, setChannels] = useState<any[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDeposit, setSelectedDeposit] = useState<DepositItem | null>(null);
@@ -183,179 +88,295 @@ export default function AdminDepositsPage() {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
-  const handleProposeAccountChange = (code: string) => {
-    const newNum = prompt(`اقتراح تعديل رقم حساب القناة [${code}] (سيتطلب موافقة الإدارة المالية بموجب مبدأ الرقابة الثنائية Four-Eyes):`);
-    if (!newNum || !newNum.trim()) return;
+  const requestApi = async (path: string, init: RequestInit = {}) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+    const headers = new Headers(init.headers);
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-    setChannels((prev) =>
-      prev.map((c) =>
-        c.code === code
-          ? {
-              ...c,
-              pendingAccountNumber: newNum.trim(),
-              verificationStatus: 'PENDING_REVIEW',
-              financeApprovalRequired: true,
-            }
-          : c,
-      ),
-    );
-    setActionSuccess(`تم رفع اقتراح تعديل رقم حساب ${code} إلى الإدارة المالية للمراجعة والاعتماد.`);
+    const response = await fetch(`${API_URL}${path}`, { ...init, headers });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message = Array.isArray(data?.message) ? data.message.join('، ') : data?.message;
+      throw new Error(message || `تعذر تنفيذ الطلب (HTTP ${response.status})`);
+    }
+    return data;
   };
 
-  const handleApproveFinance = (code: string, approved: boolean) => {
-    const notes = prompt(
-      approved
-        ? `تأكيد موافقة الإدارة المالية على تعديل حساب ${code} (ملاحظات التدقيق):`
-        : `سبب رفض الإدارة المالية لتعديل حساب ${code}:`,
-      approved ? 'تم التحقق من الوثائق البنكية واعتماد الحساب' : 'رقم الحساب غير معتمد رسمياً',
-    );
-    if (notes === null) return;
-
-    setChannels((prev) =>
-      prev.map((c) => {
-        if (c.code !== code) return c;
-        if (approved) {
-          return {
-            ...c,
-            accountNumber: c.pendingAccountNumber || c.accountNumber,
-            pendingAccountNumber: null,
-            verificationStatus: 'VERIFIED',
-            financeApprovalRequired: false,
-          };
-        } else {
-          return {
-            ...c,
-            pendingAccountNumber: null,
-            verificationStatus: 'REJECTED',
-            financeApprovalRequired: false,
-          };
-        }
-      }),
-    );
-
-    setActionSuccess(
-      approved
-        ? `تم اعتماد وتطبيق رقم الحساب الجديد لقناة ${code} رسمياً بواسطة الإدارة المالية!`
-        : `تم رفض تعديل رقم الحساب لقناة ${code}.`,
-    );
-  };
-
-  const handleToggleChannelKillSwitch = (code: string) => {
-    const ch = channels.find((c) => c.code === code);
-    if (!ch) return;
-    const isStopping = ch.isActive;
-
-    if (isStopping) {
-      const reason = prompt(`سبب الإيقاف الطارئ للقناة [${code}] (مطلوب للتدقيق):`, 'صيانة طارئة في بوابة البنك') || 'صيانة طارئة';
-      setChannels((prev) =>
-        prev.map((c) =>
-          c.code === code
-            ? { ...c, isActive: false, mode: 'DISABLED', killSwitchReason: reason }
-            : c,
-        ),
-      );
-      setActionSuccess(`تم تفعيل زر الإيقاف الطارئ لقناة ${code} وحظر جميع عمليات الإيداع.`);
-    } else {
-      setChannels((prev) =>
-        prev.map((c) =>
-          c.code === code
-            ? { ...c, isActive: true, mode: 'MANUAL', killSwitchReason: null }
-            : c,
-        ),
-      );
-      setActionSuccess(`تمت استعادة تشغيل قناة ${code} بنجاح.`);
+  const fetchDeposits = async () => {
+    setIsLoadingData(true);
+    try {
+      const query = filterStatus === 'ALL' ? '' : `?status=${encodeURIComponent(filterStatus)}`;
+      const data = await requestApi(`/admin/deposits${query}`);
+      if (!Array.isArray(data)) throw new Error('استجابة قائمة الإيداعات غير صالحة.');
+      setDeposits(data);
+      setDataError(null);
+    } catch (error) {
+      setDeposits([]);
+      setDataError(error instanceof Error ? error.message : 'تعذر تحميل الإيداعات من الخادم.');
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
+  const fetchChannels = async () => {
+    try {
+      const data = await requestApi('/admin/deposits/channels/all');
+      if (!Array.isArray(data)) throw new Error('استجابة قنوات الدفع غير صالحة.');
+      setChannels(data);
+    } catch (error) {
+      setChannels([]);
+      setDataError(error instanceof Error ? error.message : 'تعذر تحميل قنوات الدفع من الخادم.');
+    }
+  };
+
+  const fetchSenderAccountRequests = async () => {
+    try {
+      const data = await requestApi('/admin/deposits/sender-accounts/pending');
+      if (!Array.isArray(data)) throw new Error('استجابة طلبات توثيق أرقام المحافظ غير صالحة.');
+      setSenderAccountRequests(data);
+      setDataError(null);
+    } catch (error) {
+      setSenderAccountRequests([]);
+      setDataError(error instanceof Error ? error.message : 'تعذر تحميل طلبات توثيق أرقام المحافظ.');
+    }
+  };
+
+
   useEffect(() => {
-    fetchDeposits();
+    void fetchDeposits();
   }, [filterStatus]);
 
-  const fetchDeposits = async () => {
+  useEffect(() => {
+    void fetchChannels();
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'sender-accounts') void fetchSenderAccountRequests();
+  }, [activeView]);
+
+  const handleApproveSenderAccount = async (account: SenderAccountReview) => {
+    if (!confirm('هل راجعت بيانات العميل وتأكدت من صحة رقم ' + account.identifier + ' لمحفظة ' + account.channelCode + '؟')) return;
+    const reviewNotes = prompt('ملاحظات المراجعة (اختياري):', 'تمت مراجعة بيانات العميل واعتماد رقم المحفظة.');
+    if (reviewNotes === null) return;
+    setLoadingAction(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      let url = 'http://localhost:4000/api/admin/deposits';
-      if (filterStatus !== 'ALL') {
-        url += `?status=${filterStatus}`;
-      }
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      await requestApi('/admin/deposits/sender-accounts/' + encodeURIComponent(account.id) + '/approve', {
+        method: 'POST',
+        body: JSON.stringify({ reviewNotes }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setDeposits(data);
-        }
+      await fetchSenderAccountRequests();
+      setActionSuccess('تم اعتماد رقم ' + account.maskedIdentifier + ' للعميل ' + account.user.fullName + '. سيُستخدم تلقائياً في طلبات الشحن القادمة.');
+      setDataError(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر اعتماد رقم المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleRejectSenderAccount = async (account: SenderAccountReview) => {
+    const rejectionReason = prompt('اكتب سبب رفض الرقم ليظهر للعميل ويتمكن من تصحيحه:');
+    if (rejectionReason === null) return;
+    if (!rejectionReason.trim()) {
+      alert('سبب الرفض إجباري.');
+      return;
+    }
+    setLoadingAction(true);
+    try {
+      await requestApi('/admin/deposits/sender-accounts/' + encodeURIComponent(account.id) + '/reject', {
+        method: 'POST',
+        body: JSON.stringify({ rejectionReason: rejectionReason.trim() }),
+      });
+      await fetchSenderAccountRequests();
+      setActionSuccess('تم رفض رقم المحفظة للعميل ' + account.user.fullName + ' وتسجيل السبب.');
+      setDataError(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر رفض رقم المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleUpdateSenderIdentifierType = async (code: string, identifierType: string) => {
+    const selected = channels.find((item) => item.code === code);
+    const currentType = selected?.senderIdentifierType || 'PHONE';
+    if (currentType === identifierType) return;
+    if (!confirm(`سيتم تغيير معرّف حساب الإرسال لقناة ${code} إلى ${identifierType}. سيحتاج العملاء إلى إعادة حفظ معرّفهم بهذا النوع. هل تريد المتابعة؟`)) return;
+    setLoadingAction(true);
+    try {
+      await requestApi(`/admin/deposits/channels/${encodeURIComponent(code)}/sender-identifier-type`, {
+        method: 'POST',
+        body: JSON.stringify({ identifierType }),
+      });
+      await fetchChannels();
+      setActionSuccess(`تم تغيير نوع معرّف الإرسال لقناة ${code} إلى ${identifierType}. يجب على العميل إعادة حفظ حساب الإرسال.`);
+      setDataError(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر تغيير نوع معرّف الإرسال.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleProposeAccountChange = async (code: string) => {
+    const accountNumber = prompt(`أدخل رقم حساب الاستقبال الرسمي لقناة ${code}:`);
+    if (!accountNumber?.trim()) return;
+    const accountHolderName = prompt('أدخل اسم صاحب الحساب كما يظهر في مستند البنك/المزود:');
+    if (!accountHolderName?.trim()) return;
+    const instructionsAr = prompt('أدخل تعليمات التحويل التي ستظهر للعملاء:');
+    if (!instructionsAr?.trim()) return;
+
+    setLoadingAction(true);
+    try {
+      await requestApi(`/admin/deposits/channels/${encodeURIComponent(code)}/propose-account`, {
+        method: 'POST',
+        body: JSON.stringify({
+          accountNumber: accountNumber.trim(),
+          accountHolderName: accountHolderName.trim(),
+          instructionsAr: instructionsAr.trim(),
+        }),
+      });
+      await fetchChannels();
+      setDataError(null);
+      setActionSuccess(`تم تسجيل مقترح بيانات الاستقبال لقناة ${code}. القناة ما زالت متوقفة حتى مراجعة مالية مستقلة.`);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر تسجيل بيانات حساب الاستقبال.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleProposeCompliance = async (code: string) => {
+    const regulatoryApprovalReference = prompt('رقم/مرجع موافقة الجهة الرقابية (لا تستخدم بيانات غير معتمدة):');
+    if (!regulatoryApprovalReference?.trim()) return;
+    const regulatoryApprovalDocumentUrl = prompt('رابط HTTPS للمستند الرسمي الخاص بالموافقة الرقابية:');
+    if (!regulatoryApprovalDocumentUrl?.trim()) return;
+    const providerAgreementReference = prompt('رقم اتفاقية التاجر أو الوكيل مع الجهة المشغلة:');
+    if (!providerAgreementReference?.trim()) return;
+    const providerAgreementDocumentUrl = prompt('رابط HTTPS لاتفاقية التاجر/الوكيل الموقعة:');
+    if (!providerAgreementDocumentUrl?.trim()) return;
+
+    setLoadingAction(true);
+    try {
+      await requestApi(`/admin/deposits/channels/${encodeURIComponent(code)}/propose-compliance`, {
+        method: 'POST',
+        body: JSON.stringify({
+          regulatoryApprovalReference: regulatoryApprovalReference.trim(),
+          regulatoryApprovalDocumentUrl: regulatoryApprovalDocumentUrl.trim(),
+          providerAgreementReference: providerAgreementReference.trim(),
+          providerAgreementDocumentUrl: providerAgreementDocumentUrl.trim(),
+        }),
+      });
+      await fetchChannels();
+      setDataError(null);
+      setActionSuccess(`تم إرسال وثائق الاعتماد لقناة ${code} للمراجعة المستقلة. القناة لم تُفعّل.`);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر تسجيل وثائق الاعتماد.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleApproveFinance = async (code: string, approved: boolean) => {
+    const notes = prompt(
+      approved
+        ? `ملاحظات مراجعة واعتماد حساب ووثائق ${code}:`
+        : `سبب رفض بيانات/وثائق قناة ${code}:`,
+    );
+    if (!notes?.trim()) return;
+
+    setLoadingAction(true);
+    try {
+      await requestApi(`/admin/deposits/channels/${encodeURIComponent(code)}/finance-approval`, {
+        method: 'POST',
+        body: JSON.stringify({ approved, financeNotes: notes.trim() }),
+      });
+      await fetchChannels();
+      setDataError(null);
+      setActionSuccess(
+        approved
+          ? `تم اعتماد ملف قناة ${code} مالياً. لا تزال بحاجة إلى تفعيل منفصل من مسؤول آخر.`
+          : `تم رفض مقترح قناة ${code} وتوثيق القرار.`,
+      );
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذرت مراجعة القناة مالياً.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleToggleChannelKillSwitch = async (code: string) => {
+    const channel = channels.find((item) => item.code === code);
+    if (!channel) return;
+
+    setLoadingAction(true);
+    try {
+      if (channel.isActive) {
+        const reason = prompt(`سبب الإيقاف الطارئ الإلزامي لقناة ${code}:`);
+        if (!reason?.trim()) return;
+        await requestApi(`/admin/deposits/channels/${encodeURIComponent(code)}/kill-switch`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: reason.trim() }),
+        });
+        setActionSuccess(`تم إيقاف قناة ${code} من الخادم وتسجيل سبب الإيقاف.`);
+      } else {
+        await requestApi(`/admin/deposits/channels/${encodeURIComponent(code)}/switch-mode`, {
+          method: 'POST',
+          body: JSON.stringify({ mode: 'MANUAL' }),
+        });
+        setActionSuccess(`قبل الخادم تفعيل قناة ${code} في الوضع اليدوي.`);
       }
-    } catch {}
+      await fetchChannels();
+      setDataError(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر تغيير حالة القناة.');
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const handleMarkUnderReview = async (depositId: string) => {
     setLoadingAction(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/deposits/${depositId}/under-review`, {
+      const data = await requestApi(`/admin/deposits/${depositId}/under-review`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ reviewNotes: 'جاري المطابقة مع كشف الحساب البنكي' }),
+        body: JSON.stringify({ reviewNotes: reviewNotes.trim() || 'بدء مطابقة مرجع التحويل مع سجل المحفظة.' }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        updateLocalDeposit(data.deposit);
-      } else {
-        throw new Error();
-      }
-    } catch {
-      // Offline fallback
-      setDeposits((prev) =>
-        prev.map((d) => (d.id === depositId ? { ...d, status: 'UNDER_REVIEW' } : d)),
-      );
-      if (selectedDeposit?.id === depositId) {
-        setSelectedDeposit((prev) => (prev ? { ...prev, status: 'UNDER_REVIEW' } : null));
-      }
+      if (data?.deposit) updateLocalDeposit(data.deposit);
+      await fetchDeposits();
+      setDataError(null);
+      setActionSuccess('تم نقل الطلب إلى قيد التدقيق في الخادم.');
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر نقل الطلب إلى قيد التدقيق.');
     } finally {
       setLoadingAction(false);
-      setActionSuccess('تم تغيير حالة الطلب إلى (قيد التدقيق)');
-      setTimeout(() => setActionSuccess(null), 3000);
     }
   };
 
   const handleApproveAndCredit = async (depositId: string) => {
     setLoadingAction(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/deposits/${depositId}/approve`, {
+      const data = await requestApi(`/admin/deposits/${depositId}/approve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
-          reviewNotes: reviewNotes || 'تم التحقق من الحوالة وتغذية رصيد العميل بنجاح.',
+          reviewNotes: reviewNotes.trim() || 'تمت مطابقة التحويل من مصدر الحساب المعتمد.',
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        updateLocalDeposit(data.deposit);
-      } else {
-        throw new Error();
+      if (!data?.success || !data?.deposit?.ledgerTxId) {
+        throw new Error('لم يؤكد الخادم إنشاء قيد محاسبي منشور؛ لم يتم إظهار نجاح الإيداع.');
       }
-    } catch {
-      // Offline fallback
-      setDeposits((prev) =>
-        prev.map((d) => (d.id === depositId ? { ...d, status: 'CREDITED' } : d)),
-      );
-      if (selectedDeposit?.id === depositId) {
-        setSelectedDeposit((prev) => (prev ? { ...prev, status: 'CREDITED' } : null));
-      }
+      updateLocalDeposit(data.deposit);
+      await fetchDeposits();
+      setDataError(null);
+      setActionSuccess(`تم تأكيد الإيداع بعد نشر القيد المحاسبي ${data.deposit.ledgerTxId}.`);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر اعتماد الإيداع. لم يتم تغيير الحالة محلياً.');
     } finally {
       setLoadingAction(false);
-      setActionSuccess('تمت الموافقة وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام بنجاح!');
-      setTimeout(() => setActionSuccess(null), 3000);
     }
   };
 
@@ -366,39 +387,20 @@ export default function AdminDepositsPage() {
     }
     setLoadingAction(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/deposits/${depositId}/reject`, {
+      const data = await requestApi(`/admin/deposits/${depositId}/reject`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ rejectionReason }),
+        body: JSON.stringify({ rejectionReason: rejectionReason.trim() }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        updateLocalDeposit(data.deposit);
-      } else {
-        throw new Error();
-      }
-    } catch {
-      // Offline fallback
-      setDeposits((prev) =>
-        prev.map((d) =>
-          d.id === depositId ? { ...d, status: 'REJECTED', rejectionReason } : d,
-        ),
-      );
-      if (selectedDeposit?.id === depositId) {
-        setSelectedDeposit((prev) =>
-          prev ? { ...prev, status: 'REJECTED', rejectionReason } : null,
-        );
-      }
-    } finally {
-      setLoadingAction(false);
+      if (data?.deposit) updateLocalDeposit(data.deposit);
+      await fetchDeposits();
       setShowRejectModal(false);
       setRejectionReason('');
-      setActionSuccess('تم رفض طلب الإيداع وتوثيق السبب في السجل المالي');
-      setTimeout(() => setActionSuccess(null), 3000);
+      setDataError(null);
+      setActionSuccess('تم رفض طلب الإيداع في الخادم وتوثيق السبب.');
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'تعذر رفض طلب الإيداع.');
+    } finally {
+      setLoadingAction(false);
     }
   };
 
@@ -483,6 +485,14 @@ export default function AdminDepositsPage() {
           <span>{actionSuccess}</span>
         </div>
       )}
+      {dataError && (
+        <div role="alert" className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-300 text-xs">
+          {dataError}
+        </div>
+      )}
+      {isLoadingData && (
+        <p role="status" className="text-xs text-slate-400">جاري تحميل البيانات المؤكدة من الخادم...</p>
+      )}
 
       {/* Navigation Tabs */}
       <div className="flex border-b border-slate-800 gap-4">
@@ -508,6 +518,21 @@ export default function AdminDepositsPage() {
           {channels.filter((c) => c.verificationStatus === 'PENDING_REVIEW').length > 0 && (
             <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
               {channels.filter((c) => c.verificationStatus === 'PENDING_REVIEW').length} بانتظار المالية
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveView('sender-accounts')}
+          className={`pb-3 px-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+            activeView === 'sender-accounts'
+              ? 'border-indigo-500 text-indigo-400'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <User className="w-4 h-4" /> توثيق أرقام المحافظ (لصاحب التطبيق)
+          {senderAccountRequests.length > 0 && (
+            <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+              {senderAccountRequests.length} طلب جديد
             </span>
           )}
         </button>
@@ -650,6 +675,74 @@ export default function AdminDepositsPage() {
         </>
       )}
 
+      {activeView === 'sender-accounts' && (
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs leading-6 text-amber-100">
+            هذه الشاشة مخصصة لصاحب التطبيق أو مدير المنصة الأعلى فقط. اعرض الرقم الكامل هنا لغرض مطابقته يدوياً مع بيانات المحفظة أو مستند العميل، ولا تطلب من العميل مطلقاً رقم PIN أو رمز OTP الخاص بالمحفظة.
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-white">طلبات توثيق أرقام المحافظ</h2>
+              <p className="text-xs text-slate-400 mt-1">لا يصبح الرقم صالحاً للشحن إلا بعد موافقتك. قرارك ووقته يُحفظان في سجل التدقيق.</p>
+            </div>
+            <button onClick={() => void fetchSenderAccountRequests()} disabled={loadingAction} className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200">
+              <RefreshCw className="inline w-3.5 h-3.5 ml-1" /> تحديث
+            </button>
+          </div>
+
+          {senderAccountRequests.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">
+              لا توجد طلبات توثيق معلقة حالياً.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {senderAccountRequests.map((account) => (
+                <article key={account.id} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-black text-white">{account.user.fullNameAr || account.user.fullName}</h3>
+                      <p className="text-xs text-slate-400 mt-1">{account.user.phone || account.user.email || 'لا توجد بيانات اتصال'}</p>
+                    </div>
+                    <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-200">بانتظار موافقتك</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-xl bg-slate-950 p-3">
+                      <span className="block text-slate-500 mb-1">المحفظة</span>
+                      <strong className="text-slate-200">{account.channelCode}</strong>
+                    </div>
+                    <div className="rounded-xl bg-slate-950 p-3">
+                      <span className="block text-slate-500 mb-1">نوع المعرّف</span>
+                      <strong className="text-slate-200">{account.identifierType}</strong>
+                    </div>
+                    <div className="col-span-2 rounded-xl border border-indigo-500/30 bg-indigo-950/30 p-3">
+                      <span className="block text-indigo-200 mb-1">الرقم الذي أدخله العميل - للمراجعة فقط</span>
+                      <strong dir="ltr" className="block break-all font-mono text-lg text-white">{account.identifier}</strong>
+                      <span className="block text-[10px] text-slate-500 mt-1">المخزن في قاعدة البيانات مشفر؛ الرقم الكامل يظهر هنا للمالك فقط.</span>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-400 space-y-1">
+                    <p>حالة حساب العميل: {account.user.isVerified ? 'الحساب موثق' : 'لم يكتمل توثيق الحساب'}</p>
+                    <p>توثيق هاتف تسجيل الدخول: {account.user.phoneVerifiedAt ? 'تم التحقق' : 'غير متحقق'}</p>
+                    <p>تاريخ طلب الرقم: {new Date(account.createdAt).toLocaleString('ar')}</p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 border-t border-slate-800 pt-3">
+                    <button type="button" disabled={loadingAction} onClick={() => void handleApproveSenderAccount(account)} className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white">
+                      <CheckCircle className="inline w-4 h-4 ml-1" /> اعتماد الرقم وربطه بالعميل
+                    </button>
+                    <button type="button" disabled={loadingAction} onClick={() => void handleRejectSenderAccount(account)} className="rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white">
+                      <XCircle className="inline w-4 h-4 ml-1" /> رفض وإرجاعه للعميل
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {activeView === 'channels' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
@@ -679,7 +772,7 @@ export default function AdminDepositsPage() {
                       <Building2 className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">{channel.name}</h3>
+                      <h3 className="text-sm font-bold text-white">{channel.nameAr || channel.name}</h3>
                       <span className="text-[10px] text-slate-400 font-mono">كود القناة: {channel.code}</span>
                     </div>
                   </div>
@@ -700,6 +793,7 @@ export default function AdminDepositsPage() {
                     </span>
 
                     <button
+                      disabled={loadingAction}
                       onClick={() => handleToggleChannelKillSwitch(channel.code)}
                       title={channel.isActive ? 'إيقاف طارئ للقناة (Kill Switch)' : 'استعادة التشغيل'}
                       className={`p-1.5 rounded-lg transition-colors ${
@@ -717,7 +811,7 @@ export default function AdminDepositsPage() {
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400">رقم الحساب المعتمد الحالي:</span>
                     <span className="font-mono font-bold text-emerald-400 text-sm">
-                      {channel.accountNumber}
+                      {channel.accountNumber && channel.accountNumber !== 'NOT_CONFIGURED' ? channel.accountNumber : 'غير مهيأ'}
                     </span>
                   </div>
 
@@ -730,7 +824,57 @@ export default function AdminDepositsPage() {
 
                   <div className="flex justify-between items-center text-[11px] text-slate-500">
                     <span>وضع التشغيل: {channel.mode}</span>
-                    <span>العملة: {channel.currency}</span>
+                    <span>العملة: {(channel.supportedCurrencies || []).join(' / ') || 'غير محددة'}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                    <label htmlFor={`sender-id-type-${channel.code}`} className="text-slate-400 text-[11px]">
+                      معرّف حساب العميل المرسل:
+                    </label>
+                    <select
+                      id={`sender-id-type-${channel.code}`}
+                      value={channel.senderIdentifierType || 'PHONE'}
+                      disabled={loadingAction}
+                      onChange={async (event) => {
+                        setLoadingAction(true);
+                        try {
+                          const identifierType = event.target.value;
+                          await requestApi(`/admin/deposits/channels/${encodeURIComponent(channel.code)}/sender-identifier-type`, {
+                            method: 'POST',
+                            body: JSON.stringify({ identifierType }),
+                          });
+                          await fetchChannels();
+                          setActionSuccess(`تم تغيير نوع معرّف الإرسال لقناة ${channel.code}. سيحتاج العملاء إلى حفظ معرّفهم بالنوع الجديد.`);
+                          setDataError(null);
+                        } catch (error) {
+                          setDataError(error instanceof Error ? error.message : 'تعذر تغيير نوع معرّف الإرسال.');
+                        } finally {
+                          setLoadingAction(false);
+                        }
+                      }}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
+                    >
+                      <option value="ALIAS">رقم بديل (ALIAS)</option>
+                      <option value="PHONE">رقم الهاتف المرتبط (PHONE)</option>
+                      <option value="WALLET_ID">معرّف المحفظة (WALLET_ID)</option>
+                      <option value="ACCOUNT_NUMBER">رقم الحساب (ACCOUNT_NUMBER)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                    <label htmlFor={`sender-id-type-${channel.code}`} className="text-slate-400 text-[11px]">
+                      معرّف حساب العميل المرسل:
+                    </label>
+                    <select
+                      id={`sender-id-type-${channel.code}`}
+                      value={channel.senderIdentifierType || 'PHONE'}
+                      disabled={loadingAction}
+                      onChange={(event) => void handleUpdateSenderIdentifierType(channel.code, event.target.value)}
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
+                    >
+                      <option value="ALIAS">رقم بديل (ALIAS)</option>
+                      <option value="PHONE">رقم الهاتف المرتبط (PHONE)</option>
+                      <option value="WALLET_ID">معرّف المحفظة (WALLET_ID)</option>
+                      <option value="ACCOUNT_NUMBER">رقم الحساب (ACCOUNT_NUMBER)</option>
+                    </select>
                   </div>
                 </div>
 
@@ -743,12 +887,22 @@ export default function AdminDepositsPage() {
 
                 {/* Four-Eyes Actions */}
                 <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    onClick={() => handleProposeAccountChange(channel.code)}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
-                  >
-                    تعديل رقم الحساب المستلم...
-                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      disabled={loadingAction}
+                      onClick={() => handleProposeAccountChange(channel.code)}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 disabled:opacity-50"
+                    >
+                      إعداد/تعديل حساب الاستقبال
+                    </button>
+                    <button
+                      disabled={loadingAction}
+                      onClick={() => handleProposeCompliance(channel.code)}
+                      className="text-xs text-sky-400 hover:text-sky-300 font-bold disabled:opacity-50"
+                    >
+                      تسجيل وثائق الاعتماد
+                    </button>
+                  </div>
 
                   {channel.verificationStatus === 'PENDING_REVIEW' && (
                     <div className="flex gap-2">

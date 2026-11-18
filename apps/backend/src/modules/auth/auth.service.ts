@@ -55,7 +55,7 @@ interface InMemoryUser {
   }>;
 }
 
-// Initial in-memory mock users seeded for offline resilience (only loaded outside production)
+// Test-only account fixtures. Never loaded in local development or production.
 const SEED_USERS: InMemoryUser[] = [
   {
     id: 'user-admin-001',
@@ -135,8 +135,8 @@ export class AuthService {
     private redisStore: RedisIdempotencyStore,
     private encryptionService: EncryptionService,
   ) {
-    // Only load fallback memory seeds in non-production environments
-    if (process.env.NODE_ENV !== 'production') {
+    // Test fixtures are available only to automated Jest tests; development and production always use PostgreSQL.
+    if (process.env.NODE_ENV === 'test') {
       for (const u of SEED_USERS) {
         this.memoryUsers.set(u.id, u);
       }
@@ -223,7 +223,7 @@ export class AuthService {
       }
     } catch (err: any) {
       if (err instanceof ConflictException) throw err;
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (tenantId || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Registration lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Registration is unavailable because the account database could not be reached.');
       }
@@ -263,7 +263,7 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (tenantId || process.env.NODE_ENV === 'production') {
+      if (tenantId || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Persistent account creation failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Account registration failed because the account database is unavailable.');
       }
@@ -324,14 +324,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -383,14 +383,14 @@ export class AuthService {
         include: { wallets: true },
       });
     } catch (err: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Admin login database lookup failed: ${err?.message || err}`);
         throw new ServiceUnavailableException('Administrative login is unavailable because the account database could not be reached.');
       }
       this.logger.warn(`Local unscoped development admin login fallback (${err?.message})`);
     }
 
-    if (!user && !getCurrentTenantId() && process.env.NODE_ENV !== 'production') {
+    if (!user && !getCurrentTenantId() && process.env.NODE_ENV === 'test') {
       for (const u of this.memoryUsers.values()) {
         if (u.email === dto.identifier || u.phone === dto.identifier) {
           user = u;
@@ -588,7 +588,11 @@ export class AuthService {
           isTwoFactorEnabled: true,
         },
       });
-    } catch {
+    } catch (error: any) {
+      if (process.env.NODE_ENV !== 'test' || getCurrentTenantId()) {
+        this.logger.error(`Unable to persist TOTP enrollment for user ${userId}: ${error?.message || error}`);
+        throw new ServiceUnavailableException('تعذر حفظ إعداد المصادقة الثنائية في قاعدة البيانات؛ لم يتم تفعيلها.');
+      }
       const memUser = this.memoryUsers.get(userId);
       if (memUser) {
         memUser.twoFactorSecret = dto.secret;
@@ -827,9 +831,9 @@ export class AuthService {
         include: { wallets: true },
       });
       if (dbUser) return dbUser;
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') return null;
+      if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') return null;
     } catch (error: any) {
-      if (getCurrentTenantId() || process.env.NODE_ENV === 'production') {
+      if (getCurrentTenantId() || process.env.NODE_ENV !== 'test') {
         this.logger.error(`Persistent user lookup failed: ${error?.message || error}`);
         throw new ServiceUnavailableException('The authenticated account database is unavailable.');
       }

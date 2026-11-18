@@ -149,52 +149,77 @@ export class OrdersService {
     // 3. Dynamic Field Validation (Zero Trust on client submitted data)
     this.productsService.validateSubmittedPlayerFields(product.service.fields, dto.playerFields);
 
-    // Pricing is resolved from server-side tier/branch configuration, never client input.
-    const tierRetailPrice = tierPrice
-      ? Number(tierPrice.retailPrice)
-      : Number(priceConfig.retailPrice) *
-        (checkoutUser.tier ? 1 - Number(checkoutUser.tier.defaultDiscountPercent) / 100 : 1);
-    const retailPriceNumber = branchPrice
-      ? Number(branchPrice.retailPrice)
-      : tierRetailPrice;
-    const costPriceNumber = Number(priceConfig.costPrice);
-    const profitNumber = retailPriceNumber - costPriceNumber;
-    if (!Number.isFinite(retailPriceNumber) || retailPriceNumber <= 0 || profitNumber < 0) {
-      throw new BadRequestException('Configured tier or branch price cannot be below product cost.');
+    // Pricing is resolved from server-side Decimal values; never use JS floating point.
+    const zero = new Prisma.Decimal(0);
+    const hundred = new Prisma.Decimal(100);
+    const costPriceDecimal = new Prisma.Decimal(priceConfig.costPrice);
+    const configuredRetailPrice = new Prisma.Decimal(priceConfig.retailPrice);
+    const discountPercent = new Prisma.Decimal(checkoutUser.tier?.defaultDiscountPercent ?? 0);
+    if (discountPercent.isNegative() || discountPercent.greaterThan(100)) {
+      throw new BadRequestException('Customer tier discount must be between 0 and 100 percent.');
     }
 
-    let agentCommissionAmount = 0;
+    const tierRetailPriceDecimal = tierPrice
+      ? new Prisma.Decimal(tierPrice.retailPrice)
+      : configuredRetailPrice
+          .mul(hundred.minus(discountPercent))
+          .div(hundred)
+          .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+    const retailPriceDecimal = branchPrice
+      ? new Prisma.Decimal(branchPrice.retailPrice)
+      : tierRetailPriceDecimal;
+    const profitDecimal = retailPriceDecimal.minus(costPriceDecimal);
+
+    if (
+      !retailPriceDecimal.isFinite() ||
+      !costPriceDecimal.isFinite() ||
+      !retailPriceDecimal.greaterThan(0) ||
+      costPriceDecimal.isNegative() ||
+      retailPriceDecimal.decimalPlaces() > 4 ||
+      costPriceDecimal.decimalPlaces() > 4 ||
+      retailPriceDecimal.greaterThan('99999999999999.9999') ||
+      costPriceDecimal.greaterThan('99999999999999.9999') ||
+      profitDecimal.isNegative()
+    ) {
+      throw new BadRequestException('Configured tier or branch price cannot be below product cost or exceed DECIMAL(18,4).');
+    }
+
+    let agentCommissionAmountDecimal = zero;
     const agentParentUserId =
       checkoutUser.role === UserRole.SUB_AGENT && checkoutUser.parentAgent?.isActive
         ? checkoutUser.parentAgent.id
         : null;
-    if (agentParentUserId && profitNumber > 0) {
+    if (agentParentUserId && profitDecimal.greaterThan(0)) {
       if (branchPrice) {
-        const parentRetailPrice = parentTierPrice?.isActive
-          ? Number(parentTierPrice.retailPrice)
-          : Number(priceConfig.retailPrice);
-        agentCommissionAmount = Math.min(
-          profitNumber,
-          Math.max(0, retailPriceNumber - parentRetailPrice),
-        );
+        const parentRetailPriceDecimal = parentTierPrice?.isActive
+          ? new Prisma.Decimal(parentTierPrice.retailPrice)
+          : configuredRetailPrice;
+        const branchPremium = retailPriceDecimal.minus(parentRetailPriceDecimal);
+        if (branchPremium.greaterThan(0)) {
+          agentCommissionAmountDecimal = branchPremium.greaterThan(profitDecimal)
+            ? profitDecimal
+            : branchPremium;
+        }
       } else {
         const commissionPercent = parentTierPrice?.isActive
-          ? Number(parentTierPrice.agentCommissionPercent)
-          : Number(checkoutUser.parentAgentCommissionPercent);
-        if (commissionPercent > 100 || commissionPercent < 0) {
+          ? new Prisma.Decimal(parentTierPrice.agentCommissionPercent)
+          : new Prisma.Decimal(checkoutUser.parentAgentCommissionPercent ?? 0);
+        if (commissionPercent.isNegative() || commissionPercent.greaterThan(100)) {
           throw new BadRequestException('Reseller commission percent must be between 0 and 100.');
         }
-        agentCommissionAmount = profitNumber * (commissionPercent / 100);
+        agentCommissionAmountDecimal = profitDecimal
+          .mul(commissionPercent)
+          .div(hundred)
+          .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
       }
     }
-
     const paymentMethod = dto.paymentMethod || PaymentChannelCode.WALLET;
 
     // Phase 11 Pilot Enforcement: Validate order amount and cohort restrictions
     if (this.pilotService) {
       await this.pilotService.validateOrderAgainstPilot(
         userId,
-        retailPriceNumber,
+        retailPriceDecimal.toString(),
         currency,
         product.id,
         paymentMethod,
@@ -224,7 +249,7 @@ export class OrdersService {
       }
 
       // Atomically hold balance in lockedBalance (prevents double-spending & validates freezing/balance)
-      await this.ledgerService.holdWalletBalance(walletRecord.id, retailPriceNumber);
+      await this.ledgerService.holdWalletBalance(walletRecord.id, retailPriceDecimal.toString());
     }
 
     const initialStatus = paymentMethod === PaymentChannelCode.WALLET
@@ -243,14 +268,14 @@ export class OrdersService {
         snapshotServiceNameAr: product.service.nameAr,
         snapshotProductName: product.name,
         snapshotProductNameAr: product.nameAr,
-        snapshotRetailPrice: new Prisma.Decimal(retailPriceNumber),
-        snapshotCostPrice: new Prisma.Decimal(costPriceNumber),
-        snapshotProfit: new Prisma.Decimal(profitNumber),
+        snapshotRetailPrice: retailPriceDecimal,
+        snapshotCostPrice: costPriceDecimal,
+        snapshotProfit: profitDecimal,
         snapshotCurrency: currency,
         snapshotBeneficiaryFields: dto.playerFields as any,
         snapshotPaymentMethodCode: paymentMethod,
         agentParentUserId,
-        agentCommissionAmount: new Prisma.Decimal(agentCommissionAmount),
+        agentCommissionAmount: agentCommissionAmountDecimal,
         idempotencyKey: dto.idempotencyKey,
         statusHistory: {
           create: {
@@ -455,8 +480,7 @@ export class OrdersService {
 
     // If order was marked as FAILED and balance hold was released, we must hold balance again before retrying
     if (order.status === OrderStatus.Failed) {
-      const retailPriceNumber = Number(order.snapshotRetailPrice);
-      await this.ledgerService.holdWalletBalance(wallet.id, retailPriceNumber);
+      await this.ledgerService.holdWalletBalance(wallet.id, order.snapshotRetailPrice.toString());
     }
 
     // Re-dispatch through fulfillment engine

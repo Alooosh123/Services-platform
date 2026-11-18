@@ -62,6 +62,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
   };
 
   beforeEach(async () => {
+    delete process.env.WEBHOOK_HMAC_SECRET;
     jest.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -100,21 +101,21 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
       expect(createRes.success).toBe(true);
       expect(createRes.deposit.status).toBe(DepositStatus.PENDING);
 
-      // Webhook arrival #1: First delivery -> Credits deposit atomically
+      // JAIB has no contracted inbound-webhook adapter; a payload must never simulate bank confirmation.
       const firstWebhook = await depositsService.handleInboundWebhook(PaymentChannelCode.JAIB, {
         channelCode: PaymentChannelCode.JAIB,
         transactionReference: 'REF-IDEMP-JAIB-99',
         amount: 50000,
         currency: CurrencyCode.YER,
-        beneficiaryAccount: '770123456',
+        beneficiaryAccount: '',
         senderPhone: '+967770000003',
       });
 
-      expect(firstWebhook.success).toBe(true);
-      expect(firstWebhook.status).toBe('CREDITED');
-      expect(mockLedgerService.recordTopup).toHaveBeenCalledTimes(1);
+      expect(firstWebhook.success).toBe(false);
+      expect(firstWebhook.status).toBe('REJECTED');
+      expect(firstWebhook.discrepancy).toBe('PROVIDER_ADAPTER_NOT_CONFIGURED');
 
-      // Webhook arrival #2: Duplicate delivery (same reference)
+      // Repeated deliveries remain rejected and cannot post a ledger entry either.
       const secondWebhook = await depositsService.handleInboundWebhook(PaymentChannelCode.JAIB, {
         channelCode: PaymentChannelCode.JAIB,
         transactionReference: 'REF-IDEMP-JAIB-99',
@@ -124,11 +125,9 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
         senderPhone: '+967770000003',
       });
 
-      // MUST NOT credit wallet or ledger a second time!
-      expect(secondWebhook.success).toBe(true);
-      expect(secondWebhook.status).toBe('DUPLICATE');
-      expect(secondWebhook.message).toContain('Idempotency Handled - No Double Credit');
-      expect(mockLedgerService.recordTopup).toHaveBeenCalledTimes(1); // STILL 1, NEVER 2!
+      expect(secondWebhook.success).toBe(false);
+      expect(secondWebhook.status).toBe('REJECTED');
+      expect(mockLedgerService.recordTopup).not.toHaveBeenCalled();
     });
   });
 
@@ -210,13 +209,17 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
         rawBody,
       );
 
-      expect(result.success).toBe(true);
-      expect(result.status).toBe('CREDITED');
+      // HMAC validity does not substitute for an official JAIB provider adapter.
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('REJECTED');
+      expect(result.discrepancy).toBe('PROVIDER_ADAPTER_NOT_CONFIGURED');
+      expect(mockLedgerService.recordTopup).not.toHaveBeenCalled();
     });
   });
 
   describe('P05 Acceptance Criteria: Mismatch Guard (Amount / Currency)', () => {
     it('مرجع إيداع لا يطابق المبلغ أو العملة لا يعتمد تلقائيًا: Amount or currency mismatch is rejected from auto-crediting', async () => {
+      delete process.env.WEBHOOK_HMAC_SECRET;
       // Customer requested 50,000 YER
       await depositsService.createDepositRequest('user-customer-003', {
         currency: CurrencyCode.YER,
@@ -236,19 +239,15 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
         senderPhone: '+967770000003',
       });
 
-      // MUST NOT auto-credit
+      // No JAIB webhook adapter exists, so the notification is rejected before matching or settlement.
       expect(webhookRes.success).toBe(false);
-      expect(webhookRes.status).toBe('MANUAL_REVIEW');
-      expect(webhookRes.discrepancy).toBe('AMOUNT_OR_CURRENCY_MISMATCH');
+      expect(webhookRes.status).toBe('REJECTED');
+      expect(webhookRes.discrepancy).toBe('PROVIDER_ADAPTER_NOT_CONFIGURED');
       expect(mockLedgerService.recordTopup).not.toHaveBeenCalled();
-
-      // Check deposit status is held in UNDER_REVIEW
-      const dep = await depositsService.getDepositById(webhookRes.depositNumber ? (await depositsService.findDepositByReference('REF-MISMATCH-001')).id : 'any');
-      expect(dep.status).toBe(DepositStatus.UNDER_REVIEW);
-      expect(dep.reviewNotes).toContain('المطلوب 50000 YER، والمستلم 45000 YER');
     });
 
     it('rejects webhook if beneficiary receiving account does not match platform registered account', async () => {
+      delete process.env.WEBHOOK_HMAC_SECRET;
       const webhookRes = await depositsService.handleInboundWebhook(PaymentChannelCode.JAIB, {
         channelCode: PaymentChannelCode.JAIB,
         transactionReference: 'REF-BENEF-FAKE-01',
@@ -259,7 +258,7 @@ describe('Phase 05 — Inbound Payment Webhooks, Idempotency & Channel Safe Mode
 
       expect(webhookRes.success).toBe(false);
       expect(webhookRes.status).toBe('REJECTED');
-      expect(webhookRes.discrepancy).toBe('BENEFICIARY_MISMATCH');
+      expect(webhookRes.discrepancy).toBe('PROVIDER_ADAPTER_NOT_CONFIGURED');
     });
   });
 

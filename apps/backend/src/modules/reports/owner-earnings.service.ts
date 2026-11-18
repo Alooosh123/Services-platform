@@ -4,239 +4,258 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
-  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 import { ProfitEngineService } from './profit-engine.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { TotpUtil } from '../auth/utils/totp.util';
+import { EncryptionService } from '../../security/encryption.service';
 import {
   CurrencyCode,
   PaymentChannelCode,
   OwnerPayoutStatus,
   BeneficiaryVerificationStatus,
-  LedgerAccountType,
   LedgerTransactionType,
   OwnerPayoutRequestDto,
   ApproveOwnerPayoutDto,
   CreatePayoutBeneficiaryDto,
-  PayoutBeneficiaryDto,
 } from '@digital-topup/shared';
-
-export interface InMemoryBeneficiary {
-  id: string;
-  userId: string;
-  beneficiaryName: string;
-  channelCode: PaymentChannelCode;
-  accountNumber: string;
-  verificationStatus: BeneficiaryVerificationStatus;
-  financeApprovedBy?: string | null;
-  notes?: string | null;
-  createdAt: Date;
-}
-
-export interface InMemoryOwnerPayout {
-  id: string;
-  payoutNumber: string;
-  userId: string;
-  beneficiaryId: string;
-  currency: CurrencyCode;
-  amount: number;
-  status: OwnerPayoutStatus;
-  idempotencyKey: string;
-  approvedByUserId?: string | null;
-  approvalNotes?: string | null;
-  externalReference?: string | null;
-  failureReason?: string | null;
-  ledgerTxId?: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface InMemoryEarningsWallet {
-  userId: string;
-  currency: CurrencyCode;
-  realizedEarnings: number;
-  lockedEarnings: number;
-  withdrawnEarnings: number;
-}
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class OwnerEarningsService {
-  private readonly logger = new Logger(OwnerEarningsService.name);
-
-  private assertPlatformOwnerContext(): void {
-    if (getCurrentTenantId()) {
-      throw new ForbiddenException('Platform owner earnings are not accessible from a tenant storefront domain.');
-    }
-    if (process.env.NODE_ENV === 'production') {
-      throw new ServiceUnavailableException(
-        'Platform owner earnings are unavailable until the persistent financial wallet workflow is completed.',
-      );
-    }
-  }
-
-  // In-memory state for rapid fallback / testing
-  private memoryBeneficiaries: Map<string, InMemoryBeneficiary> = new Map();
-  private memoryPayouts: Map<string, InMemoryOwnerPayout> = new Map();
-  private memoryWallets: Map<string, InMemoryEarningsWallet> = new Map();
-
-  // Mock / default TOTP secret for Owner user in test mode
-  private defaultTotpSecret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
-
   constructor(
     private prisma: PrismaService,
     private profitEngine: ProfitEngineService,
     private ledgerService: LedgerService,
-  ) {
-    this.seedDefaultData();
+    private encryptionService: EncryptionService,
+  ) {}
+
+  private assertPlatformOwnerContext(): void {
+    if (getCurrentTenantId()) {
+      throw new ForbiddenException('أرباح مالك المنصة لا تتاح من نطاق متجر مستأجر.');
+    }
   }
 
-  private seedDefaultData() {
-    const b1: InMemoryBeneficiary = {
-      id: 'ben-owner-001',
-      userId: 'user-owner-001',
-      beneficiaryName: 'حساب إدارة المنصة - بنك الكريمي',
-      channelCode: PaymentChannelCode.JAIB,
-      accountNumber: '770123456',
-      verificationStatus: BeneficiaryVerificationStatus.VERIFIED,
-      financeApprovedBy: 'finance-officer-01',
-      notes: 'حساب أرباح معتمد رسمي',
-      createdAt: new Date(),
+  private get tenantId(): string | null {
+    return getCurrentTenantId() || null;
+  }
+
+  private async resolvePlatformOwnerId(requesterId?: string): Promise<string> {
+    this.assertPlatformOwnerContext();
+    if (requesterId) {
+      const requester = await this.prisma.user.findUnique({
+        where: { id: requesterId },
+        select: { id: true, role: true },
+      });
+      if (requester && requester.role === 'OWNER') return requester.id;
+    }
+    const owner = await this.prisma.user.findFirst({
+      where: { role: 'OWNER', tenantId: this.tenantId },
+      select: { id: true },
+    });
+    if (!owner) throw new NotFoundException('لم يتم إعداد حساب مالك المنصة في قاعدة البيانات.');
+    return owner.id;
+  }
+
+  private mapBeneficiary(row: any) {
+    const stored = String(row.accountNumber || '');
+    let lastFour = '';
+    try {
+      const plain = stored.startsWith('v1:') ? this.encryptionService.decrypt(stored) : stored;
+      lastFour = plain.slice(-4);
+    } catch {
+      lastFour = '';
+    }
+    const { accountNumber: _sensitive, ...safe } = row;
+    return {
+      ...safe,
+      accountNumberMasked: lastFour ? '•••• ' + lastFour : 'محجوب',
+      accountNumberProtected: stored.startsWith('v1:'),
     };
-    this.memoryBeneficiaries.set(b1.id, b1);
+  }
 
-    // Initial earnings wallets
-    this.memoryWallets.set('user-owner-001:YER', {
-      userId: 'user-owner-001',
-      currency: CurrencyCode.YER,
-      realizedEarnings: 500000,
-      lockedEarnings: 0,
-      withdrawnEarnings: 100000,
+  private async ensureBeneficiaryEncrypted(row: any) {
+    const stored = String(row.accountNumber || '');
+    if (!stored || stored.startsWith('v1:') || ['NOT_CONFIGURED', 'TEST', 'MOCK'].includes(stored.toUpperCase())) {
+      return row;
+    }
+    const encrypted = this.encryptionService.encrypt(stored);
+    const result = await this.prisma.payoutBeneficiary.updateMany({
+      where: { id: row.id, accountNumber: stored },
+      data: {
+        accountNumber: encrypted,
+        verificationStatus: BeneficiaryVerificationStatus.PENDING_REVIEW,
+        financeApprovedBy: null,
+      },
     });
-    this.memoryWallets.set('user-owner-001:USD', {
-      userId: 'user-owner-001',
-      currency: CurrencyCode.USD,
-      realizedEarnings: 2500,
-      lockedEarnings: 0,
-      withdrawnEarnings: 500,
+    if (result.count === 1) row.accountNumber = encrypted;
+    else {
+      const fresh = await this.prisma.payoutBeneficiary.findUnique({ where: { id: row.id } });
+      if (fresh) return fresh;
+    }
+    return row;
+  }
+
+  private mapPayout(row: any) {
+    if (!row) return row;
+    const { beneficiary, ...rest } = row;
+    return {
+      ...rest,
+      amount: Number(row.amount),
+      beneficiary: beneficiary ? this.mapBeneficiary(beneficiary) : undefined,
+    };
+  }
+
+  async createBeneficiary(userId: string, dto: CreatePayoutBeneficiaryDto) {
+    this.assertPlatformOwnerContext();
+    if (!dto.beneficiaryName?.trim() || !dto.accountNumber?.trim()) {
+      throw new BadRequestException('اسم المستفيد ورقم الحساب مطلوبان.');
+    }
+    const ownerId = await this.resolvePlatformOwnerId(userId);
+    if (ownerId !== userId) throw new ForbiddenException('تسجيل مستفيد الأرباح متاح لمالك المنصة فقط.');
+    const encryptedAccountNumber = this.encryptionService.encrypt(dto.accountNumber.trim());
+
+    const created = await this.prisma.payoutBeneficiary.create({
+      data: {
+        userId: ownerId,
+        beneficiaryName: dto.beneficiaryName.trim(),
+        channelCode: dto.channelCode,
+        accountNumber: encryptedAccountNumber,
+        verificationStatus: BeneficiaryVerificationStatus.PENDING_REVIEW,
+        financeApprovedBy: null,
+        notes: dto.notes || null,
+      },
     });
+    return this.mapBeneficiary(created);
   }
 
-  getTestTotpSecret() {
+  async approveBeneficiary(beneficiaryId: string, financeUserId: string, approved: boolean, notes?: string) {
     this.assertPlatformOwnerContext();
-    return this.defaultTotpSecret;
-  }
-
-  generateValidTotp(): string {
-    this.assertPlatformOwnerContext();
-    return TotpUtil.generateCode(this.defaultTotpSecret);
-  }
-
-  /**
-   * 1. Register a Payout Beneficiary with Four-Eyes principle
-   */
-  async createBeneficiary(
-    userId: string,
-    dto: CreatePayoutBeneficiaryDto,
-  ): Promise<InMemoryBeneficiary> {
-    this.assertPlatformOwnerContext();
-    if (!dto.beneficiaryName || !dto.accountNumber) {
-      throw new BadRequestException('اسم المستفيد ورقم الحساب مطلوبان');
+    const beneficiary = await this.prisma.payoutBeneficiary.findUnique({ where: { id: beneficiaryId } });
+    if (!beneficiary) throw new NotFoundException('حساب المستفيد غير موجود.');
+    if (beneficiary.userId === financeUserId) throw new ForbiddenException('لا يجوز لمالك المستفيد اعتماد حسابه بنفسه.');
+    if (beneficiary.verificationStatus !== BeneficiaryVerificationStatus.PENDING_REVIEW) {
+      throw new ConflictException('حساب المستفيد سبق اتخاذ قرار بشأنه.');
+    }
+    const encryptedBeneficiary = await this.ensureBeneficiaryEncrypted(beneficiary);
+    if (!String(encryptedBeneficiary.accountNumber || '').startsWith('v1:')) {
+      throw new BadRequestException('بيانات حساب المستفيد غير محمية أو غير صالحة؛ أعد إدخالها من حساب المالك.');
     }
 
-    const id = `ben-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-    const ben: InMemoryBeneficiary = {
-      id,
-      userId,
-      beneficiaryName: dto.beneficiaryName,
-      channelCode: dto.channelCode,
-      accountNumber: dto.accountNumber,
-      verificationStatus: BeneficiaryVerificationStatus.VERIFIED, // verified or pending review
-      financeApprovedBy: 'admin-auto',
-      notes: dto.notes || null,
-      createdAt: new Date(),
-    };
-
-    try {
-      await this.prisma.payoutBeneficiary.create({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.payoutBeneficiary.updateMany({
+        where: { id: beneficiaryId, verificationStatus: BeneficiaryVerificationStatus.PENDING_REVIEW },
         data: {
-          id,
-          userId,
-          beneficiaryName: dto.beneficiaryName,
-          channelCode: dto.channelCode,
-          accountNumber: dto.accountNumber,
-          verificationStatus: 'VERIFIED',
-          notes: dto.notes || null,
+          verificationStatus: approved ? BeneficiaryVerificationStatus.VERIFIED : BeneficiaryVerificationStatus.REJECTED,
+          financeApprovedBy: financeUserId,
+          notes: [beneficiary.notes, notes].filter(Boolean).join(' | ') || null,
         },
       });
-    } catch {}
-
-    this.memoryBeneficiaries.set(id, ben);
-    return ben;
-  }
-
-  async listBeneficiaries(userId: string): Promise<InMemoryBeneficiary[]> {
-    this.assertPlatformOwnerContext();
-    try {
-      const dbList = await this.prisma.payoutBeneficiary.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
+      if (changed.count !== 1) throw new ConflictException('تغيرت حالة المستفيد أثناء الاعتماد.');
+      await tx.auditLog.create({
+        data: {
+          userId: financeUserId,
+          action: approved ? 'OWNER_PAYOUT_BENEFICIARY_APPROVED' : 'OWNER_PAYOUT_BENEFICIARY_REJECTED',
+          entityName: 'PayoutBeneficiary',
+          entityId: beneficiaryId,
+          newValues: { approved, notes: notes || null, financeApprovedBy: financeUserId },
+        },
       });
-      if (dbList && dbList.length > 0) {
-        return dbList.map((b) => ({
-          id: b.id,
-          userId: b.userId,
-          beneficiaryName: b.beneficiaryName,
-          channelCode: b.channelCode as PaymentChannelCode,
-          accountNumber: b.accountNumber,
-          verificationStatus: b.verificationStatus as BeneficiaryVerificationStatus,
-          financeApprovedBy: b.financeApprovedBy,
-          notes: b.notes,
-          createdAt: b.createdAt,
-        }));
-      }
-    } catch {}
-
-    return Array.from(this.memoryBeneficiaries.values()).filter((b) => b.userId === userId);
+      return tx.payoutBeneficiary.findUnique({ where: { id: beneficiaryId } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return this.mapBeneficiary(updated);
   }
 
-  /**
-   * 2. Get Owner Statement & Liquidity Breakdown for a currency
-   */
-  async getEarningsStatement(userId: string, currency: CurrencyCode) {
+  async getBeneficiaryForFinance(beneficiaryId: string, financeUserId: string) {
     this.assertPlatformOwnerContext();
-    const key = `${userId}:${currency}`;
-    const wallet = this.memoryWallets.get(key) || {
-      userId,
-      currency,
-      realizedEarnings: 0,
-      lockedEarnings: 0,
-      withdrawnEarnings: 0,
+    const row = await this.prisma.payoutBeneficiary.findUnique({ where: { id: beneficiaryId } });
+    if (!row) throw new NotFoundException('حساب المستفيد غير موجود.');
+    const ownerId = await this.resolvePlatformOwnerId();
+    if (row.userId !== ownerId) throw new ForbiddenException('حساب المستفيد لا ينتمي إلى مالك المنصة.');
+    const secured = await this.ensureBeneficiaryEncrypted(row);
+    if (!String(secured.accountNumber || '').startsWith('v1:')) {
+      throw new ServiceUnavailableException('تعذر فك تشفير حساب المستفيد بأمان.');
+    }
+    const accountNumber = this.encryptionService.decrypt(secured.accountNumber);
+    await this.prisma.auditLog.create({
+      data: {
+        userId: financeUserId,
+        action: 'OWNER_PAYOUT_BENEFICIARY_ACCOUNT_VIEWED',
+        entityName: 'PayoutBeneficiary',
+        entityId: beneficiaryId,
+        newValues: { access: 'FINANCE_ONLY', accountNumberLastFour: accountNumber.slice(-4) },
+      },
+    });
+    return {
+      id: row.id,
+      beneficiaryName: row.beneficiaryName,
+      channelCode: row.channelCode,
+      accountNumber,
+      verificationStatus: row.verificationStatus,
     };
+  }
 
+  async listBeneficiaries(requesterId?: string) {
+    this.assertPlatformOwnerContext();
+    const ownerId = await this.resolvePlatformOwnerId(requesterId);
+    const rows = await this.prisma.payoutBeneficiary.findMany({
+      where: { userId: ownerId },
+      orderBy: { createdAt: 'desc' },
+    });
+    const result = [];
+    for (const row of rows) result.push(this.mapBeneficiary(await this.ensureBeneficiaryEncrypted(row)));
+    return result;
+  }
+
+  async getEarningsStatement(requesterId: string, currency: CurrencyCode) {
+    this.assertPlatformOwnerContext();
+    const userId = await this.resolvePlatformOwnerId(requesterId);
     const metrics = await this.profitEngine.calculateMetricsForCurrency(currency);
 
-    // Strict Liquidity Formula: Free Cash = Actual Cash - Customer Liabilities - Supplier Payables - Operating Reserve
+    // This wallet is a durable projection of posted order-profit snapshots;
+    // it never starts with seeded demo balances.
+    const wallet = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.ownerEarningsWallet.findFirst({
+        where: { userId, currency, tenantId: this.tenantId },
+      });
+      if (existing) {
+        return tx.ownerEarningsWallet.update({
+          where: { id: existing.id },
+          data: { realizedEarnings: new Prisma.Decimal(Math.max(0, metrics.realizedProfit)) },
+        });
+      }
+      return tx.ownerEarningsWallet.create({
+        data: {
+          userId,
+          currency,
+          tenantId: this.tenantId,
+          realizedEarnings: new Prisma.Decimal(Math.max(0, metrics.realizedProfit)),
+          lockedEarnings: new Prisma.Decimal(0),
+          withdrawnEarnings: new Prisma.Decimal(0),
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    const realizedEarnings = Number(wallet.realizedEarnings);
+    const lockedEarnings = Number(wallet.lockedEarnings);
+    const withdrawnEarnings = Number(wallet.withdrawnEarnings);
+    const netEarningsBalance = Math.max(0, realizedEarnings - lockedEarnings - withdrawnEarnings);
     const freeCash = Math.max(
       0,
-      metrics.actualCashBalance -
-        metrics.customerWalletLiabilities -
-        metrics.supplierPayables -
-        metrics.operatingReserve,
+      metrics.actualCashBalance - metrics.customerWalletLiabilities -
+        metrics.supplierPayables - metrics.operatingReserve,
     );
-    // Available for distribution is strictly capped by withdrawable free cash!
-    const netEarningsBalance = Math.max(0, wallet.realizedEarnings - wallet.lockedEarnings - wallet.withdrawnEarnings);
     const availableForPayout = Math.min(netEarningsBalance, freeCash);
-
     return {
       userId,
       currency,
-      realizedEarnings: wallet.realizedEarnings,
-      lockedEarnings: wallet.lockedEarnings,
-      withdrawnEarnings: wallet.withdrawnEarnings,
+      realizedEarnings,
+      lockedEarnings,
+      withdrawnEarnings,
       netEarningsBalance,
       estimatedUnrealizedProfit: metrics.estimatedProfit,
       actualCashBalance: metrics.actualCashBalance,
@@ -249,259 +268,253 @@ export class OwnerEarningsService {
     };
   }
 
-  /**
-   * 3. Owner Payout Request (AT-17 & AT-18)
-   * Enforces:
-   * 1. Idempotency Key
-   * 2. TOTP MFA Code
-   * 3. Available Withdrawable Liquidity
-   * 4. Atomic Hold in lockedEarnings
-   */
+  private async verifyOwnerTotp(userId: string, code: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isTwoFactorEnabled: true, twoFactorSecret: true },
+    });
+    if (!user?.isTwoFactorEnabled || !user.twoFactorSecret) {
+      throw new ForbiddenException('يجب إعداد MFA حقيقي لحساب المالك قبل طلب سحب الأرباح.');
+    }
+    let secret = user.twoFactorSecret;
+    try {
+      if (secret.startsWith('v1:')) secret = this.encryptionService.decrypt(secret);
+    } catch {
+      throw new ServiceUnavailableException('تعذر فك تشفير سر MFA؛ تم إيقاف عملية السحب.');
+    }
+    if (!TotpUtil.verifyCode(code, secret)) {
+      throw new ForbiddenException('رمز MFA غير صحيح أو منتهي الصلاحية.');
+    }
+  }
+
   async requestOwnerPayout(
     userId: string,
     dto: OwnerPayoutRequestDto,
-  ): Promise<{ success: boolean; payout: InMemoryOwnerPayout; message: string }> {
+  ): Promise<{ success: boolean; payout: any; message: string }> {
     this.assertPlatformOwnerContext();
-    // A. Idempotency Check (AT-18)
-    if (!dto.idempotencyKey || dto.idempotencyKey.trim().length === 0) {
-      throw new BadRequestException('مفتاح عدم التكرار (idempotencyKey) مطلوب إجبارياً');
+    if (!dto.idempotencyKey?.trim()) throw new BadRequestException('مفتاح عدم التكرار مطلوب.');
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('مبلغ السحب يجب أن يكون موجباً وصالحاً.');
+
+    const duplicate = await this.prisma.ownerPayoutTransaction.findUnique({
+      where: { idempotencyKey: dto.idempotencyKey },
+    });
+    if (duplicate) {
+      if (duplicate.userId !== userId) throw new ConflictException('مفتاح عدم التكرار يعود إلى حساب آخر.');
+      return { success: true, payout: this.mapPayout(duplicate), message: 'هذا الطلب مسجل مسبقاً.' };
     }
 
-    const existingPayout = Array.from(this.memoryPayouts.values()).find(
-      (p) => p.idempotencyKey === dto.idempotencyKey,
-    );
-    if (existingPayout) {
-      this.logger.warn(`[AT-18 Idempotency] Payout request ${dto.idempotencyKey} already submitted.`);
-      return {
-        success: true,
-        payout: existingPayout,
-        message: 'تم استرجاع طلب السحب المسجل مسبقاً بنجاح (Idempotent Request).',
-      };
+    const ownerId = await this.resolvePlatformOwnerId(userId);
+    if (ownerId !== userId) throw new ForbiddenException('طلب سحب الأرباح متاح لحساب المالك فقط.');
+    await this.verifyOwnerTotp(ownerId, dto.totpCode);
+    const beneficiary = await this.prisma.payoutBeneficiary.findFirst({
+      where: { id: dto.beneficiaryId, userId: ownerId, verificationStatus: BeneficiaryVerificationStatus.VERIFIED },
+    });
+    if (!beneficiary || !String(beneficiary.accountNumber || '').startsWith('v1:')) {
+      throw new BadRequestException('يجب أن يكون حساب المستفيد محمياً وموثقاً باعتماد مالي مستقل.');
     }
 
-    // B. Beneficiary Check
-    const beneficiary = this.memoryBeneficiaries.get(dto.beneficiaryId);
-    if (!beneficiary || beneficiary.userId !== userId) {
-      throw new NotFoundException('حساب المستفيد غير موجود أو لا ينتمي لهذا المستخدم');
-    }
-    if (beneficiary.verificationStatus !== BeneficiaryVerificationStatus.VERIFIED) {
-      throw new BadRequestException('حساب المستفيد لم يتم اعتماده وتوثيقه مالياً بعد');
-    }
-
-    // C. TOTP MFA Check (AT-17)
-    const isTotpValid =
-      TotpUtil.verifyCode(dto.totpCode, this.defaultTotpSecret) || dto.totpCode === '123456';
-    if (!isTotpValid) {
-      throw new ForbiddenException('رمز التحقق بخطوتين (TOTP MFA) غير صحيح أو منتهي الصلاحية');
-    }
-
-    // D. Available Liquidity Check (AT-14 & AT-17)
-    const statement = await this.getEarningsStatement(userId, dto.currency);
-    if (dto.amount <= 0) {
-      throw new BadRequestException('مبلغ السحب يجب أن يكون أكبر من الصفر');
-    }
+    const statement = await this.getEarningsStatement(ownerId, dto.currency);
     if (dto.amount > statement.availableForPayout) {
       throw new BadRequestException(
-        `المبلغ المطلوب (${dto.amount} ${dto.currency}) يتجاوز الرصيد النقدي القابل للتوزيع المتاح حالياً (${statement.availableForPayout} ${dto.currency}) بعد خصم التزامات العملاء والمزودين واحتياطي التشغيل.`,
+        'المبلغ يتجاوز الأرباح المحققة والسيولة القابلة للتوزيع (' +
+        statement.availableForPayout + ' ' + dto.currency + ').',
       );
     }
 
-    // E. Atomic Lock
-    const key = `${userId}:${dto.currency}`;
-    const wallet = this.memoryWallets.get(key)!;
-    wallet.lockedEarnings += dto.amount;
-
-    const payoutNumber = `OPO-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-    const payoutRecord: InMemoryOwnerPayout = {
-      id: `payout-${Date.now()}`,
-      payoutNumber,
-      userId,
-      beneficiaryId: dto.beneficiaryId,
-      currency: dto.currency,
-      amount: dto.amount,
-      status: OwnerPayoutStatus.REQUESTED,
-      idempotencyKey: dto.idempotencyKey,
-      approvedByUserId: null,
-      approvalNotes: dto.notes || null,
-      externalReference: null,
-      failureReason: null,
-      ledgerTxId: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    try {
-      await this.prisma.ownerPayoutTransaction.create({
+    const payoutNumber = 'OPO-' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' +
+      Math.floor(1000 + Math.random() * 9000);
+    const id = randomUUID();
+    const row = await this.prisma.$transaction(async (tx) => {
+      const duplicateInside = await tx.ownerPayoutTransaction.findUnique({
+        where: { idempotencyKey: dto.idempotencyKey },
+      });
+      if (duplicateInside) {
+        if (duplicateInside.userId !== ownerId) throw new ConflictException('مفتاح عدم التكرار يعود إلى حساب مالك آخر.');
+        return duplicateInside;
+      }
+      const wallet = await tx.ownerEarningsWallet.findFirst({
+        where: { userId: ownerId, currency: dto.currency, tenantId: this.tenantId },
+      });
+      if (!wallet) throw new BadRequestException('لا يوجد رصيد أرباح مالك مرحّل إلى المحفظة الدائمة لهذه العملة.');
+      const availableLedgerEarnings = new Prisma.Decimal(wallet.realizedEarnings)
+        .sub(wallet.lockedEarnings).sub(wallet.withdrawnEarnings);
+      if (availableLedgerEarnings.lessThan(dto.amount)) throw new BadRequestException('رصيد الأرباح المرحّل غير كافٍ.');
+      const locked = await tx.ownerEarningsWallet.updateMany({
+        where: { id: wallet.id, lockedEarnings: wallet.lockedEarnings },
+        data: { lockedEarnings: { increment: new Prisma.Decimal(dto.amount) } },
+      });
+      if (locked.count !== 1) throw new ConflictException('تغير رصيد أرباح المالك بالتزامن؛ أعد المحاولة.');
+      return tx.ownerPayoutTransaction.create({
         data: {
-          id: payoutRecord.id,
+          id,
           payoutNumber,
-          userId,
-          beneficiaryId: dto.beneficiaryId,
+          userId: ownerId,
+          beneficiaryId: beneficiary.id,
           currency: dto.currency,
-          amount: dto.amount,
-          status: 'REQUESTED',
+          amount: new Prisma.Decimal(dto.amount),
+          status: OwnerPayoutStatus.REQUESTED,
           idempotencyKey: dto.idempotencyKey,
           approvalNotes: dto.notes || null,
         },
       });
-    } catch {}
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-    this.memoryPayouts.set(payoutRecord.id, payoutRecord);
     return {
       success: true,
-      payout: payoutRecord,
-      message: 'تم إنشاء طلب سحب الأرباح بنجاح وحجز المبلغ، بانتظار اعتماد الإدارة المالية.',
+      payout: this.mapPayout(row),
+      message: 'تم حفظ طلب السحب وحجز الأرباح في قاعدة البيانات؛ بانتظار اعتماد مستقل من المالية.',
     };
   }
 
-  /**
-   * 4. Approve Owner Payout by Finance (Four-Eyes Principle - AT-17)
-   */
-  async approveOwnerPayout(
-    payoutId: string,
-    dto: ApproveOwnerPayoutDto,
-    financeUserId: string,
-  ): Promise<InMemoryOwnerPayout> {
+  async approveOwnerPayout(payoutId: string, dto: ApproveOwnerPayoutDto, financeUserId: string) {
     this.assertPlatformOwnerContext();
-    const payout = this.memoryPayouts.get(payoutId);
-    if (!payout) {
-      throw new NotFoundException('طلب السحب غير موجود');
-    }
+    const payout = await this.prisma.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+    if (!payout) throw new NotFoundException('طلب سحب الأرباح غير موجود.');
+    if (payout.status !== OwnerPayoutStatus.REQUESTED) throw new ConflictException('لا يمكن اعتماد طلب بحالة ' + payout.status + '.');
+    if (payout.userId === financeUserId) throw new ForbiddenException('مبدأ الرقابة الثنائية يمنع اعتماد المالك لطلبه.');
 
-    if (payout.status !== OwnerPayoutStatus.REQUESTED) {
-      throw new BadRequestException(`لا يمكن اعتماد طلب في حالة ${payout.status}`);
-    }
-
-    if (dto.approved) {
-      payout.status = OwnerPayoutStatus.APPROVED;
-      payout.approvedByUserId = financeUserId;
-      payout.approvalNotes = dto.financeNotes || 'تمت موافقة الإدارة المالية';
-      payout.updatedAt = new Date();
-    } else {
-      // Reject and release hold
-      payout.status = OwnerPayoutStatus.FAILED;
-      payout.failureReason = dto.financeNotes || 'تم رفض طلب السحب من الإدارة المالية';
-      payout.updatedAt = new Date();
-
-      // Release hold
-      const key = `${payout.userId}:${payout.currency}`;
-      const wallet = this.memoryWallets.get(key);
-      if (wallet) {
-        wallet.lockedEarnings = Math.max(0, wallet.lockedEarnings - payout.amount);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.ownerPayoutTransaction.updateMany({
+        where: { id: payoutId, status: OwnerPayoutStatus.REQUESTED },
+        data: dto.approved
+          ? { status: OwnerPayoutStatus.APPROVED, approvedByUserId: financeUserId, approvalNotes: dto.financeNotes || 'اعتماد مالي مستقل.' }
+          : { status: OwnerPayoutStatus.FAILED, approvedByUserId: financeUserId, failureReason: dto.financeNotes || 'رفض مالي.' },
+      });
+      if (changed.count !== 1) throw new ConflictException('تغيرت حالة طلب السحب بالتزامن.');
+      if (!dto.approved) {
+        const released = await tx.ownerEarningsWallet.updateMany({
+          where: { userId: payout.userId, currency: payout.currency, tenantId: this.tenantId, lockedEarnings: { gte: payout.amount } },
+          data: { lockedEarnings: { decrement: payout.amount } },
+        });
+        if (released.count !== 1) throw new ServiceUnavailableException('تعذر تحرير حجز الأرباح؛ يلزم تدخل مالي.');
       }
-    }
-
-    return payout;
+      await tx.auditLog.create({
+        data: {
+          userId: financeUserId,
+          action: dto.approved ? 'OWNER_PAYOUT_APPROVED' : 'OWNER_PAYOUT_REJECTED',
+          entityName: 'OwnerPayoutTransaction',
+          entityId: payoutId,
+          newValues: { approved: dto.approved, financeNotes: dto.financeNotes || null },
+        },
+      });
+      return tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId }, include: { beneficiary: true } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return this.mapPayout(updated);
   }
 
-  /**
-   * 5. Confirm External Wire / Transfer & Post Balanced Ledger Entry (AT-17)
-   */
-  async confirmExternalTransfer(
-    payoutId: string,
-    externalRef: string,
-    financeUserId: string,
-  ): Promise<InMemoryOwnerPayout> {
+  async confirmExternalTransfer(payoutId: string, externalRef: string, financeUserId: string) {
     this.assertPlatformOwnerContext();
-    const payout = this.memoryPayouts.get(payoutId);
-    if (!payout) {
-      throw new NotFoundException('طلب السحب غير موجود');
-    }
+    if (!externalRef?.trim() || externalRef.trim().length < 5) throw new BadRequestException('مرجع التحويل الخارجي الرسمي مطلوب.');
+    const payout = await this.prisma.ownerPayoutTransaction.findUnique({
+      where: { id: payoutId },
+      include: { beneficiary: true },
+    });
+    if (!payout) throw new NotFoundException('طلب السحب غير موجود.');
+    if (payout.status !== OwnerPayoutStatus.APPROVED) throw new ConflictException('لا يمكن تأكيد تحويل لم يحصل على موافقة مالية مستقلة.');
+    if (payout.approvedByUserId === financeUserId) throw new ForbiddenException('يجب أن يكون منفذ/مؤكد التحويل مختلفاً عن صاحب الموافقة.');
+    const beneficiaryChannel = payout.beneficiary.channelCode as PaymentChannelCode;
+    const cashAccountCode = payout.currency === CurrencyCode.YER
+      ? this.ledgerService.getChannelAccountCode(beneficiaryChannel, payout.currency as CurrencyCode)
+      : this.ledgerService.getBankCashAccountCode(payout.currency as CurrencyCode);
 
-    if (payout.status === OwnerPayoutStatus.CONFIRMED) {
-      return payout;
-    }
-
-    if (!externalRef || externalRef.trim().length === 0) {
-      throw new BadRequestException('رقم مرجع/إشعار التحويل البنكي الخارجي مطلوب إجبارياً لإثبات الصرف');
-    }
-
-    // 1. Double-Entry Balanced Ledger Entry
-    let ledgerTxId = `LTX-DIST-${Date.now()}`;
-    try {
-      const tx = await this.ledgerService.recordDoubleEntryTransaction({
-        txNumber: `TX-PAYOUT-${payout.payoutNumber || Date.now()}`,
+    const scopedCashAccountCode = this.ledgerService.scopeAccountCode(cashAccountCode);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+      if (!current || current.status !== OwnerPayoutStatus.APPROVED) throw new ConflictException('تغيرت حالة طلب السحب.');
+      const cashAccount = await tx.ledgerAccount.findFirst({
+        where: { code: scopedCashAccountCode, currency: current.currency, type: 'ASSET' },
+      });
+      if (!cashAccount) {
+        throw new BadRequestException(
+          'حساب النقد/المحفظة المختار غير موجود في دليل الحسابات لهذه العملة؛ لم يتم ترحيل السحب.',
+        );
+      }
+      const ledger = await this.ledgerService.recordDoubleEntryTransaction({
+        txNumber: 'TX-OWNER-PAYOUT-' + current.payoutNumber,
         type: LedgerTransactionType.ADJUSTMENT,
         referenceType: 'OWNER_PAYOUT',
-        referenceId: payout.id,
-        idempotencyKey: `LEDGER-DIST-${payout.idempotencyKey}`,
-        notes: `صرف أرباح المالك بموجب حوالة رقم ${externalRef}`,
+        referenceId: current.id,
+        idempotencyKey: 'OWNER-PAYOUT-SETTLE-' + current.idempotencyKey,
+        notes: 'صرف أرباح المالك بمرجع تحويل ' + externalRef.trim(),
         createdByUserId: financeUserId,
         entries: [
           {
             accountCode: '3100-RETAINED_EARNINGS',
-            currency: payout.currency,
-            debitAmount: payout.amount,
+            currency: current.currency as CurrencyCode,
+            debitAmount: Number(current.amount),
             creditAmount: 0,
-            notes: `توزيع أرباح بموجب طلب رقم ${payout.payoutNumber}`,
+            notes: 'توزيع أرباح بموجب ' + current.payoutNumber,
           },
           {
-            accountCode: '1110-CASH',
-            currency: payout.currency,
+            accountCode: cashAccountCode,
+            currency: current.currency as CurrencyCode,
             debitAmount: 0,
-            creditAmount: payout.amount,
-            notes: `صرف نقدي خارجي للمالك مرجع ${externalRef}`,
+            creditAmount: Number(current.amount),
+            notes: 'صرف نقدي خارجي مرجع ' + externalRef.trim(),
           },
         ],
+      }, tx);
+      const ledgerId = ledger?.transaction?.id || ledger?.transaction?.txNumber;
+      if (!ledgerId) throw new ServiceUnavailableException('تعذر الحصول على معرف قيد دفتر الأستاذ.');
+      const released = await tx.ownerEarningsWallet.updateMany({
+        where: { userId: current.userId, currency: current.currency, tenantId: this.tenantId, lockedEarnings: { gte: current.amount } },
+        data: {
+          lockedEarnings: { decrement: current.amount },
+          withdrawnEarnings: { increment: current.amount },
+        },
       });
-      if (tx?.transaction?.txNumber) {
-        ledgerTxId = tx.transaction.txNumber;
-      }
-    } catch (err: any) {
-      this.logger.warn(`Ledger recording simulated for owner payout: ${err?.message}`);
-    }
-
-    // 2. Update wallet
-    const key = `${payout.userId}:${payout.currency}`;
-    const wallet = this.memoryWallets.get(key);
-    if (wallet) {
-      wallet.lockedEarnings = Math.max(0, wallet.lockedEarnings - payout.amount);
-      wallet.withdrawnEarnings += payout.amount;
-    }
-
-    // 3. Mark CONFIRMED
-    payout.status = OwnerPayoutStatus.CONFIRMED;
-    payout.externalReference = externalRef;
-    payout.ledgerTxId = ledgerTxId;
-    payout.updatedAt = new Date();
-
-    return payout;
+      if (released.count !== 1) throw new ServiceUnavailableException('تعذر تحديث محفظة أرباح المالك؛ أُلغيت المعاملة كلها.');
+      const saved = await tx.ownerPayoutTransaction.update({
+        where: { id: payoutId },
+        data: {
+          status: OwnerPayoutStatus.CONFIRMED,
+          externalReference: externalRef.trim(),
+          ledgerTxId: String(ledgerId),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: financeUserId,
+          action: 'OWNER_PAYOUT_TRANSFER_CONFIRMED',
+          entityName: 'OwnerPayoutTransaction',
+          entityId: payoutId,
+          newValues: { externalReference: externalRef.trim(), ledgerTxId: String(ledgerId) },
+        },
+      });
+      return saved;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return this.mapPayout(updated);
   }
 
-  /**
-   * 6. Fail Payout & Release Hold (AT-18 Hold Release)
-   */
-  async failPayout(payoutId: string, reason: string): Promise<InMemoryOwnerPayout> {
+  async failPayout(payoutId: string, reason: string) {
     this.assertPlatformOwnerContext();
-    const payout = this.memoryPayouts.get(payoutId);
-    if (!payout) {
-      throw new NotFoundException('طلب السحب غير موجود');
+    const payout = await this.prisma.ownerPayoutTransaction.findUnique({ where: { id: payoutId } });
+    if (!payout) throw new NotFoundException('طلب السحب غير موجود.');
+    if (payout.status !== OwnerPayoutStatus.REQUESTED) {
+      throw new ConflictException('لا يمكن تحرير الأرباح بعد اعتماد التحويل؛ يجب أن تمر الإلغاء بعد الاعتماد بمسار مراجعة مالية مستقل.');
     }
-
-    if (payout.status === OwnerPayoutStatus.CONFIRMED) {
-      throw new BadRequestException('لا يمكن إلغاء سحب تم تأكيده وترحيله محاسبياً');
-    }
-
-    // Hold Release: Unlocks locked earnings
-    const key = `${payout.userId}:${payout.currency}`;
-    const wallet = this.memoryWallets.get(key);
-    if (wallet) {
-      wallet.lockedEarnings = Math.max(0, wallet.lockedEarnings - payout.amount);
-    }
-
-    payout.status = OwnerPayoutStatus.FAILED;
-    payout.failureReason = reason;
-    payout.updatedAt = new Date();
-
-    return payout;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.ownerEarningsWallet.updateMany({
+        where: { userId: payout.userId, currency: payout.currency, tenantId: this.tenantId, lockedEarnings: { gte: payout.amount } },
+        data: { lockedEarnings: { decrement: payout.amount } },
+      });
+      if (wallet.count !== 1) throw new ServiceUnavailableException('تعذر تحرير حجز أرباح المالك.');
+      return tx.ownerPayoutTransaction.update({
+        where: { id: payoutId },
+        data: { status: OwnerPayoutStatus.FAILED, failureReason: reason || 'تعذر تنفيذ التحويل.' },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return this.mapPayout(updated);
   }
 
-  async listOwnerPayouts(userId?: string): Promise<InMemoryOwnerPayout[]> {
+  async listOwnerPayouts(userId?: string) {
     this.assertPlatformOwnerContext();
-    const list = Array.from(this.memoryPayouts.values());
-    if (userId) {
-      return list.filter((p) => p.userId === userId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    }
-    return list.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const ownerId = await this.resolvePlatformOwnerId(userId);
+    const rows = await this.prisma.ownerPayoutTransaction.findMany({
+      where: { userId: ownerId },
+      include: { beneficiary: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((row) => this.mapPayout(row));
   }
 }

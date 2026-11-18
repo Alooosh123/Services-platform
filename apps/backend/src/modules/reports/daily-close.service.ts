@@ -51,9 +51,7 @@ export class DailyCloseService {
     private prisma: PrismaService,
     private profitEngine: ProfitEngineService,
     private ledgerService: LedgerService,
-  ) {
-    this.seedDefaultCloseReports();
-  }
+  ) {}
 
   clearMemoryReports() {
     this.memoryReports.clear();

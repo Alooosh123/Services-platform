@@ -3,7 +3,8 @@ import { FulfillmentService } from './fulfillment.service';
 import { PrismaService } from '../../database/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { ProvidersService } from './providers.service';
-import { OrderStatus, CurrencyCode } from '@digital-topup/shared';
+import { SupplierBalanceService } from './supplier-balance.service';
+import { OrderStatus, CurrencyCode, SupplierAccountType } from '@digital-topup/shared';
 import { Prisma } from '@prisma/client';
 
 describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
@@ -37,6 +38,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
     order: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     wallet: {
       findUnique: jest.fn(),
@@ -48,7 +50,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
   };
 
   const mockLedgerService = {
-    recordOrderSettlement: jest.fn(),
+    recordOrderSettlement: jest.fn().mockResolvedValue({ transaction: { id: 'ledger-settlement-1', txNumber: 'LTX-SETTLEMENT-1' } }),
     releaseWalletHold: jest.fn(),
     recordOrderRefund: jest.fn(),
     recordAgentCommission: jest.fn(),
@@ -62,6 +64,21 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
   const mockProvidersService = {
     getAdapter: jest.fn().mockReturnValue(mockAdapter),
   };
+  const mockSupplierBalanceService = {
+    checkFulfillmentGating: jest.fn().mockResolvedValue({
+      allowed: true,
+      availableBalance: 100000,
+      requiredAmount: 100,
+      accountType: SupplierAccountType.PREPAID,
+    }),
+    deductOrderFulfillmentCost: jest.fn().mockResolvedValue({ success: true, newBalance: 99985 }),
+    getSupplierBalance: jest.fn().mockResolvedValue({
+      balance: 100000,
+      creditLimit: 0,
+      available: 100000,
+      accountType: SupplierAccountType.PREPAID,
+    }),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -72,6 +89,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: LedgerService, useValue: mockLedgerService },
         { provide: ProvidersService, useValue: mockProvidersService },
+        { provide: SupplierBalanceService, useValue: mockSupplierBalanceService },
       ],
     }).compile();
 
@@ -80,7 +98,9 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
 
   describe('dispatchOrder', () => {
     it('1. should complete order and settle ledger on provider success', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockAdapter.submitOrder.mockResolvedValue({
         status: 'SUCCESS',
         success: true,
@@ -103,14 +123,17 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       expect(mockLedgerService.recordOrderSettlement).toHaveBeenCalledWith(
         expect.objectContaining({
           orderId: mockOrder.orderNumber,
-          retailPrice: 550,
-          costPrice: 495,
+          retailPrice: '550',
+          costPrice: '495',
         }),
+        expect.anything(),
       );
     });
 
     it('2. should mark order failed and release balance hold on provider rejection', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
+      mockPrisma.order.findUnique
+        .mockResolvedValueOnce(mockOrder)
+        .mockResolvedValue({ ...mockOrder, status: OrderStatus.Processing });
       mockAdapter.submitOrder.mockResolvedValue({
         status: 'FAILED',
         success: false,
@@ -128,7 +151,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           }),
         }),
       );
-      expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith('wallet-yer-1', 550);
+      expect(mockLedgerService.releaseWalletHold).toHaveBeenCalledWith('wallet-yer-1', '550', expect.anything());
     });
 
     it('3. should move order to ManualReview and preserve balance hold on timeout', async () => {
@@ -154,7 +177,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       };
       mockPrisma.order.findUnique
         .mockResolvedValueOnce(commissionOrder)
-        .mockResolvedValueOnce(commissionOrder);
+        .mockResolvedValue({ ...commissionOrder, status: OrderStatus.Processing });
       mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'reseller-wallet-1' });
       mockAdapter.submitOrder.mockResolvedValue({
         status: 'SUCCESS',
@@ -169,7 +192,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           parentAgentId: 'reseller-1',
           orderId: commissionOrder.orderNumber,
           walletId: 'reseller-wallet-1',
-          amount: 5,
+          amount: '5',
         }),
       );
     });
@@ -177,15 +200,10 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
 
   describe('fulfillManualOrder', () => {
     it('4. should fulfill order manually, record proof, and settle ledger', async () => {
-      mockPrisma.order.findUnique
-        .mockResolvedValueOnce({
-          ...mockOrder,
-          status: OrderStatus.ManualReview,
-        })
-        .mockResolvedValueOnce({
-          ...mockOrder,
-          status: OrderStatus.Completed,
-        });
+      mockPrisma.order.findUnique.mockResolvedValue({
+        ...mockOrder,
+        status: OrderStatus.ManualReview,
+      });
 
       await service.fulfillManualOrder('staff-op-1', 'ord-test-1', {
         voucherCode: 'MANUAL-PIN-5544',
@@ -193,12 +211,19 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
         operatorNotes: 'تم التسليم بالاتصال مع الموزع',
       });
 
-      expect(mockPrisma.order.update).toHaveBeenCalledWith(
+      expect(mockPrisma.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: 'ord-test-1', status: OrderStatus.ManualReview },
           data: expect.objectContaining({
             status: OrderStatus.Completed,
             voucherCode: 'MANUAL-PIN-5544',
           }),
+        }),
+      );
+      expect(mockPrisma.manualFulfillment.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { orderId: 'ord-test-1' },
+          create: expect.objectContaining({ proofVoucherCode: 'MANUAL-PIN-5544' }),
         }),
       );
       expect(mockLedgerService.recordOrderSettlement).toHaveBeenCalledWith(
@@ -206,6 +231,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
           orderId: mockOrder.orderNumber,
           providerCode: 'MANUAL',
         }),
+        expect.anything(),
       );
     });
   });
@@ -224,7 +250,7 @@ describe('FulfillmentService (Phase 3 — Reliable Queue & Settlement)', () => {
       expect(mockLedgerService.recordOrderRefund).toHaveBeenCalledWith(
         expect.objectContaining({
           orderId: mockOrder.orderNumber,
-          amount: 550,
+          amount: '550',
           reason: 'استرجاع بناء على شكوى العميل',
         }),
       );

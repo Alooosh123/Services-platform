@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { DepositsService } from './deposits.service';
 import { DepositsController } from './deposits.controller';
 import { AdminDepositsController } from './admin-deposits.controller';
+import { WalletAgentOperationsService } from './wallet-agent-operations.service';
+import { WalletAgentOperationsController } from './wallet-agent-operations.controller';
 import {
   PaymentAdapterRegistry,
   JaibPaymentAdapter,
@@ -13,12 +15,17 @@ import {
 } from './adapters/yemen-payment.adapters';
 import { LedgerModule } from '../ledger/ledger.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { EncryptionService } from '../../security/encryption.service';
+import { PaymentSenderAccountsService } from './payment-sender-accounts.service';
 
 @Module({
   imports: [LedgerModule, WalletModule],
-  controllers: [DepositsController, AdminDepositsController],
+  controllers: [DepositsController, AdminDepositsController, WalletAgentOperationsController],
   providers: [
     DepositsService,
+    WalletAgentOperationsService,
+    PaymentSenderAccountsService,
+    EncryptionService,
     PaymentAdapterRegistry,
     JaibPaymentAdapter,
     JawaliPaymentAdapter,
@@ -27,6 +34,6 @@ import { WalletModule } from '../wallet/wallet.module';
     EasyPaymentAdapter,
     SandboxPaymentAdapter,
   ],
-  exports: [DepositsService, PaymentAdapterRegistry],
+  exports: [DepositsService, PaymentAdapterRegistry, WalletAgentOperationsService],
 })
 export class DepositsModule {}

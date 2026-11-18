@@ -19,6 +19,9 @@ npm-debug.log*
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
 
+# Local run outputs, database backups and logs
+.local-run/
+
 # Editors and operating system files
 .idea/
 .DS_Store

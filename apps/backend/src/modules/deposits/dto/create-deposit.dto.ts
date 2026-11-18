@@ -4,12 +4,13 @@ import {
   IsEnum,
   IsString,
   IsOptional,
+  IsUUID,
   Min,
   Max,
   MaxLength,
   Matches,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CurrencyCode, PaymentChannelCode } from '@digital-topup/shared';
 
 export class CreateDepositDto {
@@ -34,12 +35,17 @@ export class CreateDepositDto {
   @IsEnum(PaymentChannelCode, { message: 'قناة دفع غير معتمدة' })
   paymentMethodCode: PaymentChannelCode;
 
-  @ApiProperty({ example: 'REF-JAIB-123456', description: 'الرقم المرجعي أو رقم الحوالة' })
-  @IsNotEmpty({ message: 'الرقم المرجعي للعملية مطلوب' })
+  @ApiPropertyOptional({ example: 'REF-JAIB-123456', description: 'الرقم المرجعي إن كان متاحاً؛ يمكن للوكيل مطابقته من سجل الحركة' })
+  @IsOptional()
   @IsString()
   @MaxLength(128)
   @Matches(/^[A-Za-z0-9._/-]+$/, { message: 'الرقم المرجعي يحتوي على محارف غير صالحة' })
-  referenceNumber: string;
+  referenceNumber?: string;
+
+  @ApiPropertyOptional({ description: 'المعرّف المحفوظ لحساب الإرسال الخاص بالعميل على هذه القناة' })
+  @IsOptional()
+  @IsUUID()
+  senderAccountId?: string;
 
   @ApiProperty({
     example: '/images/proofs/receipt.jpg',

@@ -13,8 +13,9 @@ import {
   PaymentChannelCode,
   DoubleEntryItem,
   DoubleEntryTransactionPayload,
+  MonetaryInput,
 } from '@digital-topup/shared';
-import { Prisma } from '@prisma/client';
+import { Prisma, SupplierAccountType } from '@prisma/client';
 import { AdminBalanceAdjustmentDto } from './dto/ledger-adjustment.dto';
 import { getCurrentTenantId } from '../../tenant/tenant-context.store';
 
@@ -24,6 +25,29 @@ export class LedgerService {
 
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Parse monetary inputs without passing persisted Decimal values through
+   * JavaScript floating-point arithmetic. Database amounts use DECIMAL(18,4).
+   */
+  private toMoneyDecimal(value: MonetaryInput, label: string): Prisma.Decimal {
+    let amount: Prisma.Decimal;
+    try {
+      amount = new Prisma.Decimal(value);
+    } catch {
+      throw new BadRequestException(`${label} is not a valid decimal amount.`);
+    }
+
+    if (
+      !amount.isFinite() ||
+      amount.isNegative() ||
+      amount.decimalPlaces() > 4 ||
+      amount.greaterThan('99999999999999.9999')
+    ) {
+      throw new BadRequestException(`${label} must be non-negative and fit DECIMAL(18,4).`);
+    }
+    return amount;
+  }
+
   private scopeTenantKey(value: string): string {
     const tenantId = getCurrentTenantId();
     if (!tenantId) return value;
@@ -31,7 +55,7 @@ export class LedgerService {
     return value.startsWith(prefix) ? value : `${prefix}${value}`;
   }
 
-  private scopeAccountCode(value: string): string {
+  scopeAccountCode(value: string): string {
     return this.scopeTenantKey(value);
   }
 
@@ -65,25 +89,29 @@ export class LedgerService {
       throw new BadRequestException('A double-entry transaction must have at least 2 entries.');
     }
 
-    // Check sum of debits == sum of credits per currency
+    // Parse once as Decimal; never round-trip posted monetary values through Number.
+    const decimalEntries = payload.entries.map((item, index) => {
+      const debit = this.toMoneyDecimal(item.debitAmount ?? 0, `entries[${index}].debitAmount`);
+      const credit = this.toMoneyDecimal(item.creditAmount ?? 0, `entries[${index}].creditAmount`);
+      if (debit.greaterThan(0) && credit.greaterThan(0)) {
+        throw new BadRequestException('Ledger entry amounts must be one-sided.');
+      }
+      return { item, debit, credit };
+    });
+
+    // Check sum of debits == sum of credits per currency with exact Decimal arithmetic.
     const balancesByCurrency = new Map<
       CurrencyCode,
       { debit: Prisma.Decimal; credit: Prisma.Decimal }
     >();
-    for (const entry of payload.entries) {
-      const debit = Number(entry.debitAmount || 0);
-      const credit = Number(entry.creditAmount || 0);
-      if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || (debit > 0 && credit > 0)) {
-        throw new BadRequestException('Ledger entry amounts must be finite, non-negative, and one-sided.');
-      }
-      const cur = entry.currency;
-      const current = balancesByCurrency.get(cur) || {
+    for (const { item, debit, credit } of decimalEntries) {
+      const current = balancesByCurrency.get(item.currency) || {
         debit: new Prisma.Decimal(0),
         credit: new Prisma.Decimal(0),
       };
       current.debit = current.debit.add(debit);
       current.credit = current.credit.add(credit);
-      balancesByCurrency.set(cur, current);
+      balancesByCurrency.set(item.currency, current);
     }
 
     for (const [cur, totals] of balancesByCurrency.entries()) {
@@ -127,7 +155,7 @@ export class LedgerService {
       });
 
       // 2. Insert Entries and apply balance updates to customer wallets if linked
-      for (const item of payload.entries) {
+      for (const { item, debit: debitDec, credit: creditDec } of decimalEntries) {
         // Resolve account
         const scopedAccountCode = this.scopeAccountCode(item.accountCode);
         let account = await tx.ledgerAccount.findUnique({
@@ -155,9 +183,6 @@ export class LedgerService {
             },
           });
         }
-
-        const debitDec = new Prisma.Decimal(item.debitAmount || 0);
-        const creditDec = new Prisma.Decimal(item.creditAmount || 0);
 
         await tx.ledgerEntry.create({
           data: {
@@ -264,8 +289,8 @@ export class LedgerService {
       const invertedEntries: DoubleEntryItem[] = originalTx.entries.map((entry) => ({
         accountCode: entry.account.code,
         walletId: entry.walletId || undefined,
-        debitAmount: Number(entry.creditAmount), // Invert
-        creditAmount: Number(entry.debitAmount), // Invert
+        debitAmount: entry.creditAmount.toString(), // Invert exactly
+        creditAmount: entry.debitAmount.toString(), // Invert exactly
         currency: entry.currency as CurrencyCode,
         notes: `Reversal of entry ${entry.id}: ${reason}`,
       }));
@@ -307,20 +332,17 @@ export class LedgerService {
     userId: string;
     walletId: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
     paymentChannel: PaymentChannelCode;
     referenceId: string;
     performedByUserId?: string;
     notes?: string;
   }, existingTx?: Prisma.TransactionClient) {
-    let clearingAccountCode = '1001-CASH-JAIB';
-    if (params.paymentChannel === PaymentChannelCode.JAIB) clearingAccountCode = '1001-CASH-JAIB';
-    else if (params.paymentChannel === PaymentChannelCode.JAWALI) clearingAccountCode = '1002-CASH-JAWALI';
-    else if (params.paymentChannel === PaymentChannelCode.CASH) clearingAccountCode = '1003-CASH-SABA';
-    else if (params.paymentChannel === PaymentChannelCode.ONE_CASH) clearingAccountCode = '1004-CASH-ONECASH';
-    else if (params.paymentChannel === PaymentChannelCode.EASY) clearingAccountCode = '1005-CASH-EASY';
-    else if (params.currency === CurrencyCode.USD) clearingAccountCode = '1010-CLEARING-USD';
-    else if (params.currency === CurrencyCode.SAR) clearingAccountCode = '1011-CLEARING-SAR';
+    const amount = this.toMoneyDecimal(params.amount, 'Top-up amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Top-up amount must be greater than zero.');
+    }
+    const clearingAccountCode = this.getChannelAccountCode(params.paymentChannel, params.currency);
 
     const customerAccountCode =
       params.currency === CurrencyCode.YER
@@ -340,16 +362,16 @@ export class LedgerService {
       entries: [
         {
           accountCode: clearingAccountCode,
-          debitAmount: params.amount,
-          creditAmount: 0,
+          debitAmount: amount.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Funds received through ${params.paymentChannel}`,
         },
         {
           accountCode: customerAccountCode,
           walletId: params.walletId,
-          debitAmount: 0,
-          creditAmount: params.amount,
+          debitAmount: '0',
+          creditAmount: amount.toString(),
           currency: params.currency,
           notes: `Customer balance credited`,
         },
@@ -361,42 +383,39 @@ export class LedgerService {
     userId: string;
     walletId: string;
     currency: CurrencyCode;
-    amount: number;
-    feeAmount: number;
+    amount: MonetaryInput;
+    feeAmount: MonetaryInput;
     paymentChannel: PaymentChannelCode;
     referenceId: string;
   }, existingTx: Prisma.TransactionClient) {
-    if (
-      !Number.isFinite(params.amount) ||
-      !Number.isFinite(params.feeAmount) ||
-      params.amount <= 0 ||
-      params.feeAmount < 0
-    ) {
-      throw new BadRequestException('Gateway top-up amount or fee is invalid.');
+    const amount = this.toMoneyDecimal(params.amount, 'Gateway top-up amount');
+    const feeAmount = this.toMoneyDecimal(params.feeAmount, 'Gateway fee amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Gateway top-up amount must be greater than zero.');
     }
     const clearingCode = this.getChannelAccountCode(params.paymentChannel, params.currency);
     const entries: DoubleEntryItem[] = [
       {
         accountCode: clearingCode,
-        debitAmount: params.amount + params.feeAmount,
-        creditAmount: 0,
+        debitAmount: amount.plus(feeAmount).toString(),
+        creditAmount: '0',
         currency: params.currency,
         notes: `Gateway funds received for payment ${params.referenceId}`,
       },
       {
         accountCode: this.getCustomerAccountCode(params.currency),
         walletId: params.walletId,
-        debitAmount: 0,
-        creditAmount: params.amount,
+        debitAmount: '0',
+        creditAmount: amount.toString(),
         currency: params.currency,
         notes: `Wallet top-up credited for payment ${params.referenceId}`,
       },
     ];
-    if (params.feeAmount > 0) {
+    if (feeAmount.greaterThan(0)) {
       entries.push({
         accountCode: this.getRevenueAccountCode(params.currency),
-        debitAmount: 0,
-        creditAmount: params.feeAmount,
+        debitAmount: '0',
+        creditAmount: feeAmount.toString(),
         currency: params.currency,
         notes: `Payment gateway fee retained for ${params.referenceId}`,
       });
@@ -443,13 +462,15 @@ export class LedgerService {
   }
 
   getChannelAccountCode(channel: PaymentChannelCode, currency: CurrencyCode): string {
+    // Currency clearing accounts take precedence so a foreign-currency deposit
+    // never posts to a YER wallet-channel cash account.
+    if (currency === CurrencyCode.USD) return '1010-CLEARING-USD';
+    if (currency === CurrencyCode.SAR) return '1011-CLEARING-SAR';
     if (channel === PaymentChannelCode.JAIB) return '1001-CASH-JAIB';
     if (channel === PaymentChannelCode.JAWALI) return '1002-CASH-JAWALI';
     if (channel === PaymentChannelCode.CASH) return '1003-CASH-SABA';
     if (channel === PaymentChannelCode.ONE_CASH) return '1004-CASH-ONECASH';
     if (channel === PaymentChannelCode.EASY) return '1005-CASH-EASY';
-    if (currency === CurrencyCode.USD) return '1010-CLEARING-USD';
-    if (currency === CurrencyCode.SAR) return '1011-CLEARING-SAR';
     return '1001-CASH-JAIB';
   }
 
@@ -467,12 +488,16 @@ export class LedgerService {
   async recordSupplierFunding(params: {
     providerCode: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
     referenceNumber: string;
     channelCode?: PaymentChannelCode;
     performedByUserId?: string;
     notes?: string;
   }, existingTx?: Prisma.TransactionClient) {
+    const amount = this.toMoneyDecimal(params.amount, 'Supplier funding amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Supplier funding amount must be greater than zero.');
+    }
     const prepaidAccountCode = this.getSupplierPrepaidAccountCode(params.currency);
     const channelAccountCode = params.channelCode
       ? this.getChannelAccountCode(params.channelCode, params.currency)
@@ -491,15 +516,15 @@ export class LedgerService {
       entries: [
         {
           accountCode: prepaidAccountCode,
-          debitAmount: params.amount,
-          creditAmount: 0,
+          debitAmount: amount.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Debit supplier prepaid asset (${params.providerCode})`,
         },
         {
           accountCode: channelAccountCode,
-          debitAmount: 0,
-          creditAmount: params.amount,
+          debitAmount: '0',
+          creditAmount: amount.toString(),
           currency: params.currency,
           notes: `Credit cash/bank account for provider funding`,
         },
@@ -512,10 +537,11 @@ export class LedgerService {
     orderId: string;
     walletId: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
   }) {
-    if (!Number.isFinite(params.amount) || params.amount <= 0) {
-      throw new BadRequestException('Agent commission must be a positive finite amount.');
+    const amount = this.toMoneyDecimal(params.amount, 'Agent commission');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Agent commission must be greater than zero.');
     }
     return this.recordDoubleEntryTransaction({
       txNumber: `LTX-AGENT-${params.orderId}`,
@@ -527,16 +553,16 @@ export class LedgerService {
       entries: [
         {
           accountCode: `5004-AGENT-COMMISSION-${params.currency}`,
-          debitAmount: params.amount,
-          creditAmount: 0,
+          debitAmount: amount.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Commission expense for reseller ${params.parentAgentId}`,
         },
         {
           accountCode: this.getCustomerAccountCode(params.currency),
           walletId: params.walletId,
-          debitAmount: 0,
-          creditAmount: params.amount,
+          debitAmount: '0',
+          creditAmount: amount.toString(),
           currency: params.currency,
           notes: `Commission credited for order ${params.orderId}`,
         },
@@ -575,20 +601,21 @@ export class LedgerService {
     userId: string;
     walletId?: string;
     currency: CurrencyCode;
-    amount: number;
+    amount: MonetaryInput;
     channelCode: PaymentChannelCode;
     destinationAccount: string;
     performedByUserId?: string;
     notes?: string;
-  }) {
-    if (!Number.isFinite(params.amount) || params.amount <= 0) {
-      throw new BadRequestException('Payout amount must be a positive finite number.');
+  }, existingTx?: Prisma.TransactionClient) {
+    const amount = this.toMoneyDecimal(params.amount, 'Payout amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Payout amount must be greater than zero.');
     }
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const channelAccountCode = this.getChannelAccountCode(params.channelCode, params.currency);
     const txNumber = `LTX-PO-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const execute = async (tx: Prisma.TransactionClient) => {
       const existing = await tx.ledgerTransaction.findUnique({
         where: { idempotencyKey: `PO-SETTLE-${params.payoutNumber}` },
         include: { entries: true },
@@ -603,7 +630,7 @@ export class LedgerService {
         if (!wallet) {
           throw new NotFoundException(`Wallet ${params.walletId} not found`);
         }
-        await this.releaseWalletHold(params.walletId, params.amount, tx);
+        await this.releaseWalletHold(params.walletId, amount.toString(), tx);
       }
 
       return this.recordDoubleEntryTransaction(
@@ -619,15 +646,15 @@ export class LedgerService {
             {
               accountCode: customerAccountCode,
               walletId: params.walletId,
-              debitAmount: params.amount,
-              creditAmount: 0,
+              debitAmount: amount.toString(),
+              creditAmount: '0',
               currency: params.currency,
               notes: `Debit customer liability (payout ${params.payoutNumber})`,
             },
             {
               accountCode: channelAccountCode,
-              debitAmount: 0,
-              creditAmount: params.amount,
+              debitAmount: '0',
+              creditAmount: amount.toString(),
               currency: params.currency,
               notes: `Credit channel asset (${params.channelCode})`,
             },
@@ -635,20 +662,24 @@ export class LedgerService {
         },
         tx,
       );
+    };
+    if (existingTx) return execute(existingTx);
+    return this.prisma.$transaction(execute, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
   }
-
   /**
    * Holds an amount in the customer wallet's lockedBalance atomically to prevent double spending.
    * Throws if wallet is frozen or if available balance (balance - lockedBalance) < amount.
    */
   async holdWalletBalance(
     walletId: string,
-    amount: number,
+    amountInput: MonetaryInput,
     existingTx?: Prisma.TransactionClient,
   ) {
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('Wallet hold amount must be a positive finite number.');
+    const amount = this.toMoneyDecimal(amountInput, 'Wallet hold amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Wallet hold amount must be greater than zero.');
     }
 
     const execute = async (tx: Prisma.TransactionClient) => {
@@ -663,14 +694,14 @@ export class LedgerService {
       const available = new Prisma.Decimal(wallet.balance).sub(wallet.lockedBalance || 0);
       if (available.lessThan(amount)) {
         throw new BadRequestException(
-          `الرصيد المتاح غير كافٍ بالعملة ${wallet.currency}. المطلوب: ${amount}، المتاح: ${available.toString()}`,
+          `الرصيد المتاح غير كافٍ بالعملة ${wallet.currency}. المطلوب: ${amount.toString()}، المتاح: ${available.toString()}`,
         );
       }
 
       const updated = await tx.wallet.updateMany({
         where: { id: walletId, version: wallet.version ?? 0, isFrozen: false },
         data: {
-          lockedBalance: { increment: new Prisma.Decimal(amount) },
+          lockedBalance: { increment: amount },
           version: { increment: 1 },
         },
       });
@@ -691,11 +722,12 @@ export class LedgerService {
    */
   async releaseWalletHold(
     walletId: string,
-    amount: number,
+    amountInput: MonetaryInput,
     existingTx?: Prisma.TransactionClient,
   ) {
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('Wallet hold release amount must be a positive finite number.');
+    const amount = this.toMoneyDecimal(amountInput, 'Wallet hold release amount');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Wallet hold release amount must be greater than zero.');
     }
 
     const execute = async (tx: Prisma.TransactionClient) => {
@@ -707,7 +739,7 @@ export class LedgerService {
       const updated = await tx.wallet.updateMany({
         where: { id: walletId, version: wallet.version ?? 0 },
         data: {
-          lockedBalance: { decrement: new Prisma.Decimal(amount) },
+          lockedBalance: { decrement: amount },
           version: { increment: 1 },
         },
       });
@@ -737,28 +769,29 @@ export class LedgerService {
     walletId: string;
     orderId: string;
     currency: CurrencyCode;
-    retailPrice: number;
-    costPrice: number;
+    retailPrice: MonetaryInput;
+    costPrice: MonetaryInput;
     serviceName: string;
     providerCode?: string;
-  }) {
+    supplierAccountType?: SupplierAccountType;
+  }, existingTx?: Prisma.TransactionClient) {
+    const retailPrice = this.toMoneyDecimal(params.retailPrice, 'Order retail price');
+    const costPrice = this.toMoneyDecimal(params.costPrice, 'Order cost price');
     if (
-      !Number.isFinite(params.retailPrice) ||
-      !Number.isFinite(params.costPrice) ||
-      params.retailPrice <= 0 ||
-      params.costPrice < 0 ||
-      params.costPrice > params.retailPrice
+      !retailPrice.greaterThan(0) ||
+      costPrice.greaterThan(retailPrice)
     ) {
       throw new BadRequestException('Order settlement prices are invalid.');
     }
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const revenueAccountCode = this.getRevenueAccountCode(params.currency);
     const cogsAccountCode = this.getCogsAccountCode(params.currency);
-    const providerAccountCode = this.getProviderClearingAccountCode(params.currency);
+    const providerAccountCode =
+      params.supplierAccountType === SupplierAccountType.PREPAID
+        ? this.getSupplierPrepaidAccountCode(params.currency)
+        : this.getProviderClearingAccountCode(params.currency);
 
-    const costPrice = Math.max(0, params.costPrice || 0);
-
-    return this.prisma.$transaction(async (tx) => {
+    const execute = async (tx: Prisma.TransactionClient) => {
     const existing = await tx.ledgerTransaction.findUnique({
       where: { idempotencyKey: `ORDER-SETTLE-${params.orderId}` },
       include: { entries: true },
@@ -768,41 +801,41 @@ export class LedgerService {
     }
 
     // 1. Release the exact reservation in the same transaction as settlement.
-    await this.releaseWalletHold(params.walletId, params.retailPrice, tx);
+    await this.releaseWalletHold(params.walletId, retailPrice.toString(), tx);
 
       // 2. Prepare Double-Entry entries
       const entries: DoubleEntryItem[] = [
         {
           accountCode: customerAccountCode,
           walletId: params.walletId,
-          debitAmount: params.retailPrice,
-          creditAmount: 0,
+          debitAmount: retailPrice.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Settlement debit for order ${params.orderId}`,
         },
         {
           accountCode: revenueAccountCode,
-          debitAmount: 0,
-          creditAmount: params.retailPrice,
+          debitAmount: '0',
+          creditAmount: retailPrice.toString(),
           currency: params.currency,
           notes: `Sales revenue for order ${params.orderId} (${params.serviceName})`,
         },
       ];
 
-      // If cost price > 0, include COGS and Provider Clearing entries
-      if (costPrice > 0) {
+      // If cost price > 0, include COGS and the correct supplier asset/liability account.
+      if (costPrice.greaterThan(0)) {
         entries.push(
           {
             accountCode: cogsAccountCode,
-            debitAmount: costPrice,
-            creditAmount: 0,
+            debitAmount: costPrice.toString(),
+            creditAmount: '0',
             currency: params.currency,
             notes: `Cost of goods sold for order ${params.orderId}`,
           },
           {
             accountCode: providerAccountCode,
-            debitAmount: 0,
-            creditAmount: costPrice,
+            debitAmount: '0',
+            creditAmount: costPrice.toString(),
             currency: params.currency,
             notes: `Provider clearing payable for order ${params.orderId} (${params.providerCode || 'PROVIDER'})`,
           },
@@ -821,11 +854,12 @@ export class LedgerService {
         },
         tx,
       );
-    }, {
+    };
+    if (existingTx) return execute(existingTx);
+    return this.prisma.$transaction(execute, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
   }
-
   /**
    * Helper: Record Order Payment from customer wallet (Legacy/Instant purchase).
    * Debit: Customer Liability Account (reduces customer wallet balance)
@@ -879,49 +913,53 @@ export class LedgerService {
     walletId: string;
     orderId: string;
     currency: CurrencyCode;
-    amount: number;
-    costPrice?: number;
+    amount: MonetaryInput;
+    costPrice?: MonetaryInput;
     reason: string;
     performedByUserId?: string;
   }) {
+    const amount = this.toMoneyDecimal(params.amount, 'Order refund amount');
+    const costPrice = this.toMoneyDecimal(params.costPrice ?? '0', 'Order refund cost');
+    if (!amount.greaterThan(0)) {
+      throw new BadRequestException('Order refund amount must be greater than zero.');
+    }
+
     const customerAccountCode = this.getCustomerAccountCode(params.currency);
     const revenueAccountCode = this.getRevenueAccountCode(params.currency);
     const cogsAccountCode = this.getCogsAccountCode(params.currency);
     const providerAccountCode = this.getProviderClearingAccountCode(params.currency);
 
-    const costPrice = Math.max(0, params.costPrice || 0);
-
     const entries: DoubleEntryItem[] = [
       {
         accountCode: revenueAccountCode,
-        debitAmount: params.amount,
-        creditAmount: 0,
+        debitAmount: amount.toString(),
+        creditAmount: '0',
         currency: params.currency,
         notes: `Sales revenue reversed for refund: ${params.reason}`,
       },
       {
         accountCode: customerAccountCode,
         walletId: params.walletId,
-        debitAmount: 0,
-        creditAmount: params.amount,
+        debitAmount: '0',
+        creditAmount: amount.toString(),
         currency: params.currency,
         notes: `Customer wallet refunded for order ${params.orderId}`,
       },
     ];
 
-    if (costPrice > 0) {
+    if (costPrice.greaterThan(0)) {
       entries.push(
         {
           accountCode: providerAccountCode,
-          debitAmount: costPrice,
-          creditAmount: 0,
+          debitAmount: costPrice.toString(),
+          creditAmount: '0',
           currency: params.currency,
           notes: `Reversal of provider clearing payable for refund ${params.orderId}`,
         },
         {
           accountCode: cogsAccountCode,
-          debitAmount: 0,
-          creditAmount: costPrice,
+          debitAmount: '0',
+          creditAmount: costPrice.toString(),
           currency: params.currency,
           notes: `Reversal of COGS for refund ${params.orderId}`,
         },

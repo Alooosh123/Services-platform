@@ -1,27 +1,24 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ISmsGatewayAdapter, SendSmsResult } from './sms-gateway.interface';
 
+/**
+ * Fail-closed production SMS adapter.
+ *
+ * No provider-specific request contract, authentication/signature scheme, or
+ * delivery callback has been approved for this deployment. Do not report an
+ * OTP as sent merely because placeholder environment variables exist.
+ *
+ * Replace this adapter only after the contracted SMS gateway supplies its
+ * official API specification and sandbox credentials, then add provider
+ * contract tests before enabling production phone verification.
+ */
 @Injectable()
 export class ProductionSmsAdapter implements ISmsGatewayAdapter {
-  readonly providerCode = 'PRODUCTION_SMS';
-  private readonly logger = new Logger(ProductionSmsAdapter.name);
+  readonly providerCode = 'PRODUCTION_SMS_UNCONFIGURED';
 
-  async sendVerificationSms(phone: string, code: string): Promise<SendSmsResult> {
-    const apiKey = process.env.SMS_GATEWAY_API_KEY;
-    const apiUrl = process.env.SMS_GATEWAY_URL;
-
-    if (!apiKey || !apiUrl) {
-      this.logger.error('Production SMS Gateway credentials missing in environment.');
-      throw new BadRequestException('خدمة إرسال الرسائل النصية قيد الصيانة المؤقتة، يرجى المحاولة لاحقاً.');
-    }
-
-    this.logger.log(`Dispatching genuine SMS OTP to ${phone} via contracted Yemeni SMS Gateway`);
-
-    // In live production, dispatch authorized HTTPS POST request
-    return {
-      success: true,
-      messageId: `SMS-TX-${Date.now()}`,
-      simulated: false,
-    };
+  async sendVerificationSms(_phone: string, _code: string): Promise<SendSmsResult> {
+    throw new ServiceUnavailableException(
+      'إرسال رسائل التحقق غير مفعّل: لم يتم تركيب محول موثق لمزود SMS. يلزم توفير وثائق API الرسمية وبيانات Sandbox واختبار التسليم قبل تفعيله.',
+    );
   }
 }

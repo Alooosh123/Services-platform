@@ -2,6 +2,8 @@ import { Controller, Get, Post, Body, Param, UseGuards, Headers, RawBodyRequest,
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 import { DepositsService } from './deposits.service';
+import { PaymentSenderAccountsService } from './payment-sender-accounts.service';
+import { SavePaymentSenderAccountDto } from './dto/save-payment-sender-account.dto';
 import { CreateDepositDto } from './dto/create-deposit.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -9,7 +11,10 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 @ApiTags('Deposits (Customer)')
 @Controller('deposits')
 export class DepositsController {
-  constructor(private readonly depositsService: DepositsService) {}
+  constructor(
+    private readonly depositsService: DepositsService,
+    private readonly senderAccountsService: PaymentSenderAccountsService,
+  ) {}
 
   @Get('channels')
   @ApiOperation({ summary: 'Get active Yemeni payment channels & official receiver accounts' })
@@ -36,6 +41,25 @@ export class DepositsController {
   @ApiOperation({ summary: 'Get all deposit requests and statuses for current customer' })
   async getMyDeposits(@CurrentUser('id') userId: string): Promise<any> {
     return this.depositsService.getCustomerDeposits(userId);
+  }
+
+  @Get('sender-accounts')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer: list saved payment sender identifiers (masked)' })
+  async getMySenderAccounts(@CurrentUser('id') userId: string) {
+    return this.senderAccountsService.listForCustomer(userId);
+  }
+
+  @Post('sender-accounts')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer: save or update encrypted sender account identifier for manual wallet matching' })
+  async saveSenderAccount(
+    @CurrentUser('id') userId: string,
+    @Body() dto: SavePaymentSenderAccountDto,
+  ) {
+    return this.senderAccountsService.saveForCustomer(userId, dto);
   }
 
   @Get(':id')

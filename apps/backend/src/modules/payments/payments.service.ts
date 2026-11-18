@@ -348,8 +348,8 @@ export class PaymentsService {
         userId: payment.userId,
         walletId: wallet.id,
         currency: walletCurrency,
-        amount: Number(payment.amount),
-        feeAmount: Number(payment.feeAmount),
+        amount: payment.amount.toString(),
+        feeAmount: payment.feeAmount.toString(),
         paymentChannel: input.channel,
         referenceId: payment.id,
       }, tx);

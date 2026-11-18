@@ -22,7 +22,15 @@ describe('WalletService', () => {
 
   beforeEach(() => {
     prisma = {
-      wallet: { findUnique: jest.fn().mockResolvedValue(wallet) },
+      wallet: {
+        findUnique: jest.fn().mockResolvedValue(wallet),
+        findMany: jest.fn().mockResolvedValue([{ id: wallet.id, currency: CurrencyCode.YER }]),
+      },
+      ledgerEntry: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      $transaction: jest.fn(async (operations: Promise<any>[]) => Promise.all(operations)),
       paymentMethod: { findUnique: jest.fn().mockResolvedValue(paymentMethod) },
       walletTopup: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -64,5 +72,50 @@ describe('WalletService', () => {
         referenceNumber: 'REF-1',
       }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('returns only posted ledger entries for the authenticated customer wallets', async () => {
+    prisma.ledgerEntry.findMany.mockResolvedValue([{
+      id: 'entry-1',
+      walletId: wallet.id,
+      debitAmount: { toString: () => '0' },
+      creditAmount: { toString: () => '2500' },
+      currency: CurrencyCode.YER,
+      notes: 'Verified deposit',
+      createdAt: new Date('2026-11-10T08:00:00.000Z'),
+      transaction: {
+        id: 'tx-1',
+        txNumber: 'LTX-1',
+        status: 'POSTED',
+        referenceType: 'DEPOSIT',
+        referenceId: 'DEP-1',
+        notes: null,
+        postedAt: new Date('2026-11-10T08:00:00.000Z'),
+        isReversal: false,
+      },
+    }]);
+    prisma.ledgerEntry.count.mockResolvedValue(1);
+
+    const result = await service.getWalletTransactions('user-1', CurrencyCode.YER, 1, 10);
+
+    expect(prisma.wallet.findMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', currency: CurrencyCode.YER },
+      select: { id: true, currency: true },
+    });
+    expect(prisma.ledgerEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        walletId: { in: [wallet.id] },
+        transaction: { status: { in: ['POSTED', 'REVERSED'] } },
+      },
+    }));
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({
+      transactionId: 'tx-1',
+      direction: 'CREDIT',
+      amount: 2500,
+      currency: CurrencyCode.YER,
+      referenceType: 'DEPOSIT',
+      referenceId: 'DEP-1',
+    });
   });
 });

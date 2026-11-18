@@ -42,7 +42,7 @@ export interface IPaymentChannelAdapter {
 
 export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapter {
   protected readonly logger = new Logger(this.constructor.name);
-  protected mode: PaymentChannelMode = PaymentChannelMode.MANUAL;
+  protected mode: PaymentChannelMode = PaymentChannelMode.BLOCKED_EXTERNAL;
   protected capabilities: PaymentChannelCapabilities = {
     depositConfirm: false,
     transactionLookup: false,
@@ -50,7 +50,7 @@ export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapte
     balance: false,
     reconcile: false,
   };
-  protected verificationStatus: ChannelVerificationStatus = ChannelVerificationStatus.VERIFIED;
+  protected verificationStatus: ChannelVerificationStatus = ChannelVerificationStatus.PENDING_REVIEW;
   protected financeApprovalRequired: boolean = false;
   protected activeAccountNumber: string | null = null;
   protected pendingAccountNumber: string | null = null;
@@ -135,23 +135,11 @@ export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapte
     senderPhone?: string;
   }): { isValid: boolean; message?: string };
 
-  async depositConfirm(payload: InboundWebhookPayload): Promise<DepositConfirmResult> {
-    if (
-      !this.capabilities.depositConfirm ||
-      this.mode === PaymentChannelMode.MANUAL ||
-      this.mode === PaymentChannelMode.BLOCKED_EXTERNAL ||
-      this.mode === PaymentChannelMode.DISABLED
-    ) {
-      return {
-        success: false,
-        status: 'MANUAL_REVIEW',
-        message: 'القناة تعمل في وضع التحقق اليدوي (MANUAL_VERIFY) أو معطلة للتحويل الآلي.',
-      };
-    }
+  async depositConfirm(_payload: InboundWebhookPayload): Promise<DepositConfirmResult> {
     return {
-      success: true,
-      status: 'CREDITED',
-      message: 'تم التحقق من العملية وتأكيد الإيداع.',
+      success: false,
+      status: 'MANUAL_REVIEW',
+      message: 'لا يوجد تحقق آلي رسمي موثق لهذه القناة؛ يجب فحص الإشعار وكشف الحساب واعتماد المالية.',
     };
   }
 
@@ -173,24 +161,11 @@ export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapte
     return { found: false, status: 'NOT_FOUND' };
   }
 
-  async payout(payload: OutboundPayoutPayload): Promise<PayoutResult> {
-    if (
-      !this.capabilities.payout ||
-      this.mode === PaymentChannelMode.MANUAL ||
-      this.mode === PaymentChannelMode.BLOCKED_EXTERNAL ||
-      this.mode === PaymentChannelMode.DISABLED
-    ) {
-      return {
-        success: false,
-        status: 'BLOCKED_EXTERNAL',
-        message: `التحويل الآلي المباشر عبر ${this.getChannelCode()} محجوب خارجياً (BLOCKED_EXTERNAL). البنوك اليمنية تتطلب مسار SOP يدوي معتمد وإرفاق إشعار بنكي رسمي.`,
-      };
-    }
+  async payout(_payload: OutboundPayoutPayload): Promise<PayoutResult> {
     return {
-      success: true,
-      status: 'CONFIRMED',
-      externalReference: `EXT-PO-${Date.now()}`,
-      message: 'تم تنفيذ التحويل الخارجي بنجاح.',
+      success: false,
+      status: 'BLOCKED_EXTERNAL',
+      message: `التحويل الآلي عبر ${this.getChannelCode()} محجوب حتى توفير API رسمي موثق واعتماده.`,
     };
   }
 
@@ -203,7 +178,7 @@ export abstract class BasePaymentChannelAdapter implements IPaymentChannelAdapte
   }
 
   async reconcile(date: string, externalItems?: any[]): Promise<{ matched: boolean; discrepancies?: any[] }> {
-    return { matched: true, discrepancies: [] };
+    return { matched: false, discrepancies: [{ reason: 'لا توجد واجهة مطابقة خارجية موثقة لهذه القناة.' }] };
   }
 }
 
@@ -216,20 +191,19 @@ export class JaibPaymentAdapter extends BasePaymentChannelAdapter {
   getBaseInfo(): Omit<PaymentChannelInfo, 'mode' | 'capabilities'> {
     return {
       code: PaymentChannelCode.JAIB,
-      name: 'Jaib Wallet (CAC Bank)',
-      nameAr: 'محفظة جيب - بنك التسليف التعاوني الزراعي CAC',
-      accountNumber: '770123456',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'قم بفتح تطبيق جيب، اختر تحويل أموال إلى محفظة أخرى، أدخل رقم الحساب 770123456 باسم (منصة الشحن والخدمات الرقمية اليمنية المحدودة)، ثم انسخ رقم الحوالة وأرفق صورة الإشعار للمراجعة الفورية.',
+      name: 'Jaib Wallet (AHD Financial Services)',
+      nameAr: 'محفظة جيب - شركة عهد للخدمات المالية (AHD Financial)',
+      accountNumber: '',
+      accountHolderName: 'لم يتم اعتماد حساب استقبال لهذه القناة بعد',
+      instructionsAr: 'قناة جيب غير مفعلة حتى إدخال حساب استقبال رسمي موثق واعتماده مالياً. لا تحول أموالاً بناءً على بيانات تجريبية.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -255,18 +229,17 @@ export class JawaliPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.JAWALI,
       name: 'Jawali Wallet (YKB Bank)',
       nameAr: 'محفظة جوالي - بنك اليمن والكويت',
-      accountNumber: '733987654',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق جوالي إلى الحساب رقم 733987654 باسم (منصة الشحن والخدمات الرقمية اليمنية المحدودة)، ثم أدخل الرقم المرجعي للعملية وصورة إشعار السداد.',
+      accountNumber: '',
+      accountHolderName: 'لم يتم اعتماد حساب استقبال لهذه القناة بعد',
+      instructionsAr: 'قناة جوالي غير مفعلة حتى إدخال حساب استقبال رسمي موثق واعتماده مالياً.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -292,18 +265,17 @@ export class CashPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.CASH,
       name: 'Cash Wallet (Saba Bank)',
       nameAr: 'محفظة كاش - بنك سبأ الإسلامي',
-      accountNumber: '711223344',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'قم بالتحويل عبر تطبيق كاش إلى الحساب رقم 711223344 باسم (منصة الشحن والخدمات الرقمية اليمنية المحدودة)، ثم أدخل رقم الحوالة وصورة السند.',
+      accountNumber: '',
+      accountHolderName: 'لم يتم اعتماد حساب استقبال لهذه القناة بعد',
+      instructionsAr: 'قناة كاش غير مفعلة حتى إدخال حساب استقبال رسمي موثق واعتماده مالياً.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 2000000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -329,18 +301,17 @@ export class OneCashPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.ONE_CASH,
       name: 'One Cash (YOU Telecom)',
       nameAr: 'ون كاش - شركة YOU',
-      accountNumber: '739112233',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'حول المبلغ عبر خدمة ون كاش إلى الرقم 739112233، ثم أدخل رقم الإشعار للتحقق المالي السريع.',
+      accountNumber: '',
+      accountHolderName: 'لم يتم اعتماد حساب استقبال لهذه القناة بعد',
+      instructionsAr: 'قناة ون كاش غير مفعلة حتى إدخال حساب استقبال رسمي موثق واعتماده مالياً.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 1500000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 8000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -366,18 +337,17 @@ export class EasyPaymentAdapter extends BasePaymentChannelAdapter {
       code: PaymentChannelCode.EASY,
       name: 'Easy Wallet',
       nameAr: 'محفظة إيزي للدفع الإلكتروني',
-      accountNumber: '775544332',
-      accountHolderName: 'منصة الشحن والخدمات الرقمية اليمنية المحدودة',
-      instructionsAr:
-        'حول إلى محفظة إيزي رقم 775544332، وأدخل رقم العملية للتحقق المالي من قبل المشرفين.',
+      accountNumber: '',
+      accountHolderName: 'لم يتم اعتماد حساب استقبال لهذه القناة بعد',
+      instructionsAr: 'قناة إيزي غير مفعلة حتى إدخال حساب استقبال رسمي موثق واعتماده مالياً.',
       supportedCurrencies: [CurrencyCode.YER],
       minAmount: 500,
       maxAmount: 1500000,
-      isActive: true,
+      isActive: false,
       dailyLimit: 8000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -428,7 +398,7 @@ export class SandboxPaymentAdapter extends BasePaymentChannelAdapter {
       dailyLimit: 50000000,
       feePercentage: 0,
       feeFixed: 0,
-      isVerifiedLegal: true,
+      isVerifiedLegal: false,
     };
   }
 
@@ -511,10 +481,8 @@ export class PaymentAdapterRegistry {
     this.adapters.set(PaymentChannelCode.CASH, cash);
     this.adapters.set(PaymentChannelCode.ONE_CASH, oneCash);
     this.adapters.set(PaymentChannelCode.EASY, easy);
-    if (sandbox) {
-      this.adapters.set(PaymentChannelCode.WALLET, sandbox);
-    } else {
-      this.adapters.set(PaymentChannelCode.WALLET, new SandboxPaymentAdapter());
+    if (process.env.NODE_ENV !== 'production') {
+      this.adapters.set(PaymentChannelCode.WALLET, sandbox || new SandboxPaymentAdapter());
     }
   }
 
@@ -535,6 +503,11 @@ export class PaymentAdapterRegistry {
       throw new Error(`قناة الدفع ${channelCode} غير مسجلة`);
     }
 
+    if (process.env.NODE_ENV === 'production' &&
+        channelCode !== PaymentChannelCode.WALLET &&
+        targetMode === PaymentChannelMode.API) {
+      throw new Error('لا يمكن تفعيل API لقناة يمنية دون محول رسمي موثق واعتماد حساب الاستقبال.');
+    }
     adapter.setMode(targetMode);
     return {
       success: true,
@@ -565,7 +538,7 @@ export class PaymentAdapterRegistry {
     const unverified: string[] = [];
     for (const [code, adapter] of this.adapters.entries()) {
       const info = adapter.getInfo();
-      if (!info.isVerifiedLegal || info.accountNumber.includes('TEST') || info.accountNumber.includes('MOCK')) {
+      if (!info.isVerifiedLegal || !info.accountNumber || info.accountNumber.includes('TEST') || info.accountNumber.includes('MOCK')) {
         unverified.push(code);
       }
     }
@@ -658,7 +631,7 @@ export class DynamicPaymentAdapter extends BasePaymentChannelAdapter {
       supportedCurrencies: dto.supportedCurrencies,
       minAmount: dto.minAmount,
       maxAmount: dto.maxAmount,
-      isActive: true,
+      isActive: false,
       dailyLimit: 10000000,
       feePercentage: 0,
       feeFixed: 0,

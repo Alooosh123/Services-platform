@@ -91,8 +91,15 @@ export class PhoneVerificationService {
     this.recordPhoneRequest(phone);
     this.recordIpRequest(ipAddress);
 
-    // Send SMS via active adapter
-    const smsResult = await this.smsAdapter.sendVerificationSms(phone, rawCode);
+    // Send SMS via active adapter. If dispatch fails, invalidate the challenge;
+    // never leave a usable OTP behind when the customer was not notified.
+    let smsResult;
+    try {
+      smsResult = await this.smsAdapter.sendVerificationSms(phone, rawCode);
+    } catch (error) {
+      this.challenges.delete(challengeId);
+      throw error;
+    }
     const isDev = process.env.NODE_ENV !== 'production';
 
     return {

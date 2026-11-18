@@ -25,11 +25,18 @@ const TENANT_DIRECT_MODELS = new Set([
   'PinVault',
   'ProviderApiLog',
   'PaymentChannelConfig',
+  'PaymentSenderAccount',
   'ProductPrice',
   'ProductTierPrice',
   'PilotRunAudit',
   'SaaSSubscription',
   'SaaSInvoice',
+  'LinkedServiceAccount',
+  'LinkedServiceConsent',
+  'LinkedServiceAccountReview',
+  'ReconciliationAdjustment',
+  'WalletAgentOperation',
+  'WalletTransferEvidence',
 ]);
 
 const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
@@ -58,6 +65,9 @@ const TENANT_RELATION_FILTERS: Record<string, Record<string, any>> = {
   AgentProductPrice: { subAgent: { is: { tenantId: '__TENANT_ID__' } } },
   SupplierTransaction: { account: { is: { tenantId: '__TENANT_ID__' } } },
   ReconciliationItem: { batch: { is: { tenantId: '__TENANT_ID__' } } },
+  ReconciliationAdjustment: { item: { is: { batch: { is: { tenantId: '__TENANT_ID__' } } } } },
+  WalletAgentOperation: { tenantId: '__TENANT_ID__' },
+  WalletTransferEvidence: { tenantId: '__TENANT_ID__' },
   DailyCloseAdjustment: { report: { is: { tenantId: '__TENANT_ID__' } } },
   OwnerPayoutTransaction: {
     beneficiary: { is: { user: { is: { tenantId: '__TENANT_ID__' } } } },
@@ -94,6 +104,13 @@ const TENANT_WRITE_REFERENCES: Record<
     { field: 'verifiedByUserId', relation: 'verifiedBy', delegate: 'user' },
   ],
   PaymentWebhookEvent: [{ field: 'paymentId', relation: 'payment', delegate: 'payment' }],
+  PaymentSenderAccount: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'reviewedByUserId', relation: 'reviewedBy', delegate: 'user' },
+  ],
+  WalletTransferEvidence: [
+    { field: 'verifiedByUserId', relation: 'verifiedBy', delegate: 'user' },
+  ],
   Order: [
     { field: 'userId', relation: 'user', delegate: 'user' },
     { field: 'agentParentUserId', relation: 'agentCommissionRecipient', delegate: 'user' },
@@ -116,6 +133,32 @@ const TENANT_WRITE_REFERENCES: Record<
   PayoutBeneficiary: [
     { field: 'userId', relation: 'user', delegate: 'user' },
     { field: 'financeApprovedBy', delegate: 'user' },
+  ],
+  LinkedServiceAccount: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+  ],
+  LinkedServiceConsent: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'serviceAccountId', relation: 'serviceAccount', delegate: 'linkedServiceAccount' },
+  ],
+  LinkedServiceAccountReview: [
+    { field: 'userId', relation: 'user', delegate: 'user' },
+    { field: 'serviceAccountId', relation: 'serviceAccount', delegate: 'linkedServiceAccount' },
+    { field: 'operatorId', delegate: 'user' },
+  ],
+  ReconciliationAdjustment: [
+    { field: 'itemId', relation: 'item', delegate: 'reconciliationItem' },
+    { field: 'proposedByUserId', delegate: 'user' },
+    { field: 'approvedByUserId', delegate: 'user' },
+  ],
+  WalletAgentOperation: [
+    // Inbound operations are inserted in the same transaction immediately after
+    // their DepositRequest. A separate root-client lookup cannot see that
+    // uncommitted row; tenantId plus customerUserId still enforce tenant scope.
+    { field: 'payoutRequestId', relation: 'payoutRequest', delegate: 'payoutRequest' },
+    { field: 'customerUserId', relation: 'customerUser', delegate: 'user' },
+    { field: 'agentUserId', relation: 'agentUser', delegate: 'user' },
+    { field: 'financeReviewedByUserId', relation: 'financeReviewer', delegate: 'user' },
   ],
   OwnerPayoutTransaction: [
     { field: 'userId', delegate: 'user' },
