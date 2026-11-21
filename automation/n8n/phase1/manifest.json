@@ -1,0 +1,53 @@
+{
+  "name": "Services-platform n8n Phase 1 Local Operations",
+  "version": "1.1",
+  "timezone": "Asia/Aden",
+  "workflows": [
+    {
+      "file": "12_NOTIFICATION_DISPATCHER.json",
+      "role": "Notification Dispatcher"
+    },
+    {
+      "file": "14_GLOBAL_ERROR_HANDLER.json",
+      "role": "Global Error Handler"
+    },
+    {
+      "file": "01_OPERATIONS_ORCHESTRATOR.json",
+      "role": "Operations Orchestrator"
+    },
+    {
+      "file": "02_INFRASTRUCTURE_WATCH.json",
+      "role": "Infrastructure Watch"
+    },
+    {
+      "file": "02_INFRASTRUCTURE_WATCH_SCHEDULE.json",
+      "role": "Infrastructure Schedule"
+    },
+    {
+      "file": "03_BACKUP_DR_EVIDENCE.json",
+      "role": "Backup and DR Evidence"
+    },
+    {
+      "file": "00_CORE_EVENT_ROUTER.json",
+      "role": "Core Event Router"
+    }
+  ],
+  "defaultActive": false,
+  "security": {
+    "financialActions": false,
+    "directLedgerWrite": false,
+    "customerWalletCredit": false,
+    "ownerPayout": false,
+    "productionRestore": false,
+    "credentialsEmbedded": false
+  },
+  "expectedLocalEndpoints": {
+    "n8n": "http://127.0.0.1:5678",
+    "backendHealth": "http://127.0.0.1:4000/api/health",
+    "admin": "http://127.0.0.1:3001"
+  },
+  "notes": [
+    "Workflow JSON exports and Windows scripts are delivered in the Phase 1 ZIP artifact.",
+    "Local import and execution are not claimed by this repository manifest."
+  ]
+}
