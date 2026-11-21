@@ -1,0 +1,37 @@
+name: n8n Phase 1 Package Validation
+
+on:
+  pull_request:
+    branches: [main, production-completion, 'fix/**']
+    paths:
+      - 'automation/n8n/phase1/**'
+      - 'scripts/validate-n8n-phase1.mjs'
+      - '.github/workflows/n8n-phase1-validation.yml'
+  push:
+    branches: ['feat/n8n-phase1-ops-20261121']
+    paths:
+      - 'automation/n8n/phase1/**'
+      - 'scripts/validate-n8n-phase1.mjs'
+      - '.github/workflows/n8n-phase1-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate manifest JSON
+        run: node -e "const m=require('./automation/n8n/phase1/manifest.json'); if(m.version!=='1.1'||m.workflows.length!==7) process.exit(1); console.log('Phase 1 manifest OK')"
+      - name: Check validator syntax
+        run: node --check scripts/validate-n8n-phase1.mjs
+      - name: Check tracked secrets
+        run: |
+          if grep -RInE '(SP_N8N_AGENT_TOKEN=.{16,}|TELEGRAM_BOT_TOKEN=.{16,}|DATABASE_URL=postgres(ql)?://[^<][^[:space:]]+)' automation/n8n/phase1; then
+            echo "Possible secret found in n8n automation files"
+            exit 1
+          fi
