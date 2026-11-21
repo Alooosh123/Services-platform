@@ -1,0 +1,53 @@
+{
+  "name": "Services-platform n8n Phase 1 Local Operations",
+  "version": "1.1",
+  "timezone": "Asia/Aden",
+  "workflows": [
+    {
+      "file": "12_NOTIFICATION_DISPATCHER.json",
+      "role": "موزع الإشعارات"
+    },
+    {
+      "file": "14_GLOBAL_ERROR_HANDLER.json",
+      "role": "معالج الأخطاء العام"
+    },
+    {
+      "file": "01_OPERATIONS_ORCHESTRATOR.json",
+      "role": "مدير العمليات المركزي"
+    },
+    {
+      "file": "02_INFRASTRUCTURE_WATCH.json",
+      "role": "مراقبة البنية التحتية"
+    },
+    {
+      "file": "02_INFRASTRUCTURE_WATCH_SCHEDULE.json",
+      "role": "جدولة فحص البنية التحتية"
+    },
+    {
+      "file": "03_BACKUP_DR_EVIDENCE.json",
+      "role": "استقبال أدلة النسخ والاستعادة"
+    },
+    {
+      "file": "00_CORE_EVENT_ROUTER.json",
+      "role": "موجه الأحداث المركزي"
+    }
+  ],
+  "defaultActive": false,
+  "security": {
+    "financialActions": false,
+    "directLedgerWrite": false,
+    "customerWalletCredit": false,
+    "ownerPayout": false,
+    "productionRestore": false,
+    "credentialsEmbedded": false
+  },
+  "expectedLocalEndpoints": {
+    "n8n": "http://127.0.0.1:5678",
+    "backendHealth": "http://127.0.0.1:4000/api/health",
+    "admin": "http://127.0.0.1:3001"
+  },
+  "notes": [
+    "Workflow exports are delivered in the Phase 1 ZIP artifact and must be imported manually into the local n8n instance.",
+    "No local workflow activation or Windows execution is claimed from this repository commit."
+  ]
+}
