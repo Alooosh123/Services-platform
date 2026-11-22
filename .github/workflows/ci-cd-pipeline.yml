@@ -70,7 +70,6 @@ jobs:
           cache: 'npm'
       - name: Install Dependencies
         run: npm ci
-      # Jobs have isolated filesystems; build local packages in this job.
       - name: Build shared workspace
         run: npm run build --workspace=packages/shared
       - name: Generate Prisma Client
@@ -88,7 +87,6 @@ jobs:
     name: Migration Dry-Run & Safety Check
     runs-on: ubuntu-latest
     needs: quality-gate
-    # prisma validate requires DATABASE_URL even though it does not connect.
     env:
       DATABASE_URL: "postgresql://postgres:ci-only-not-used@localhost:5432/digital_topup_test_db?schema=public"
     steps:
@@ -108,8 +106,6 @@ jobs:
     name: Build Monorepo Packages & Apps
     runs-on: ubuntu-latest
     needs: [automated-tests, migration-dryrun]
-    # This is a separate runner, so generated clients and dist files from other
-    # jobs are not present. Generate and build workspace packages locally here.
     env:
       DATABASE_URL: "postgresql://postgres:ci-only-not-used@localhost:5432/digital_topup_test_db?schema=public"
     steps:
@@ -122,9 +118,11 @@ jobs:
           cache: 'npm'
       - name: Install Dependencies
         run: npm ci
+      # GitHub Actions jobs use isolated runners. Generated files from tests
+      # are not shared, so recreate every local package artifact here.
       - name: Build shared workspace
         run: npm run build --workspace=packages/shared
-      - name: Generate Prisma Client for the configured package schema
+      - name: Generate Prisma Client for package schema
         run: npm run db:generate
       - name: Build database workspace
         run: npm run build --workspace=packages/database
