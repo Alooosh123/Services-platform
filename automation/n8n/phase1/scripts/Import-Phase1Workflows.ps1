@@ -1,7 +1,7 @@
 [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='High')]
 param(
   [string]$WorkflowDir = (Join-Path $PSScriptRoot '..\workflows'),
-  [string]$BackupRoot = (Join-Path $PSScriptRoot '..\n8n-import-backups'),
+  [string]$BackupRoot = (Join-Path $env:USERPROFILE 'Documents\ServicesPlatform-n8n-backups'),
   [switch]$SkipExistingWorkflowBackup
 )
 $ErrorActionPreference = 'Stop'
