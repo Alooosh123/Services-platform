@@ -1,0 +1,18 @@
+# Phase 1 export integrity
+
+SHA-256 values below are for the exact UTF-8 JSON bytes inside `Services-platform_n8n_Phase1_Local_Operations_v1.1.zip`.
+
+```text
+8c3651c6efbd990948df57eff95181de8b894ed993fb5acb89ae79ecc1d5f62a  00_CORE_EVENT_ROUTER.json
+774bb5d45fb34f2ec27abbf589a41660d03a9df4e17da70b81dbbcaf848b082d  01_OPERATIONS_ORCHESTRATOR.json
+4537ecdeaccc6019acc8cfa42d0ce15d85f49a99111ff52e6c043589abb93efc  02_INFRASTRUCTURE_WATCH.json
+ecf2fd7ec350cacfbe10b7b5e0a1535dc2d97ffc129bf5a0b333c6defe9666e1  02_INFRASTRUCTURE_WATCH_SCHEDULE.json
+8ea635c2a225faf4b02489cc0377d5596bfeda8636b09b933c907a16a988c7fc  03_BACKUP_DR_EVIDENCE.json
+176f41815658cb4bca528a93340494cdc80224c4370a7715e8295162f3c2c348  12_NOTIFICATION_DISPATCHER.json
+491d4e1a177ea10f5aeb22bf5877c6fbb3c53e571ded59e949615ea37f95a923  14_GLOBAL_ERROR_HANDLER.json
+```
+
+Full archive SHA-256:
+`1c60089256a9bd7d69c536e7aa235dcca239681f9086c4d17ce5ae4e1bbd9053`
+
+Do not edit a JSON export after verifying its checksum. If you intentionally modify a workflow, export it again from n8n and calculate a new checksum.
