@@ -26,7 +26,7 @@ jobs:
         with:
           node-version: 20
       - name: Validate manifest
-        run: node -e "const m=require('./automation/n8n/phase1/manifest.json'); if(m.version!=='1.1'||m.workflows.length!==7||m.defaultActive!==false) process.exit(1); console.log('Phase 1 manifest OK')"
+        run: node -e "const m=require('./automation/n8n/phase1/manifest.json'); if(m.version!=='1.3'||m.workflows.length!==7||m.defaultActive!==false||m.security.financialActions!==false||m.security.directLedgerWrite!==false||m.security.customerWalletCredit!==false) process.exit(1); console.log('Phase 1 manifest OK')"
       - name: Check validator syntax
         run: node --check scripts/validate-n8n-phase1.mjs
       - name: Check files for obvious embedded secrets
