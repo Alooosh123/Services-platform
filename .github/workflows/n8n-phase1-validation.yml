@@ -35,3 +35,30 @@ jobs:
             echo "Possible secret found in n8n automation files"
             exit 1
           fi
+
+  validate-windows-scripts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse all Phase 1 PowerShell scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $paths = Get-ChildItem -LiteralPath 'automation/n8n/phase1/scripts' -Filter '*.ps1' -File
+          if ($paths.Count -lt 5) {
+            throw "Expected at least 5 Phase 1 PowerShell scripts; found $($paths.Count)."
+          }
+          foreach ($file in $paths) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              Write-Error "PowerShell syntax failed: $($file.Name)"
+              $errors | Format-List * | Out-String | Write-Host
+              throw "Invalid PowerShell syntax in $($file.Name)"
+            }
+            Write-Host "PASS: $($file.Name)"
+          }
