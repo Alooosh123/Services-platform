@@ -49,3 +49,24 @@
 
 ## حالة التحقق
 المستودع يوثق عقد الربط والفحوص. استيراد JSON وربط Credentials واختبار نسخة n8n المحلية يحتاج جهاز Windows الذي يشغل n8n؛ لا تعتبر التدفقات مستوردة أو نشطة قبل ظهور تنفيذ ناجح داخل n8n.
+
+
+## الاستيراد الآمن على Windows
+
+بعد فك ضغط حزمة Phase 1، افتح PowerShell من حساب Windows نفسه الذي يشغّل n8n، ثم انتقل إلى مجلد السكربتات:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\Import-Phase1Workflows.ps1
+```
+
+السكربت:
+- يتحقق من وجود 7 ملفات JSON صالحة.
+- يصدر نسخة من Workflows الحالية إلى `Documents\ServicesPlatform-n8n-backups` قبل الاستيراد.
+- يستوردها عبر n8n Server CLI كمسودات غير نشطة باستخدام `--activeState=false`.
+- لا ينشر أو يفعّل أي Trigger.
+- يطلب تأكيداً قبل تعديل قاعدة n8n المحلية.
+
+مهم: يجب تشغيله تحت حساب Windows وبيئة n8n نفسها حتى يستهدف قاعدة البيانات الصحيحة. إذا كان n8n داخل Docker، لا تشغل هذا السكربت على Windows Host؛ استخدم CLI داخل الحاوية مع المجلد المنقول إليها. افحص نسخة n8n أولاً من `n8n --version`.
+
+بعد الاستيراد، اربط Header Auth credential في Webhook nodes وTelegram credential في Notification Dispatcher. راجع إعدادات كل Workflow، ثم نفّذ Smoke Test يدوياً قبل النشر.
