@@ -9,7 +9,7 @@
 
 ## الحزمة القابلة للاستيراد
 ملفات Workflow JSON وPowerShell والاختبارات المحلية تم تسليمها في الحزمة:
-`Services-platform_n8n_Phase1_Local_Operations_v1.1.zip`
+`Services-platform_n8n_Phase1_Local_Operations_v1.3.zip`
 
 استورد مجلد `workflows` بهذا الترتيب:
 1. `12_NOTIFICATION_DISPATCHER.json`
@@ -70,3 +70,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 مهم: يجب تشغيله تحت حساب Windows وبيئة n8n نفسها حتى يستهدف قاعدة البيانات الصحيحة. إذا كان n8n داخل Docker، لا تشغل هذا السكربت على Windows Host؛ استخدم CLI داخل الحاوية مع المجلد المنقول إليها. افحص نسخة n8n أولاً من `n8n --version`.
 
 بعد الاستيراد، اربط Header Auth credential في Webhook nodes وTelegram credential في Notification Dispatcher. راجع إعدادات كل Workflow، ثم نفّذ Smoke Test يدوياً قبل النشر.
+
+
+## مراجعة مسار LLM — الإصدار v1.3
+
+عقدة LLM في مدير العمليات موصولة الآن بين تجهيز السياق وتطبيع نتيجة النموذج. إعدادات النموذج تأتي من Runtime Settings ومتغيرات n8n الموثوقة، ولا تُقرأ من payload. عند تعذر النموذج يعود الوكيل إلى نتيجة احتياطية للمراجعة البشرية. وكيل مراقبة البنية التحتية يستخدم تصنيفاً حتمياً ولا يحتاج LLM.
+
+مصفوفة الجاهزية للـ12 وكيلاً، بما في ذلك الوكلاء المؤجلون بسبب عدم وجود Outbox أو Service Account للقراءة المالية، موجودة في `automation/n8n/AGENT_ACTIVATION_MATRIX_AR.md`.
