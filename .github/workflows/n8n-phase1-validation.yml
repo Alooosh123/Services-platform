@@ -1,0 +1,64 @@
+name: n8n Phase 1 Package Validation
+
+on:
+  pull_request:
+    branches: [main, production-completion]
+    paths:
+      - 'automation/n8n/phase1/**'
+      - 'scripts/validate-n8n-phase1.mjs'
+      - '.github/workflows/n8n-phase1-validation.yml'
+  push:
+    branches: ['feat/n8n-phase1-local-ops']
+    paths:
+      - 'automation/n8n/phase1/**'
+      - 'scripts/validate-n8n-phase1.mjs'
+      - '.github/workflows/n8n-phase1-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate manifest
+        run: node -e "const m=require('./automation/n8n/phase1/manifest.json'); if(m.version!=='1.3'||m.workflows.length!==7||m.defaultActive!==false||m.security.financialActions!==false||m.security.directLedgerWrite!==false||m.security.customerWalletCredit!==false) process.exit(1); console.log('Phase 1 manifest OK')"
+      - name: Check validator syntax
+        run: node --check scripts/validate-n8n-phase1.mjs
+      - name: Check files for obvious embedded secrets
+        run: |
+          if grep -RInE '(SP_N8N_AGENT_TOKEN=[[:alnum:]]{32,}|TELEGRAM_BOT_TOKEN=[[:alnum:]]{30,}|DATABASE_URL=postgres(ql)?://[^<][^[:space:]]+)' automation/n8n/phase1; then
+            echo "Possible secret found in n8n automation files"
+            exit 1
+          fi
+
+  validate-windows-scripts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse all Phase 1 PowerShell scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $paths = Get-ChildItem -LiteralPath 'automation/n8n/phase1/scripts' -Filter '*.ps1' -File
+          if ($paths.Count -lt 5) {
+            throw "Expected at least 5 Phase 1 PowerShell scripts; found $($paths.Count)."
+          }
+          foreach ($file in $paths) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              Write-Error "PowerShell syntax failed: $($file.Name)"
+              $errors | Format-List * | Out-String | Write-Host
+              throw "Invalid PowerShell syntax in $($file.Name)"
+            }
+            Write-Host "PASS: $($file.Name)"
+          }
