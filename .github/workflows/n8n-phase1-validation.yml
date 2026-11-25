@@ -5,6 +5,7 @@ on:
     branches: [main, production-completion]
     paths:
       - 'automation/n8n/phase1/**'
+      - 'automation/n8n/agents/**'
       - 'scripts/validate-n8n-phase1.mjs'
       - '.github/workflows/n8n-phase1-validation.yml'
   push:
@@ -43,9 +44,12 @@ jobs:
       - name: Parse all Phase 1 PowerShell scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
-          $paths = Get-ChildItem -LiteralPath 'automation/n8n/phase1/scripts' -Filter '*.ps1' -File
-          if ($paths.Count -lt 5) {
-            throw "Expected at least 5 Phase 1 PowerShell scripts; found $($paths.Count)."
+          $paths = @(
+            Get-ChildItem -LiteralPath 'automation/n8n/phase1/scripts' -Filter '*.ps1' -File
+            Get-ChildItem -LiteralPath 'automation/n8n/agents/scripts' -Filter '*.ps1' -File
+          )
+          if ($paths.Count -lt 6) {
+            throw "Expected at least 6 Phase 1/agent PowerShell scripts; found $($paths.Count)."
           }
           foreach ($file in $paths) {
             $tokens = $null
