@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='High')]
 param(
-  [string]$WorkflowDir = (Join-Path $PSScriptRoot '..\..\..\..\02_ALL_12_AGENTS\workflows'),
+  [Parameter(Mandatory=$true)][string]$WorkflowDir,
   [string]$BackupRoot = (Join-Path $env:USERPROFILE 'Documents\ServicesPlatform-n8n-backups'),
   [switch]$SkipExistingWorkflowBackup
 )
