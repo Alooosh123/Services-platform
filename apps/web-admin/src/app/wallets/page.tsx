@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl } from '@/lib/api';
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminToken } from '@/lib/api';
 
 import { useState } from 'react';
 import {
@@ -84,62 +84,67 @@ export default function AdminWalletsPage() {
       alert('سبب تجميد المحفظة إجباري');
       return;
     }
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تجميد المحافظ معطّل في Staging.');
+      return;
+    }
+    const token = getAdminToken();
+    if (!token) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
 
     setLoadingAction(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/wallet/admin/${walletId}/freeze`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ reason: freezeReason }),
       });
-      if (!res.ok) throw new Error();
-    } catch {}
+      if (!res.ok) throw new Error(`لم يؤكد الخادم تجميد المحفظة (HTTP ${res.status}).`);
 
-    setWallets((prev) =>
-      prev.map((w) =>
+      setWallets((prev) => prev.map((w) =>
         w.id === walletId
-          ? {
-              ...w,
-              isFrozen: true,
-              frozenReason: freezeReason,
-              frozenAt: new Date().toISOString(),
-            }
+          ? { ...w, isFrozen: true, frozenReason: freezeReason, frozenAt: new Date().toISOString() }
           : w,
-      ),
-    );
-
-    setLoadingAction(false);
-    setSelectedWalletForFreeze(null);
-    setFreezeReason('');
-    setActionSuccess('تم تجميد المحفظة بنجاح وتوقيف العمليات المالية الصادرة');
-    setTimeout(() => setActionSuccess(null), 3000);
+      ));
+      setSelectedWalletForFreeze(null);
+      setFreezeReason('');
+      setActionSuccess('أكد الخادم تجميد المحفظة.');
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'تعذر تأكيد تجميد المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const handleUnfreeze = async (walletId: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('إلغاء تجميد المحافظ معطّل في Staging.');
+      return;
+    }
+    const token = getAdminToken();
+    if (!token) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
+
     setLoadingAction(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      await fetch(apiUrl(`/wallet/admin/${walletId}/unfreeze`), {
+      const res = await fetch(apiUrl(`/wallet/admin/${walletId}/unfreeze`), {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-    } catch {}
+      if (!res.ok) throw new Error(`لم يؤكد الخادم إلغاء تجميد المحفظة (HTTP ${res.status}).`);
 
-    setWallets((prev) =>
-      prev.map((w) =>
-        w.id === walletId
-          ? { ...w, isFrozen: false, frozenReason: null, frozenAt: null }
-          : w,
-      ),
-    );
-
-    setLoadingAction(false);
-    setActionSuccess('تم رفع التجميد عن المحفظة واستئناف العمليات بنجاح');
-    setTimeout(() => setActionSuccess(null), 3000);
+      setWallets((prev) => prev.map((w) =>
+        w.id === walletId ? { ...w, isFrozen: false, frozenReason: null, frozenAt: null } : w,
+      ));
+      setActionSuccess('أكد الخادم إلغاء تجميد المحفظة.');
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'تعذر تأكيد إلغاء تجميد المحفظة.');
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const filteredWallets = wallets.filter(
