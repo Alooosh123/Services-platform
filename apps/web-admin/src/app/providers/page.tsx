@@ -118,7 +118,11 @@ export default function AdminProvidersPage() {
         alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
       }
     } catch {
-      alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
+      if (process.env.NODE_ENV === 'production') {
+        alert('تعذر تأكيد اتصال المزود من الخادم. لم يتم تسجيل نجاح الاختبار.');
+      } else {
+        alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
+      }
     } finally {
       setTestingId(null);
     }
@@ -154,12 +158,20 @@ export default function AdminProvidersPage() {
         setEditModal(false);
         fetchProviders();
       } else {
-        alert('تم حفظ التعديلات.');
-        setEditModal(false);
+        if (process.env.NODE_ENV === 'production') {
+          alert('لم يؤكد الخادم حفظ إعدادات المزود. لم يتم تحديث الحالة المحلية.');
+        } else {
+          alert('لم يؤكد الخادم حفظ الإعدادات.');
+          setEditModal(false);
+        }
       }
     } catch {
-      alert('تم حفظ التعديلات.');
-      setEditModal(false);
+      if (process.env.NODE_ENV === 'production') {
+        alert('تعذر الاتصال بالخادم. لم يتم حفظ إعدادات المزود.');
+      } else {
+        alert('تعذر الاتصال بالخادم.');
+        setEditModal(false);
+      }
     }
   };
 
