@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -44,7 +46,7 @@ export default function AdminOrdersPage() {
     setLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const url = new URL('http://localhost:4000/api/orders/admin/all');
+      const url = new URL(apiUrl('/orders/admin/all'));
       if (filterStatus !== 'ALL') url.searchParams.append('status', filterStatus);
       if (search) url.searchParams.append('search', search);
 
@@ -123,7 +125,7 @@ export default function AdminOrdersPage() {
     setActionLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/orders/admin/${selectedOrder.id}/fulfill-manual`, {
+      const res = await fetch(apiUrl(`/orders/admin/${selectedOrder.id}/fulfill-manual`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -167,7 +169,7 @@ export default function AdminOrdersPage() {
     setActionLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/orders/admin/${selectedOrder.id}/refund`, {
+      const res = await fetch(apiUrl(`/orders/admin/${selectedOrder.id}/refund`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -200,7 +202,7 @@ export default function AdminOrdersPage() {
   const handleRetry = async (orderId: string) => {
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/orders/admin/${orderId}/retry`, {
+      const res = await fetch(apiUrl(`/orders/admin/${orderId}/retry`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
