@@ -206,15 +206,24 @@ describe('SecurityGate (SG-03, SG-04, SG-05)', () => {
     const originalEncryptionKey = process.env.ENCRYPTION_KEY;
     const originalWebhookSecret = process.env.WEBHOOK_HMAC_SECRET;
     const originalRedisUrl = process.env.REDIS_URL;
+    const originalDatabaseUrl = process.env.DATABASE_URL;
+    const originalCorsOrigin = process.env.CORS_ORIGIN;
     const testLogger = new Logger('TestSecretsValidation');
 
+    const restoreEnv = (name: string, value: string | undefined) => {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    };
+
     afterEach(() => {
-      process.env.NODE_ENV = originalEnv;
-      process.env.JWT_SECRET = originalJwt;
-      process.env.JWT_REFRESH_SECRET = originalRefresh;
-      process.env.ENCRYPTION_KEY = originalEncryptionKey;
-      process.env.WEBHOOK_HMAC_SECRET = originalWebhookSecret;
-      process.env.REDIS_URL = originalRedisUrl;
+      restoreEnv('NODE_ENV', originalEnv);
+      restoreEnv('JWT_SECRET', originalJwt);
+      restoreEnv('JWT_REFRESH_SECRET', originalRefresh);
+      restoreEnv('ENCRYPTION_KEY', originalEncryptionKey);
+      restoreEnv('WEBHOOK_HMAC_SECRET', originalWebhookSecret);
+      restoreEnv('REDIS_URL', originalRedisUrl);
+      restoreEnv('DATABASE_URL', originalDatabaseUrl);
+      restoreEnv('CORS_ORIGIN', originalCorsOrigin);
     });
 
     it('should throw Error and halt startup if JWT_SECRET is missing or default in production', () => {
@@ -241,7 +250,11 @@ describe('SecurityGate (SG-03, SG-04, SG-05)', () => {
       process.env.JWT_REFRESH_SECRET = 'a-very-strong-production-jwt-refresh-token-secret-key-2026-xyz!';
       process.env.ENCRYPTION_KEY = 'c'.repeat(64);
       process.env.WEBHOOK_HMAC_SECRET = 'webhook-production-secret-'.repeat(2);
-      process.env.REDIS_URL = 'redis://localhost:6379';
+      process.env.DATABASE_URL =
+        'postgresql://test:test@localhost:5432/test_db?sslmode=require';
+      process.env.REDIS_URL = 'rediss://default:test-password@localhost:6379';
+      process.env.CORS_ORIGIN =
+        'https://customer.example.com,https://admin.example.com,https://saas.example.com';
 
       expect(() => {
         validateProductionSecrets(testLogger);
