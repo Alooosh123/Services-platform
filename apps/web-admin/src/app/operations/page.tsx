@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { apiUrl as platformApiUrl, getAdminToken } from '@/lib/api';
+import { apiUrl as platformApiUrl } from '@/lib/api';
 import {
   Activity,
   HardDrive,
@@ -176,119 +176,15 @@ export default function OperationsPage() {
   }, []);
 
   const triggerReconciliationAudit = async () => {
-    if (process.env.NODE_ENV === 'production') {
-      setActionNotice({ text: 'هذه العملية التشغيلية غير متاحة في Staging؛ يجب تشغيلها بعد ربط الخدمة الفعلية وتأكيد سجل التدقيق. لم يتم محاكاة نجاح أو تعديل بيانات.', type: 'error' });
-      return;
-    }
-    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
-      setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
-      return;
-    }
-    if (!getAdminToken()) {
-      setActionNotice({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
-      return;
-    }
-    try {
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${apiUrl}/monitoring/reconciliation-check`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-      const data = await res.json();
-      if (data.status === 'ALL_CLEAR') {
-        setActionNotice({ text: 'تم فحص المطابقة: جميع القيود متوازنة ولا توجد أي فروقات مالية!', type: 'success' });
-      } else {
-        setActionNotice({ text: `تم رصد ${data.alertsCreated} تنبيه بحاجة لتدخل الإدارة المالية!`, type: 'error' });
-      }
-      fetchData();
-    } catch (e) {
-      setActionNotice({ text: 'فشل في تشغيل فحص المطابقة', type: 'error' });
-    }
+    setActionNotice({ text: 'فحص المطابقة غير متاح في Staging حتى ربط خدمة المطابقة الحقيقية وتوثيق صلاحياتها. لم يتم تشغيل الفحص.', type: 'error' });
   };
 
   const runAT20Drill = async () => {
-    if (process.env.NODE_ENV === 'production') {
-      setActionNotice({ text: 'هذه العملية التشغيلية غير متاحة في Staging؛ يجب تشغيلها بعد ربط الخدمة الفعلية وتأكيد سجل التدقيق. لم يتم محاكاة نجاح أو تعديل بيانات.', type: 'error' });
-      return;
-    }
-    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
-      setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
-      return;
-    }
-    if (!getAdminToken()) {
-      setActionNotice({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
-      return;
-    }
-    setIsDrillRunning(true);
-    try {
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${apiUrl}/backups/drill`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ environment: 'staging', notes: 'Dashboard drill' }),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setDrillResult(result);
-        setActionNotice({
-          text: `نجحت تجربة استعادة النسخ: توازن الدائن والمدين بنسبة 100% وتحقق RTO في ${result.durationSeconds} ثانية!`,
-          type: 'success',
-        });
-        fetchData();
-      }
-    } catch (e) {
-      setActionNotice({ text: 'فشلت تجربة استعادة النسخ الاحتياطي', type: 'error' });
-    } finally {
-      setIsDrillRunning(false);
-    }
+    setActionNotice({ text: 'مناورة النسخ الاحتياطي والاستعادة معطّلة في Staging حتى تجهيز بيئة اختبار ونسخة احتياطية قابلة للاستعادة.', type: 'error' });
   };
 
   const runOutageSimulation = async () => {
-    if (process.env.NODE_ENV === 'production') {
-      setActionNotice({ text: 'هذه العملية التشغيلية غير متاحة في Staging؛ يجب تشغيلها بعد ربط الخدمة الفعلية وتأكيد سجل التدقيق. لم يتم محاكاة نجاح أو تعديل بيانات.', type: 'error' });
-      return;
-    }
-    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
-      setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
-      return;
-    }
-    if (!getAdminToken()) {
-      setActionNotice({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
-      return;
-    }
-    setIsSimulating(true);
-    try {
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${apiUrl}/monitoring/simulate-outage`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          serviceTarget: simulationTarget,
-          simulationMode,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActionNotice({
-          text: `تم تفعيل المحاكاة بنجاح: تحول النظام للوضع الآمن (${data.failoverStatus}) مع حماية الأموال بنسبة 100%!`,
-          type: 'success',
-        });
-        fetchData();
-      }
-    } catch (e) {
-      setActionNotice({ text: 'فشلت محاكاة انقطاع المزود', type: 'error' });
-    } finally {
-      setIsSimulating(false);
-    }
+    setActionNotice({ text: 'محاكاة الانقطاع معطّلة في Staging حتى تجهيز خطة اختبار معزولة واعتماد فريق العمليات.', type: 'error' });
   };
 
   const formatUptime = (seconds: number) => {
