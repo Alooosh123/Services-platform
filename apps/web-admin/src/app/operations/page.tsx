@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { apiUrl as platformApiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
+import { apiUrl as platformApiUrl, getAdminToken } from '@/lib/api';
 import {
   Activity,
   HardDrive,
@@ -176,6 +176,10 @@ export default function OperationsPage() {
   }, []);
 
   const triggerReconciliationAudit = async () => {
+    if (process.env.NODE_ENV === 'production') {
+      setActionNotice({ text: 'هذه العملية التشغيلية غير متاحة في Staging؛ يجب تشغيلها بعد ربط الخدمة الفعلية وتأكيد سجل التدقيق. لم يتم محاكاة نجاح أو تعديل بيانات.', type: 'error' });
+      return;
+    }
     if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
       setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
       return;
@@ -206,6 +210,10 @@ export default function OperationsPage() {
   };
 
   const runAT20Drill = async () => {
+    if (process.env.NODE_ENV === 'production') {
+      setActionNotice({ text: 'هذه العملية التشغيلية غير متاحة في Staging؛ يجب تشغيلها بعد ربط الخدمة الفعلية وتأكيد سجل التدقيق. لم يتم محاكاة نجاح أو تعديل بيانات.', type: 'error' });
+      return;
+    }
     if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
       setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
       return;
@@ -242,6 +250,10 @@ export default function OperationsPage() {
   };
 
   const runOutageSimulation = async () => {
+    if (process.env.NODE_ENV === 'production') {
+      setActionNotice({ text: 'هذه العملية التشغيلية غير متاحة في Staging؛ يجب تشغيلها بعد ربط الخدمة الفعلية وتأكيد سجل التدقيق. لم يتم محاكاة نجاح أو تعديل بيانات.', type: 'error' });
+      return;
+    }
     if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
       setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
       return;
