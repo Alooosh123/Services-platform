@@ -20,3 +20,15 @@ export function apiUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : '/' + path;
   return API_BASE_URL + normalizedPath;
 }
+
+export function getAdminToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem('admin_token');
+}
+
+export function getAdminAuthHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  const token = getAdminToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return headers;
+}
