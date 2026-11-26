@@ -55,7 +55,7 @@
 - فعّل حساب مالك n8n وMFA، واحمِ لوحة المحرر بطبقة وصول مثل Cloudflare Access.
 - احتفظ بمفتاح N8N_ENCRYPTION_KEY في مدير أسرار خارج Git وخذ نسخة آمنة منه. فقدانه يمنع فك تشفير بيانات الاعتماد المحفوظة.
 - استخدم Volume دائم إذا كانت التدفقات تعتمد على ملفات محلية أو بيانات Binary. لا تعتمد على نظام ملفات الحاوية المؤقت.
-- **لا تضبط N8N_BLOCK_ENV_ACCESS_IN_NODE=false كحل سريع.** صرّحنا به true كي لا تستطيع Code Nodes قراءة أسرار الخدمة. يجب إزالة مراجع $env من Code Nodes وتحويل المصادقة إلى Credentials مناسبة قبل تفعيل أي Workflow.
+- **لا تضبط N8N_BLOCK_ENV_ACCESS_IN_NODE=false كحل سريع.** هذا الحظر يؤثر على الوصول إلى متغيرات البيئة من Expressions وCode Nodes؛ لذلك يجب إزالة أو إعادة تصميم كل مراجع `$env` و`process.env` في التدفقات، وليس Code Nodes فقط، قبل استيرادها أو تشغيلها. انقل عناوين URL غير السرية إلى إعدادات Workflow غير سرية، وانقل المفاتيح إلى Credentials مناسبة. لا تضع Tokens أو API Keys داخل Set nodes أو بيانات تنفيذ Workflow.
 - N8N_BASE_URL متغير خاص بتدفقات المشروع وليس هو إعداد n8n العام. إعداد عنوان Webhook العام يكون عبر WEBHOOK_URL، وواجهة التحرير عبر N8N_EDITOR_BASE_URL.
 
 ## 3) إعداد Neon وPrisma
