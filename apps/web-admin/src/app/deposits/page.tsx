@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl } from '@/lib/api';
+import { apiUrl, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import {
@@ -56,7 +56,7 @@ interface DepositItem {
 }
 
 export default function AdminDepositsPage() {
-  const [deposits, setDeposits] = useState<DepositItem[]>([
+  const [deposits, setDeposits] = useState<DepositItem[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       id: 'dep-seed-001',
       depositNumber: 'DEP-20261009-0001',
@@ -126,7 +126,7 @@ export default function AdminDepositsPage() {
   ]);
 
   const [activeView, setActiveView] = useState<'deposits' | 'channels'>('deposits');
-  const [channels, setChannels] = useState<any[]>([
+  const [channels, setChannels] = useState<any[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       code: 'JAIB',
       name: 'محفظة جيب (بنك التضامن)',
@@ -185,8 +185,13 @@ export default function AdminDepositsPage() {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handleProposeAccountChange = (code: string) => {
+    if (process.env.NODE_ENV === 'production') {
+      setActionError('إدارة قنوات الدفع غير متاحة حتى ربطها بواجهات الخادم واعتماد سجل التدقيق. لم يتم حفظ أي تغيير.');
+      return;
+    }
     const newNum = prompt(`اقتراح تعديل رقم حساب القناة [${code}] (سيتطلب موافقة الإدارة المالية بموجب مبدأ الرقابة الثنائية Four-Eyes):`);
     if (!newNum || !newNum.trim()) return;
 
@@ -206,6 +211,10 @@ export default function AdminDepositsPage() {
   };
 
   const handleApproveFinance = (code: string, approved: boolean) => {
+    if (process.env.NODE_ENV === 'production') {
+      setActionError('إدارة قنوات الدفع غير متاحة حتى ربطها بواجهات الخادم واعتماد سجل التدقيق. لم يتم حفظ أي تغيير.');
+      return;
+    }
     const notes = prompt(
       approved
         ? `تأكيد موافقة الإدارة المالية على تعديل حساب ${code} (ملاحظات التدقيق):`
@@ -244,6 +253,10 @@ export default function AdminDepositsPage() {
   };
 
   const handleToggleChannelKillSwitch = (code: string) => {
+    if (process.env.NODE_ENV === 'production') {
+      setActionError('إدارة قنوات الدفع غير متاحة حتى ربطها بواجهات الخادم واعتماد سجل التدقيق. لم يتم حفظ أي تغيير.');
+      return;
+    }
     const ch = channels.find((c) => c.code === code);
     if (!ch) return;
     const isStopping = ch.isActive;
@@ -275,89 +288,75 @@ export default function AdminDepositsPage() {
   }, [filterStatus]);
 
   const fetchDeposits = async () => {
+    const token = getAdminToken();
+    if (!token) {
+      setDeposits([]);
+      setActionError('سجّل الدخول بحساب إداري صالح لعرض طلبات الإيداع.');
+      return;
+    }
+
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       let url = apiUrl('/admin/deposits');
       if (filterStatus !== 'ALL') {
-        url += `?status=${filterStatus}`;
+        url += `?status=${encodeURIComponent(filterStatus)}`;
       }
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setDeposits(data);
-        }
-      }
-    } catch {}
+      const res = await fetch(url, { headers: getAdminAuthHeaders() });
+      if (!res.ok) throw new Error(`تعذر تحميل الإيداعات (HTTP ${res.status}).`);
+      const data = await res.json();
+      setDeposits(Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []);
+      setActionError(null);
+    } catch (error) {
+      setDeposits([]);
+      setActionError(error instanceof Error ? error.message : 'تعذر تحميل الإيداعات من الخادم.');
+    }
   };
 
   const handleMarkUnderReview = async (depositId: string) => {
+    const token = getAdminToken();
+    if (!token) { setActionError('يلزم تسجيل دخول إداري صالح.'); return; }
     setLoadingAction(true);
+    setActionError(null);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/admin/deposits/${depositId}/under-review`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reviewNotes: 'جاري المطابقة مع كشف الحساب البنكي' }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        updateLocalDeposit(data.deposit);
-      } else {
-        throw new Error();
-      }
-    } catch {
-      // Offline fallback
-      setDeposits((prev) =>
-        prev.map((d) => (d.id === depositId ? { ...d, status: 'UNDER_REVIEW' } : d)),
-      );
-      if (selectedDeposit?.id === depositId) {
-        setSelectedDeposit((prev) => (prev ? { ...prev, status: 'UNDER_REVIEW' } : null));
-      }
+      if (!res.ok) throw new Error(`رفض الخادم تحديث حالة الإيداع (HTTP ${res.status}).`);
+      const data = await res.json();
+      if (!data?.deposit) throw new Error('استجابة الخادم لا تحتوي على سجل الإيداع المحدّث.');
+      updateLocalDeposit(data.deposit);
+      setActionSuccess('أكد الخادم تغيير حالة الطلب إلى (قيد التدقيق).');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'فشل تحديث الإيداع. لم يتم إجراء تحديث محلي.');
     } finally {
       setLoadingAction(false);
-      setActionSuccess('تم تغيير حالة الطلب إلى (قيد التدقيق)');
-      setTimeout(() => setActionSuccess(null), 3000);
     }
   };
 
   const handleApproveAndCredit = async (depositId: string) => {
+    const token = getAdminToken();
+    if (!token) { setActionError('يلزم تسجيل دخول إداري صالح.'); return; }
     setLoadingAction(true);
+    setActionError(null);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/admin/deposits/${depositId}/approve`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           reviewNotes: reviewNotes || 'تم التحقق من الحوالة وتغذية رصيد العميل بنجاح.',
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        updateLocalDeposit(data.deposit);
-      } else {
-        throw new Error();
-      }
-    } catch {
-      // Offline fallback
-      setDeposits((prev) =>
-        prev.map((d) => (d.id === depositId ? { ...d, status: 'CREDITED' } : d)),
-      );
-      if (selectedDeposit?.id === depositId) {
-        setSelectedDeposit((prev) => (prev ? { ...prev, status: 'CREDITED' } : null));
-      }
+      if (!res.ok) throw new Error(`رفض الخادم اعتماد الإيداع (HTTP ${res.status}). لم يُعلن نجاح القيد.`);
+      const data = await res.json();
+      if (!data?.deposit) throw new Error('استجابة الخادم لا تحتوي على الإيداع ونتيجة القيد.');
+      updateLocalDeposit(data.deposit);
+      setActionSuccess('أكد الخادم معالجة طلب الإيداع. راجع رقم قيد الأستاذ في تفاصيل العملية.');
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'تعذر اعتماد الإيداع. لم يتم إجراء أي محاكاة محلية.');
     } finally {
       setLoadingAction(false);
-      setActionSuccess('تمت الموافقة وقيد المبلغ في المحفظة عبر دفتر الأستاذ العام بنجاح!');
-      setTimeout(() => setActionSuccess(null), 3000);
     }
   };
 
@@ -366,41 +365,28 @@ export default function AdminDepositsPage() {
       alert('سبب الرفض إجباري للعميل');
       return;
     }
+    const token = getAdminToken();
+    if (!token) { setActionError('يلزم تسجيل دخول إداري صالح.'); return; }
     setLoadingAction(true);
+    setActionError(null);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/admin/deposits/${depositId}/reject`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ rejectionReason }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        updateLocalDeposit(data.deposit);
-      } else {
-        throw new Error();
-      }
-    } catch {
-      // Offline fallback
-      setDeposits((prev) =>
-        prev.map((d) =>
-          d.id === depositId ? { ...d, status: 'REJECTED', rejectionReason } : d,
-        ),
-      );
-      if (selectedDeposit?.id === depositId) {
-        setSelectedDeposit((prev) =>
-          prev ? { ...prev, status: 'REJECTED', rejectionReason } : null,
-        );
-      }
-    } finally {
-      setLoadingAction(false);
+      if (!res.ok) throw new Error(`رفض الخادم طلب الرفض (HTTP ${res.status}).`);
+      const data = await res.json();
+      if (!data?.deposit) throw new Error('استجابة الخادم لا تحتوي على سجل الإيداع المحدّث.');
+      updateLocalDeposit(data.deposit);
       setShowRejectModal(false);
       setRejectionReason('');
-      setActionSuccess('تم رفض طلب الإيداع وتوثيق السبب في السجل المالي');
+      setActionSuccess('أكد الخادم رفض طلب الإيداع وتوثيق السبب.');
       setTimeout(() => setActionSuccess(null), 3000);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'تعذر رفض الإيداع. لم يتم إجراء أي تحديث محلي.');
+    } finally {
+      setLoadingAction(false);
     }
   };
 
@@ -478,6 +464,13 @@ export default function AdminDepositsPage() {
           <RefreshCw className="w-4 h-4 text-indigo-400" /> تحديث القائمة
         </button>
       </div>
+
+      {actionError && (
+        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center gap-3 text-rose-300 text-xs font-bold">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
 
       {actionSuccess && (
         <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center gap-3 text-emerald-400 text-xs font-bold">
