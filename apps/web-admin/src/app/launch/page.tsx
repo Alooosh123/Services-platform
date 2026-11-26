@@ -414,14 +414,14 @@ export default function PilotLaunchPage() {
         {/* Live AT-21 Flow Breakdown */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 pt-2">
           {[
-            { step: '1', title: 'إيداع بنكي', desc: 'Bank TopUp', status: 'OK' },
-            { step: '2', title: 'قيد الأستاذ', desc: 'Double-Entry', status: 'OK' },
-            { step: '3', title: 'حجز الرصيد', desc: 'Wallet Hold', status: 'OK' },
-            { step: '4', title: 'تنفيذ الشحن', desc: 'Provider Fulfillment', status: 'OK' },
-            { step: '5', title: 'تسوية المزود', desc: 'Cost Settlement', status: 'OK' },
-            { step: '6', title: 'إقفال اليوم', desc: 'Daily Close', status: 'OK' },
-            { step: '7', title: 'سحب الأرباح', desc: 'MFA Payout', status: 'OK' },
-            { step: '8', title: 'المطابقة البنكية', desc: 'Reconciliation', status: 'OK' },
+            { step: '1', title: 'إيداع بنكي', desc: 'Bank TopUp', status: 'NOT_VERIFIED' },
+            { step: '2', title: 'قيد الأستاذ', desc: 'Double-Entry', status: 'NOT_VERIFIED' },
+            { step: '3', title: 'حجز الرصيد', desc: 'Wallet Hold', status: 'NOT_VERIFIED' },
+            { step: '4', title: 'تنفيذ الشحن', desc: 'Provider Fulfillment', status: 'NOT_VERIFIED' },
+            { step: '5', title: 'تسوية المزود', desc: 'Cost Settlement', status: 'NOT_VERIFIED' },
+            { step: '6', title: 'إقفال اليوم', desc: 'Daily Close', status: 'NOT_VERIFIED' },
+            { step: '7', title: 'سحب الأرباح', desc: 'MFA Payout', status: 'NOT_VERIFIED' },
+            { step: '8', title: 'المطابقة البنكية', desc: 'Reconciliation', status: 'NOT_VERIFIED' },
           ].map((item, idx) => (
             <div
               key={idx}
@@ -432,8 +432,8 @@ export default function PilotLaunchPage() {
               </span>
               <p className="text-xs font-bold text-white truncate">{item.title}</p>
               <p className="text-[10px] text-slate-400 truncate">{item.desc}</p>
-              <span className="inline-block text-[10px] font-mono font-bold text-emerald-400">
-                ✓ {item.status}
+              <span className="inline-block text-[10px] font-mono font-bold text-amber-300">
+                • {item.status === 'NOT_VERIFIED' ? 'غير متحقق' : item.status}
               </span>
             </div>
           ))}
