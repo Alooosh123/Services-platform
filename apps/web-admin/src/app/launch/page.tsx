@@ -182,65 +182,16 @@ export default function PilotLaunchPage() {
   };
 
   const handleTogglePilot = async () => {
-    setStatusMessage('تغيير حالة Pilot معطّل في النسخة المنشورة. يلزم اجتياز بوابة Go/No-Go ومراجعة مستقلة قبل أي تشغيل مالي.');
-    return;
-    const nextState = !config.isPilotActive;
-    try {
-      const res = await fetch(apiUrl('/pilot/config'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isPilotActive: nextState }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setConfig(updated);
-        setStatusMessage(nextState ? 'تم تفعيل وضع الإطلاق التجريبي (Pilot Caps Active)' : 'تم الانتقال إلى وضع الإطلاق التجاري العام (Public Production)');
-      } else {
-        setStatusMessage('رفض الخادم تغيير وضع التشغيل؛ لم يتم تحديث الإعداد محلياً.');
-      }
-    } catch (error) {
-      setStatusMessage(
-        `تعذر تغيير وضع Pilot: ${error instanceof Error ? error.message : 'خطأ اتصال غير معروف'}`,
-      );
-    }
+    setStatusMessage(
+      'تغيير حالة Pilot معطّل في النسخة المنشورة. يلزم اجتياز بوابة Go/No-Go ومراجعة مستقلة قبل أي تشغيل مالي.',
+    );
   };
 
   const handleRunAt21Cycle = async () => {
     setLastCycleResult(null);
-    setStatusMessage('دورة AT-21 التي تشمل الإيداع والشحن والتسوية والسحب معطّلة. لا تُنفذ معاملات مالية أثناء إعداد Staging.');
-    return;
-    setRunningCycle(true);
-    setStatusMessage('جارٍ تشغيل دورة التحقق الشاملة AT-21 (TopUp → Credit → Checkout → Settlement → Payout)...');
-
-    try {
-      const res = await fetch(apiUrl('/pilot/run-cycle'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: Number(cycleAmount),
-          currency: cycleCurrency,
-          channelCode: cycleChannel,
-          cycleName: `AT-21-LIVE-RUN-${cycleCurrency}-${cycleAmount}`,
-        }),
-      });
-
-      if (res.ok) {
-        const data: PilotCycleResult = await res.json();
-        setLastCycleResult(data);
-        setHistory((prev) => [data, ...prev]);
-        setStatusMessage(`اكتمل التنفيذ: ${data.notes}`);
-      } else {
-        setLastCycleResult(null);
-        setStatusMessage('لم تُنفذ دورة AT-21؛ الخادم لم يؤكد تنفيذها.');
-      }
-    } catch (error) {
-      setLastCycleResult(null);
-      setStatusMessage(
-        `تعذر تنفيذ دورة AT-21: ${error instanceof Error ? error.message : 'خطأ اتصال غير معروف'}`,
-      );
-    } finally {
-      setRunningCycle(false);
-    }
+    setStatusMessage(
+      'دورة AT-21 التي تشمل الإيداع والشحن والتسوية والسحب معطّلة. لا تُنفذ معاملات مالية أثناء إعداد Staging.',
+    );
   };
 
   return (
