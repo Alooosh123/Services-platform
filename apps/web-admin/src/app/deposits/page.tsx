@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import {
@@ -312,6 +312,10 @@ export default function AdminDepositsPage() {
   };
 
   const handleMarkUnderReview = async (depositId: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('عمليات الإيداع المالية معطّلة في Staging حتى اكتمال المراجعة المالية واختبارات الموافقة المزدوجة.');
+      return;
+    }
     const token = getAdminToken();
     if (!token) { setActionError('يلزم تسجيل دخول إداري صالح.'); return; }
     setLoadingAction(true);
@@ -335,6 +339,10 @@ export default function AdminDepositsPage() {
   };
 
   const handleApproveAndCredit = async (depositId: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('عمليات الإيداع المالية معطّلة في Staging حتى اكتمال المراجعة المالية واختبارات الموافقة المزدوجة.');
+      return;
+    }
     const token = getAdminToken();
     if (!token) { setActionError('يلزم تسجيل دخول إداري صالح.'); return; }
     setLoadingAction(true);
@@ -361,6 +369,10 @@ export default function AdminDepositsPage() {
   };
 
   const handleReject = async (depositId: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('عمليات الإيداع المالية معطّلة في Staging حتى اكتمال المراجعة المالية واختبارات الموافقة المزدوجة.');
+      return;
+    }
     if (!rejectionReason.trim()) {
       alert('سبب الرفض إجباري للعميل');
       return;
@@ -464,6 +476,12 @@ export default function AdminDepositsPage() {
           <RefreshCw className="w-4 h-4 text-indigo-400" /> تحديث القائمة
         </button>
       </div>
+
+      {process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-300 text-xs font-bold">
+          وضع Staging: أزرار المراجعة والاعتماد والرفض المالي غير مفعّلة. لن يتم تعديل رصيد أو سجل مالي من هذه الواجهة.
+        </div>
+      )}
 
       {actionError && (
         <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center gap-3 text-rose-300 text-xs font-bold">
