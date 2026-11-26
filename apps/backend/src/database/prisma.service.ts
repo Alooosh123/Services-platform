@@ -10,8 +10,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       await this.$connect();
       this.logger.log('Successfully connected to PostgreSQL database!');
     } catch (error: any) {
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error(
+          'CRITICAL: PostgreSQL connection failed in production. Refusing to start in Demo/Simulation Mode.',
+        );
+        throw error;
+      }
+
       this.logger.warn(
-        `Database connection to PostgreSQL at localhost:5432 failed (${error?.message || 'Unreachable'}). Server will continue in Demo/Simulation Mode. Swagger UI is accessible at /api/docs.`,
+        `PostgreSQL connection failed (${error?.message || 'Unreachable'}). Non-production server will continue in Demo/Simulation Mode.`,
       );
     }
   }
