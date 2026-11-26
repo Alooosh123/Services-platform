@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import {
   Clock,
@@ -275,7 +277,7 @@ export default function AdminDepositsPage() {
   const fetchDeposits = async () => {
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      let url = 'http://localhost:4000/api/admin/deposits';
+      let url = apiUrl('/admin/deposits');
       if (filterStatus !== 'ALL') {
         url += `?status=${filterStatus}`;
       }
@@ -295,7 +297,7 @@ export default function AdminDepositsPage() {
     setLoadingAction(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/deposits/${depositId}/under-review`, {
+      const res = await fetch(apiUrl(`/admin/deposits/${depositId}/under-review`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -328,7 +330,7 @@ export default function AdminDepositsPage() {
     setLoadingAction(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/deposits/${depositId}/approve`, {
+      const res = await fetch(apiUrl(`/admin/deposits/${depositId}/approve`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -367,7 +369,7 @@ export default function AdminDepositsPage() {
     setLoadingAction(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/deposits/${depositId}/reject`, {
+      const res = await fetch(apiUrl(`/admin/deposits/${depositId}/reject`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
