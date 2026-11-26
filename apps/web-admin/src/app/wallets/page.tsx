@@ -32,7 +32,7 @@ interface CustomerWalletItem {
 }
 
 export default function AdminWalletsPage() {
-  const [wallets, setWallets] = useState<CustomerWalletItem[]>([
+  const [wallets, setWallets] = useState<CustomerWalletItem[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       id: 'w-cust-yer',
       userId: 'user-customer-003',
