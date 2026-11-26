@@ -181,8 +181,7 @@ export default function SecurityCenterPage() {
         setActionMessage({ text: err.message || 'فشل إلغاء التجميد', type: 'error' });
       }
     } catch {
-      setActionMessage({ text: 'تم رفع الحظر الإداري بنجاح.', type: 'success' });
-      setIsUnfreezeModalOpen(false);
+      setActionMessage({ text: 'تعذر الاتصال بالخادم. لم يتم تأكيد إلغاء تجميد المحفظة.', type: 'error' });
     }
   };
 
