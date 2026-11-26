@@ -44,16 +44,7 @@ export default function AdminLoginPage() {
         setTimeout(() => router.push('/'), 1000);
       }
     } catch (err: any) {
-      // Mock / Offline Fallback for Admin
-      if (
-        identifier === 'admin@digitaltopup.com' ||
-        identifier === 'finance@digitaltopup.com'
-      ) {
-        setTempToken('mock_temp_mfa_token_xyz');
-        setStep('mfa');
-      } else {
-        setError(err.message || 'فشل تسجيل الدخول');
-      }
+      setError(err.message || 'فشل تسجيل الدخول');
     } finally {
       setLoading(false);
     }
@@ -86,21 +77,7 @@ export default function AdminLoginPage() {
       setSuccess(true);
       setTimeout(() => router.push('/'), 1000);
     } catch (err: any) {
-      // Offline fallback: accept 123456 or any 6-digit code
-      if (mfaCode.length === 6) {
-        const mockAdmin = {
-          id: 'user-admin-001',
-          fullName: 'Super Administrator',
-          email: identifier,
-          role: identifier.includes('finance') ? 'FINANCE' : 'SUPER_ADMIN',
-        };
-        localStorage.setItem('admin_token', 'mock_admin_jwt_session_789');
-        localStorage.setItem('admin_user', JSON.stringify(mockAdmin));
-        setSuccess(true);
-        setTimeout(() => router.push('/'), 1000);
-      } else {
-        setError(err.message || 'رمز التحقق غير صحيح');
-      }
+      setError(err.message || 'رمز التحقق غير صحيح');
     } finally {
       setLoading(false);
     }
