@@ -1,0 +1,95 @@
+name: Dependency remediation preview (no major upgrades)
+
+on:
+  push:
+    branches:
+      - infra/northflank-cloudflare-neon-upstash
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-remediation:
+    name: Apply semver-safe npm audit fixes and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_API_URL: https://api.staging.invalid/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install current locked dependencies
+        run: npm ci
+
+      - name: Apply non-forced lockfile fixes only
+        shell: bash
+        run: |
+          set +e
+          npm audit fix --package-lock-only --no-fund
+          fix_status=$?
+          echo "npm_audit_fix_exit_code=$fix_status" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Reinstall from updated candidate lockfile
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build --workspace=packages/shared
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Build database package
+        run: npm run build --workspace=packages/database
+
+      - name: Run backend unit tests
+        run: npm run test --workspace=apps/backend -- --runInBand
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Capture remaining audit report without hiding results
+        if: always()
+        shell: bash
+        run: |
+          npm audit --json > dependency-audit-after.json || true
+          node - <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('dependency-audit-after.json', 'utf8'));
+          const counts = report.metadata?.vulnerabilities || {};
+          const summary = [
+            '# Dependency remediation preview',
+            '',
+            'This run applies npm audit fix without --force and does not change declared dependency major versions.',
+            '',
+            '| Severity | Count |',
+            '|---|---:|',
+            '| Critical | ' + (counts.critical || 0) + ' |',
+            '| High | ' + (counts.high || 0) + ' |',
+            '| Moderate | ' + (counts.moderate || 0) + ' |',
+            '| Low | ' + (counts.low || 0) + ' |',
+            '',
+            'The attached lockfile is a candidate only. Review its diff and rerun security/tests before committing.'
+          ].join('\n');
+          fs.writeFileSync('dependency-remediation-summary.md', summary);
+          console.log(summary);
+          NODE
+
+      - name: Upload candidate lockfile and audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-remediation-preview
+          path: |
+            package-lock.json
+            dependency-audit-after.json
+            dependency-remediation-summary.md
+          retention-days: 7
