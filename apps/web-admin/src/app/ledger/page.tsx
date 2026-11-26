@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import { ShieldCheck, PlusCircle, Lock } from 'lucide-react';
@@ -16,7 +18,7 @@ export default function AdminLedgerPage() {
 
   const fetchLedger = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/ledger/admin/statement', {
+      const res = await fetch(apiUrl('/ledger/admin/statement'), {
         headers: { Authorization: 'Bearer mock-token' },
       });
       if (res.ok) {
@@ -66,7 +68,7 @@ export default function AdminLedgerPage() {
     }
 
     try {
-      const res = await fetch('http://localhost:4000/api/ledger/admin/adjust-balance', {
+      const res = await fetch(apiUrl('/ledger/admin/adjust-balance'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
