@@ -95,7 +95,7 @@ const initialDemoReviews: ReviewCase[] = [
 ];
 
 export default function AccountReviewsPage() {
-  const [reviews, setReviews] = useState<ReviewCase[]>(initialDemoReviews);
+  const [reviews, setReviews] = useState<ReviewCase[]>(process.env.NODE_ENV === 'production' ? [] : initialDemoReviews);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCase, setSelectedCase] = useState<ReviewCase | null>(null);
@@ -109,23 +109,24 @@ export default function AccountReviewsPage() {
   }, [filterStatus]);
 
   const fetchReviewCases = async () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+    if (!token) {
+      setReviews([]);
+      return;
+    }
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       let url = apiUrl('/admin/account-reviews');
       if (filterStatus !== 'ALL') {
-        url += `?status=${filterStatus}`;
+        url += `?status=${encodeURIComponent(filterStatus)}`;
       }
       const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const result = await res.json();
-        if (result && Array.isArray(result.data) && result.data.length > 0) {
-          setReviews(result.data);
-        }
-      }
+      if (!res.ok) throw new Error('تعذر تحميل مراجعات الحسابات من الخادم.');
+      const result = await res.json();
+      setReviews(Array.isArray(result?.data) ? result.data : []);
     } catch {
-      // In development / offline, initialDemoReviews stays loaded
+      setReviews([]);
     }
   };
 
@@ -145,69 +146,32 @@ export default function AccountReviewsPage() {
       return;
     }
 
+    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+    if (!token) {
+      setActionMessage({ type: 'error', text: 'انتهت جلسة الإدارة. سجّل الدخول مجدداً.' });
+      return;
+    }
+
     setIsSubmitting(true);
     setActionMessage(null);
 
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/admin/account-reviews/${selectedCase.id}/resolve`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          decision,
-          operatorNotes: operatorNotes.trim(),
-        }),
+        body: JSON.stringify({ decision, operatorNotes: operatorNotes.trim() }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setActionMessage({
-          type: 'success',
-          text: data.message || 'تم اعتماد القرار بنجاح وتوثيقه في سجل التدقيق (تأثير مالي: 0).',
-        });
-        // Update local state
-        setReviews((prev) =>
-          prev.map((r) =>
-            r.id === selectedCase.id
-              ? {
-                  ...r,
-                  status: decision === 'APPROVE' ? 'APPROVED' : decision === 'REJECT' ? 'REJECTED' : 'NEEDS_INFO',
-                  operatorNotes: operatorNotes.trim(),
-                  resolvedAt: new Date().toISOString(),
-                }
-              : r,
-          ),
-        );
-        setTimeout(() => {
-          setSelectedCase(null);
-        }, 1500);
-      } else {
-        // Fallback for demo when backend auth token is mock
-        setReviews((prev) =>
-          prev.map((r) =>
-            r.id === selectedCase.id
-              ? {
-                  ...r,
-                  status: decision === 'APPROVE' ? 'APPROVED' : decision === 'REJECT' ? 'REJECTED' : 'NEEDS_INFO',
-                  operatorNotes: operatorNotes.trim(),
-                  resolvedAt: new Date().toISOString(),
-                }
-              : r,
-          ),
-        );
-        setActionMessage({
-          type: 'success',
-          text: 'تم تسجيل قرار المشغل محلياً وتحديث حالة الحساب (الأثر المالي: معدوم).',
-        });
-        setTimeout(() => {
-          setSelectedCase(null);
-        }, 1500);
-      }
-    } catch {
-      // Offline fallback
+      if (!res.ok) throw new Error(`لم يؤكد الخادم القرار (HTTP ${res.status}).`);
+      const data = await res.json();
+
+      setActionMessage({
+        type: 'success',
+        text: data.message || 'أكد الخادم حفظ القرار في سجل التدقيق.',
+      });
       setReviews((prev) =>
         prev.map((r) =>
           r.id === selectedCase.id
@@ -220,13 +184,12 @@ export default function AccountReviewsPage() {
             : r,
         ),
       );
+      setTimeout(() => setSelectedCase(null), 1500);
+    } catch (error) {
       setActionMessage({
-        type: 'success',
-        text: 'تم حفظ القرار بنجاح في وضع عدم الاتصال (بدون أي أثر مالي).',
+        type: 'error',
+        text: error instanceof Error ? error.message : 'تعذر حفظ القرار. لم يتم تسجيل نجاح محلي.',
       });
-      setTimeout(() => {
-        setSelectedCase(null);
-      }, 1500);
     } finally {
       setIsSubmitting(false);
     }
