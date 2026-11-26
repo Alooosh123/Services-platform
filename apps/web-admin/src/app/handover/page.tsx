@@ -185,7 +185,7 @@ export default function HandoverOperationsPage() {
     setStatusMessage(`جارٍ طلب تنفيذ المناورة: ${labelAr}...`);
 
     try {
-      const res = await fetch(`${API_URL}/handover/drills`, {
+      const res = await fetch(apiUrl('/handover/drills'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAdminToken()}` },
         body: JSON.stringify({
