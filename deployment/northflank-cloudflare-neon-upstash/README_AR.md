@@ -169,3 +169,22 @@
 ## 9) حدود التنفيذ الحالية
 
 تم تجهيز مستودع النقل وبدأت إضافة فحوص CI ومراجعة أكثر صرامة لتصدير n8n. لكن لم يتم إنشاء موارد في Northflank أو Neon أو Upstash أو Cloudflare، ولم يُنشر Backend أو n8n أو أي Worker من خلال هذه التعديلات. هذا يتطلب تسجيل الدخول إلى حسابات تلك المنصات وإضافة الأسرار في لوحاتها. لا نملك في هذه الجلسة وصولاً تنفيذياً إلى حسابات Northflank/Neon/Upstash/Cloudflare أو جهاز Windows المحلي؛ لذلك تُنفذ اختبارات الجهاز واستيراد n8n من نسخة المستخدم بعد تحديث الفرع. مشروع Railway السابق لم يُحذف أو يُعدّل.
+
+
+### تشغيل اختبار Staging بعد النشر
+
+بعد إنشاء الخدمات وصدور عناوين HTTPS الفعلية، شغّل من Windows (طلبات قراءة فقط، دون إنشاء مستخدمين أو طلبات أو حركات أموال):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\scripts\\Test-ServicesPlatformStaging.ps1" `
+  -ApiBaseUrl "https://<api-hostname>" `
+  -CustomerUrl "https://<customer-domain>" `
+  -AdminUrl "https://<admin-domain>" `
+  -SaasUrl "https://<saas-domain>"
+```
+
+يقيس السكربت صحة Backend liveness/readiness، واستجابة الواجهات الثلاث، وCORS لكل نطاق، ويحفظ تقرير CSV محلياً في artifacts/staging-smoke-tests. لا تمرر رابط n8n العام إن كان المحرر خاصاً؛ تحقق منه من داخل Northflank أو عبر جلسة وصول إدارية.
+
+يستخدم GitHub Actions عنوان placeholder محجوزاً (`https://api.staging.invalid/api`) لبناء الواجهات فقط؛ ليس عنوان API حقيقياً ولا يُستخدم في نشر Workers.
+
+كما أصبحت واجهتا العميل والإدارة ترفضان بناء Production عند غياب NEXT_PUBLIC_API_URL أو عند عدم استخدام HTTPS. لذلك يجب ضبط هذا المتغير عند البناء في بيئة النشر.
