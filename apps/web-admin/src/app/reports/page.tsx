@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl } from '@/lib/api';
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
@@ -352,6 +352,10 @@ export default function AdminReportsPage() {
 
   // 1. Submit Daily Close
   const handleExecuteDailyClose = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     setActionSuccess(null);
@@ -385,6 +389,10 @@ export default function AdminReportsPage() {
 
   // 2. Submit Daily Close Adjustment
   const handleAddAdjustment = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
@@ -415,6 +423,10 @@ export default function AdminReportsPage() {
 
   // 3. Submit Owner Payout Request (TOTP MFA)
   const handleRequestPayout = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
@@ -451,6 +463,10 @@ export default function AdminReportsPage() {
 
   // 4. Finance Officer Approves Payout
   const handleApprovePayout = async (id: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     try {
       const res = await fetch(apiUrl(`/reports/owner-earnings/payouts/${id}/approve`), {
@@ -474,6 +490,10 @@ export default function AdminReportsPage() {
 
   // 5. Finance Officer Confirms Wire & Posts Ledger
   const handleConfirmPayout = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     if (!externalReference) {
       setActionError('رقم الحوالة البنكية أو المرجع الخارجي مطلوب');
       return;
@@ -604,6 +624,12 @@ export default function AdminReportsPage() {
         </div>
 
         {/* ---------------------------------------------------- */}
+        {process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED && (
+          <div className="mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs font-bold">
+            وضع Staging للقراءة فقط: إغلاق اليوم، التسويات، طلبات السحب، واعتماد الحوالات معطّلة افتراضياً.
+          </div>
+        )}
+
         {/* TAB 1: DAILY CLOSE & IMMUTABLE AUDIT TRAIL */}
         {/* ---------------------------------------------------- */}
         {activeMainTab === 'dailyClose' && (
