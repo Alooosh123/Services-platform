@@ -81,6 +81,11 @@ export default function AdminSupportPage() {
   };
 
   const loadFallbackTickets = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setTickets([]);
+      setSelectedTicket(null);
+      return;
+    }
     const demo = [
       {
         id: 'tck-test-001',
@@ -172,6 +177,10 @@ export default function AdminSupportPage() {
   };
 
   const addLocalStaffReply = () => {
+    if (process.env.NODE_ENV === 'production') {
+      alert('لم يؤكد الخادم إرسال الرد. لم يتم تسجيل أي رسالة محلياً.');
+      return;
+    }
     const localMsg = {
       id: `m-staff-${Date.now()}`,
       senderName: 'فريق الدعم (أنت)',
@@ -234,6 +243,11 @@ export default function AdminSupportPage() {
   };
 
   const loadFallbackDiagnostics = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setDiagnosticsData(null);
+      setIsDiagnosticsModalOpen(false);
+      return;
+    }
     setDiagnosticsData({
       hasLinkedOrder: true,
       orderId: selectedTicket?.orderId || 'ORD-20261011-002',
