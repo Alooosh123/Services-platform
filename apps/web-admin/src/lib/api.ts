@@ -1,5 +1,19 @@
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+if (process.env.NODE_ENV === 'production' && !configuredApiUrl) {
+  throw new Error('NEXT_PUBLIC_API_URL is required for production builds.');
+}
+
+if (
+  process.env.NODE_ENV === 'production' &&
+  configuredApiUrl &&
+  !configuredApiUrl.startsWith('https://')
+) {
+  throw new Error('NEXT_PUBLIC_API_URL must use HTTPS in production.');
+}
+
 const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
+  configuredApiUrl || 'http://localhost:4000/api'
 ).replace(/\/+$/, '');
 
 export function apiUrl(path: string): string {
