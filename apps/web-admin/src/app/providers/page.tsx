@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -34,7 +36,7 @@ export default function AdminProvidersPage() {
     setLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch('http://localhost:4000/api/providers/admin/list', {
+      const res = await fetch(apiUrl('/providers/admin/list'), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
@@ -57,7 +59,7 @@ export default function AdminProvidersPage() {
         code: 'MOCK',
         name: 'مزود الشحن الفوري التجريبي (Demo Mode)',
         type: 'MOCK',
-        baseUrl: 'http://localhost:4000/api/mock-provider',
+        baseUrl: apiUrl('/mock-provider'),
         apiKey: 'mock****345',
         balance: '10000.00',
         currency: 'USD',
@@ -99,7 +101,7 @@ export default function AdminProvidersPage() {
     setTestingId(id);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/providers/admin/${id}/test-connection`, {
+      const res = await fetch(apiUrl(`/providers/admin/${id}/test-connection`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -133,7 +135,7 @@ export default function AdminProvidersPage() {
     if (!selectedProvider) return;
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/providers/admin/${selectedProvider.id}`, {
+      const res = await fetch(apiUrl(`/providers/admin/${selectedProvider.id}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
