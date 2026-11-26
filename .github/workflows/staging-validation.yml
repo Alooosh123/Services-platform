@@ -38,8 +38,14 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Build shared package for workspace imports
+        run: npm run build --workspace=packages/shared
+
       - name: Generate Prisma Client
         run: npm run db:generate
+
+      - name: Build database package for workspace imports
+        run: npm run build --workspace=packages/database
 
       - name: Run backend unit tests
         run: npm run test --workspace=apps/backend -- --runInBand
