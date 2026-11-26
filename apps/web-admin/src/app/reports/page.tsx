@@ -173,6 +173,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackDailyReports = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setDailyReports([]);
+      return;
+    }
     setDailyReports([
       {
         id: 'dclose-2026-10-10',
@@ -240,6 +244,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackOwnerStatement = (cur: string) => {
+    if (process.env.NODE_ENV === 'production') {
+      setOwnerStatement(null);
+      return;
+    }
     setOwnerStatement({
       userId: 'user-owner-001',
       currency: cur,
@@ -259,6 +267,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackPayouts = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setOwnerPayouts([]);
+      return;
+    }
     setOwnerPayouts([
       {
         id: 'po-test-01',
@@ -278,6 +290,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackAnalytics = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setData(null);
+      return;
+    }
     setData({
       statusBreakdown: {
         total: 142,
