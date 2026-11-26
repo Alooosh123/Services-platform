@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState } from 'react';
 import {
   Wallet,
@@ -86,7 +88,7 @@ export default function AdminWalletsPage() {
     setLoadingAction(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/wallet/admin/${walletId}/freeze`, {
+      const res = await fetch(apiUrl(`/wallet/admin/${walletId}/freeze`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -121,7 +123,7 @@ export default function AdminWalletsPage() {
     setLoadingAction(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      await fetch(`http://localhost:4000/api/wallet/admin/${walletId}/unfreeze`, {
+      await fetch(apiUrl(`/wallet/admin/${walletId}/unfreeze`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
