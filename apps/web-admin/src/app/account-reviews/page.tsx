@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -109,7 +111,7 @@ export default function AccountReviewsPage() {
   const fetchReviewCases = async () => {
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      let url = 'http://localhost:4000/api/admin/account-reviews';
+      let url = apiUrl('/admin/account-reviews');
       if (filterStatus !== 'ALL') {
         url += `?status=${filterStatus}`;
       }
@@ -148,7 +150,7 @@ export default function AccountReviewsPage() {
 
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/admin/account-reviews/${selectedCase.id}/resolve`, {
+      const res = await fetch(apiUrl(`/admin/account-reviews/${selectedCase.id}/resolve`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
