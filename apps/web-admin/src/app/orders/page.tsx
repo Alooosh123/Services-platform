@@ -67,6 +67,10 @@ export default function AdminOrdersPage() {
   };
 
   const loadFallbackOrders = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setOrders([]);
+      return;
+    }
     setOrders([
       {
         id: 'ord-1',
