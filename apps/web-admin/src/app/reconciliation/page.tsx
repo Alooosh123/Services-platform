@@ -145,7 +145,7 @@ export default function ReconciliationPage() {
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   // Initial State: Batches
-  const [batches, setBatches] = useState<ReconciliationBatch[]>([
+  const [batches, setBatches] = useState<ReconciliationBatch[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       id: 'rb-20261010-01',
       batchNumber: 'REC-20261010-001',
@@ -200,7 +200,7 @@ export default function ReconciliationPage() {
   ]);
 
   // Initial State: Discrepancies
-  const [discrepancies, setDiscrepancies] = useState<DiscrepancyItem[]>([
+  const [discrepancies, setDiscrepancies] = useState<DiscrepancyItem[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       id: 'disc-001',
       batchNumber: 'REC-20261010-002',
@@ -233,7 +233,7 @@ export default function ReconciliationPage() {
   ]);
 
   // Initial State: Channels with Capability Flags
-  const [channels, setChannels] = useState<PaymentChannel[]>([
+  const [channels, setChannels] = useState<PaymentChannel[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       code: 'JAIB',
       name: 'محفظة جيب (بنك التضامن)',
@@ -347,7 +347,7 @@ export default function ReconciliationPage() {
   ]);
 
   // Initial State: Supplier Balances
-  const [suppliers, setSuppliers] = useState<SupplierAccount[]>([
+  const [suppliers, setSuppliers] = useState<SupplierAccount[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       id: 'sup-001',
       providerCode: 'SMILE_ONE',
@@ -393,7 +393,7 @@ export default function ReconciliationPage() {
   ]);
 
   // Initial State: Payouts
-  const [payouts, setPayouts] = useState<PayoutItem[]>([
+  const [payouts, setPayouts] = useState<PayoutItem[]>(process.env.NODE_ENV === 'production' ? [] : [
     {
       id: 'pay-001',
       payoutNumber: 'PAY-20261010-001',
@@ -430,6 +430,10 @@ export default function ReconciliationPage() {
 
   // Actions
   const handleSwitchChannelMode = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setAlertMessage('أدوات التسوية وتغيير القنوات وتغذية أرصدة المزودين غير متصلة بواجهة Backend معتمدة. لذلك تم تعطيلها في النسخة المنشورة ولم يُسجل أي تغيير.');
+      return;
+    }
     if (!activeChannelToEdit) return;
     setChannels((prev) =>
       prev.map((c) => (c.code === activeChannelToEdit.code ? { ...c, mode: newChannelMode } : c)),
@@ -440,6 +444,10 @@ export default function ReconciliationPage() {
   };
 
   const handleResolveDiscrepancy = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setAlertMessage('أدوات التسوية وتغيير القنوات وتغذية أرصدة المزودين غير متصلة بواجهة Backend معتمدة. لذلك تم تعطيلها في النسخة المنشورة ولم يُسجل أي تغيير.');
+      return;
+    }
     if (!activeDiscrepancyToResolve) return;
     setDiscrepancies((prev) =>
       prev.map((d) =>
@@ -461,6 +469,10 @@ export default function ReconciliationPage() {
   };
 
   const handleFundSupplier = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setAlertMessage('أدوات التسوية وتغيير القنوات وتغذية أرصدة المزودين غير متصلة بواجهة Backend معتمدة. لذلك تم تعطيلها في النسخة المنشورة ولم يُسجل أي تغيير.');
+      return;
+    }
     if (!activeSupplierToFund) return;
     const amountNum = parseFloat(fundingAmount);
     setSuppliers((prev) =>
@@ -484,6 +496,10 @@ export default function ReconciliationPage() {
   };
 
   const handleRunBatch = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setAlertMessage('أدوات التسوية وتغيير القنوات وتغذية أرصدة المزودين غير متصلة بواجهة Backend معتمدة. لذلك تم تعطيلها في النسخة المنشورة ولم يُسجل أي تغيير.');
+      return;
+    }
     const newBatchNum = `REC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-00${batches.length + 1}`;
     const newBatch: ReconciliationBatch = {
       id: `rb-${Date.now()}`,
