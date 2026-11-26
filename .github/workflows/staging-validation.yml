@@ -98,7 +98,8 @@ jobs:
         run: |
           $scripts = @(
             'scripts/check-cloudflare-vinext.ps1',
-            'automation/n8n/cloud-migration/Export-LocalWorkflowsForCloud.ps1'
+            'automation/n8n/cloud-migration/Export-LocalWorkflowsForCloud.ps1',
+            'scripts/Test-ServicesPlatformStaging.ps1'
           )
 
           foreach ($scriptPath in $scripts) {
