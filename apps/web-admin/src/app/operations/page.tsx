@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiUrl as platformApiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
 import {
   Activity,
   HardDrive,
@@ -123,7 +124,7 @@ export default function OperationsPage() {
   const [simulationMode, setSimulationMode] = useState<'SAFE_FAILOVER' | 'MOCK_TIMEOUT'>('SAFE_FAILOVER');
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+  const apiUrl = (path: string) => platformApiUrl(path);
 
   const fetchData = async () => {
     setLoading(true);
@@ -143,7 +144,7 @@ export default function OperationsPage() {
       }
 
       // 3. Mock or fetch alerts & backups
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
       const alertsRes = await fetch(`${apiUrl}/monitoring/alerts`, { headers });
@@ -158,6 +159,10 @@ export default function OperationsPage() {
         setBackups(bData);
       }
     } catch (e: any) {
+      setHealth(null);
+      setMetrics(null);
+      setAlerts([]);
+      setBackups([]);
       console.error('Operations fetch error:', e);
     } finally {
       setLoading(false);
@@ -171,8 +176,16 @@ export default function OperationsPage() {
   }, []);
 
   const triggerReconciliationAudit = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionNotice({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('admin_token');
       const res = await fetch(`${apiUrl}/monitoring/reconciliation-check`, {
         method: 'POST',
         headers: {
@@ -193,9 +206,17 @@ export default function OperationsPage() {
   };
 
   const runAT20Drill = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionNotice({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     setIsDrillRunning(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('admin_token');
       const res = await fetch(`${apiUrl}/backups/drill`, {
         method: 'POST',
         headers: {
@@ -221,9 +242,17 @@ export default function OperationsPage() {
   };
 
   const runOutageSimulation = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionNotice({ text: 'عمليات المطابقة والتعافي والمحاكاة معطّلة في Staging حتى اكتمال إعداد الخدمات واعتماد خطة الاختبار.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionNotice({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     setIsSimulating(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('admin_token');
       const res = await fetch(`${apiUrl}/monitoring/simulate-outage`, {
         method: 'POST',
         headers: {
