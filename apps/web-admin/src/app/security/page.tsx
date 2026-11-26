@@ -61,7 +61,7 @@ export default function SecurityCenterPage() {
   const fetchIncidents = async () => {
     setLoading(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       let url = apiUrl('/audit/logs?limit=50');
       if (selectedFilter !== 'ALL') {
         url += `&action=${selectedFilter}`;
@@ -74,42 +74,8 @@ export default function SecurityCenterPage() {
         setIncidents(json.data || []);
       }
     } catch {
-      // Fallback demo mock incidents if backend offline
-      setIncidents([
-        {
-          id: 'inc-001',
-          userId: 'user-attacker-002',
-          action: 'BOLA_VIOLATION_ATTEMPT',
-          entityName: 'Order',
-          entityId: 'ORD-20261011-0001',
-          newValues: { attemptedBy: 'user-attacker-002', actualOwner: 'user-victim-001' },
-          ipAddress: '185.220.101.5',
-          createdAt: new Date().toISOString(),
-          user: { fullName: 'المهاجم (Attacker)', email: 'attacker@example.com', role: 'CUSTOMER' },
-        },
-        {
-          id: 'inc-002',
-          userId: 'staff-finance-004',
-          action: 'WALLET_FROZEN',
-          entityName: 'Wallet',
-          entityId: 'wallet-a-yer',
-          newValues: { isFrozen: true, reason: 'شبهة نشاط احتيالي واختراق بيانات' },
-          ipAddress: '192.168.1.10',
-          createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-          user: { fullName: 'المدير المالي', email: 'finance@platform.ye', role: 'FINANCE_MANAGER' },
-        },
-        {
-          id: 'inc-003',
-          userId: 'user-victim-001',
-          action: 'DATA_EXPORT',
-          entityName: 'User',
-          entityId: 'user-victim-001',
-          newValues: { exportedAt: new Date(Date.now() - 3600000 * 5).toISOString() },
-          ipAddress: '178.130.40.22',
-          createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-          user: { fullName: 'العميل الأول', email: 'victim@example.com', role: 'CUSTOMER' },
-        },
-      ]);
+      // Security events must come from the API; never invent incident records.
+      setIncidents([]);
     } finally {
       setLoading(false);
     }
