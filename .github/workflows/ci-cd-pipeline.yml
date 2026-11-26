@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Reserved placeholder used only for production-mode frontend compilation in CI.
+# Real deployment environments must supply their actual HTTPS API hostname.
+env:
+  NEXT_PUBLIC_API_URL: https://api.staging.invalid/api
+
 jobs:
   quality-gate:
     name: Lint, Types & Security Audit
