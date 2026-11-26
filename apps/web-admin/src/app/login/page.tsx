@@ -34,15 +34,12 @@ export default function AdminLoginPage() {
         throw new Error(data.message || 'بيانات الدخول الإدارية غير صحيحة');
       }
 
-      if (data.requiresMfa) {
-        setTempToken(data.tempToken);
-        setStep('mfa');
-      } else if (data.tokens) {
-        localStorage.setItem('admin_token', data.tokens.accessToken);
-        localStorage.setItem('admin_user', JSON.stringify(data.user));
-        setSuccess(true);
-        setTimeout(() => router.push('/'), 1000);
+      if (!data.requiresMfa || !data.tempToken) {
+        throw new Error('رفض تسجيل الدخول: لم يطلب الخادم تحقق MFA إلزامياً.');
       }
+
+      setTempToken(data.tempToken);
+      setStep('mfa');
     } catch (err: any) {
       setError(err.message || 'فشل تسجيل الدخول');
     } finally {
@@ -70,6 +67,9 @@ export default function AdminLoginPage() {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.message || 'رمز التحقق غير صحيح');
+      }
+      if (!data.tokens?.accessToken || !data.user) {
+        throw new Error('استجابة MFA غير مكتملة. لم يتم إنشاء جلسة إدارية.');
       }
 
       localStorage.setItem('admin_token', data.tokens.accessToken);
