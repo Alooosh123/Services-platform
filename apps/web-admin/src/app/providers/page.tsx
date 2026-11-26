@@ -53,6 +53,10 @@ export default function AdminProvidersPage() {
   };
 
   const loadFallback = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setProviders([]);
+      return;
+    }
     setProviders([
       {
         id: 'prov-mock',
@@ -110,6 +114,7 @@ export default function AdminProvidersPage() {
         alert(`تم اختبار الاتصال بنجاح مع المزود "${name}". الرصيد الحالي: ${data.balance?.balance} ${data.balance?.currency}`);
         fetchProviders();
       } else {
+        if (process.env.NODE_ENV === 'production') throw new Error('Provider connection test was not confirmed by the backend.');
         alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
       }
     } catch {
