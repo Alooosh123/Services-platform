@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiUrl, getAdminToken } from '@/lib/api';
 import {
   Rocket,
   ShieldCheck,
@@ -93,12 +94,12 @@ interface GoNoGoAssessment {
 export default function PilotLaunchPage() {
   const [config, setConfig] = useState<PilotConfig>({
     id: 'default-pilot-config',
-    isPilotActive: true,
+    isPilotActive: false,
     maxOrderAmountYER: 10000,
     maxOrderAmountUSD: 20,
     maxDailyWalletLimitYER: 50000,
-    allowedProductIds: ['ALL'],
-    allowedChannelCodes: ['JAIB', 'JAWALI', 'ONE_CASH'],
+    allowedProductIds: [],
+    allowedChannelCodes: [],
     cohortType: 'TRUSTED_BETA_USERS',
     whitelistedUserIds: [],
     goNoGoDecision: 'NO_GO',
@@ -135,7 +136,6 @@ export default function PilotLaunchPage() {
   const [history, setHistory] = useState<PilotCycleResult[]>([]);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
   useEffect(() => {
     fetchData();
@@ -143,7 +143,7 @@ export default function PilotLaunchPage() {
 
   const fetchData = async () => {
     try {
-      const resCfg = await fetch(`${API_URL}/pilot/config`);
+      const resCfg = await fetch(apiUrl('/pilot/config'), { headers: { Authorization: `Bearer ${getAdminToken() || ''}` } });
       if (resCfg.ok) {
         const data = await resCfg.json();
         setConfig(data);
@@ -155,7 +155,7 @@ export default function PilotLaunchPage() {
     }
 
     try {
-      const resGng = await fetch(`${API_URL}/pilot/go-no-go`);
+      const resGng = await fetch(apiUrl('/pilot/go-no-go'), { headers: { Authorization: `Bearer ${getAdminToken() || ''}` } });
       if (resGng.ok) {
         const data = await resGng.json();
         setAssessment(data);
@@ -168,7 +168,7 @@ export default function PilotLaunchPage() {
     }
 
     try {
-      const resHist = await fetch(`${API_URL}/pilot/history`);
+      const resHist = await fetch(apiUrl('/pilot/history'), { headers: { Authorization: `Bearer ${getAdminToken() || ''}` } });
       if (resHist.ok) {
         const data = await resHist.json();
         if (Array.isArray(data)) setHistory(data);
@@ -182,6 +182,8 @@ export default function PilotLaunchPage() {
   };
 
   const handleTogglePilot = async () => {
+    setStatusMessage('تغيير حالة Pilot معطّل في النسخة المنشورة. يلزم اجتياز بوابة Go/No-Go ومراجعة مستقلة قبل أي تشغيل مالي.');
+    return;
     const nextState = !config.isPilotActive;
     try {
       const res = await fetch(`${API_URL}/pilot/config`, {
@@ -204,6 +206,9 @@ export default function PilotLaunchPage() {
   };
 
   const handleRunAt21Cycle = async () => {
+    setLastCycleResult(null);
+    setStatusMessage('دورة AT-21 التي تشمل الإيداع والشحن والتسوية والسحب معطّلة. لا تُنفذ معاملات مالية أثناء إعداد Staging.');
+    return;
     setRunningCycle(true);
     setStatusMessage('جارٍ تشغيل دورة التحقق الشاملة AT-21 (TopUp → Credit → Checkout → Settlement → Payout)...');
 
