@@ -32,3 +32,10 @@ export function getAdminAuthHeaders(init?: HeadersInit): Headers {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   return headers;
 }
+
+/**
+ * UI guard for staging safety only. Backend authorization, dual approval and
+ * ledger invariants remain mandatory and must never rely on this client flag.
+ */
+export const FINANCIAL_ADMIN_WRITES_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_FINANCIAL_ADMIN_WRITES === 'true';
