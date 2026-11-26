@@ -45,9 +45,33 @@ export function validateProductionSecrets(logger: Logger) {
       logger.error(msg);
       throw new Error(msg);
     }
+    try {
+      const parsedRedisUrl = new URL(process.env.REDIS_URL);
+      if (parsedRedisUrl.protocol !== 'rediss:' || !parsedRedisUrl.hostname || !parsedRedisUrl.password) {
+        throw new Error('REDIS_URL must use rediss:// with a host and password.');
+      }
+    } catch (error) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: REDIS_URL must be a valid TLS Redis TCP connection URL (rediss://).';
+      logger.error(msg);
+      throw new Error(msg);
+    }
 
-    if (!process.env.DATABASE_URL) {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
       const msg = 'CRITICAL SECURITY GATE FAILURE: DATABASE_URL is required in production.';
+      logger.error(msg);
+      throw new Error(msg);
+    }
+    try {
+      const parsedDatabaseUrl = new URL(databaseUrl);
+      if (
+        !['postgres:', 'postgresql:'].includes(parsedDatabaseUrl.protocol) ||
+        parsedDatabaseUrl.searchParams.get('sslmode') !== 'require'
+      ) {
+        throw new Error('DATABASE_URL must use PostgreSQL with sslmode=require.');
+      }
+    } catch (error) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: DATABASE_URL must be a valid TLS-protected PostgreSQL connection URL.';
       logger.error(msg);
       throw new Error(msg);
     }
