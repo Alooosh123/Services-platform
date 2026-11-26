@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
@@ -42,6 +42,11 @@ export default function AdminLedgerPage() {
 
   const handleAdjustBalance = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تعديلات دفتر الأستاذ معطّلة في Staging حتى اعتماد المراجعة المالية والاختبارات. لم يتم تنفيذ أي قيد.');
+      return;
+    }
 
     const token = getAdminToken();
     if (!token) {
@@ -114,6 +119,12 @@ export default function AdminLedgerPage() {
             <PlusCircle className="w-4 h-4" /> تعديل إداري مسبب للرصيد
           </button>
         </div>
+
+        {process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED && (
+          <div className="mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs font-bold">
+            وضع Staging: سجل الأستاذ للقراءة فقط. تعديل الأرصدة معطّل حتى اكتمال اعتماد الاختبارات المالية.
+          </div>
+        )}
 
         {/* Ledger Entries Table */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
