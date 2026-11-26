@@ -266,29 +266,41 @@ export default function AdminSupportPage() {
   };
 
   const handleResolveDispute = async () => {
-    if (!selectedTicket || !refundReason) return;
+    if (process.env.NODE_ENV === 'production') {
+      setNotificationMsg('اعتماد النزاعات والاستردادات معطّل في Staging حتى اكتمال ربط Backend والتحقق المستقل من صلاحيات الموافقة والقيود المالية. لم يتم إرسال أي استرداد.');
+      return;
+    }
+    if (!selectedTicket || !refundReason.trim()) return;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+    if (!token) {
+      setNotificationMsg('سجّل الدخول بحساب إداري صالح قبل البت في النزاع.');
+      return;
+    }
+
     setActionLoading(true);
     try {
       const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/resolve-dispute`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...getAuthHeader(),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           approved: refundApproved,
           refundAmount: Number(refundAmount),
-          reason: refundReason,
+          reason: refundReason.trim(),
         }),
       });
-      if (res.ok) {
-        const result = await res.json();
-        setSelectedTicket(result.ticket);
-        setIsDisputeModalOpen(false);
-        setNotificationMsg('تم توثيق قرار النزاع والاسترداد وإشعار العميل بنجاح.');
-        fetchTickets();
-      }
-    } catch {} finally {
+      if (!res.ok) throw new Error(`لم يؤكد الخادم قرار النزاع (HTTP ${res.status}).`);
+      const result = await res.json();
+      if (!result?.ticket) throw new Error('استجابة الخادم لا تحتوي على سجل النزاع المحدّث.');
+      setSelectedTicket(result.ticket);
+      setIsDisputeModalOpen(false);
+      setNotificationMsg('أكد الخادم حفظ قرار النزاع. تحقق من رقم القيد قبل إبلاغ العميل.');
+      fetchTickets();
+    } catch (error) {
+      setNotificationMsg(error instanceof Error ? error.message : 'تعذر تأكيد قرار النزاع. لم يتم تسجيل نجاح محلي.');
+    } finally {
       setActionLoading(false);
     }
   };
