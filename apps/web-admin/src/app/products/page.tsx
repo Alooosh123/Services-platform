@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -73,7 +75,7 @@ export default function AdminProductsPage() {
     setLoading(true);
     try {
       // 1. Catalog
-      const resCat = await fetch('http://localhost:4000/api/products/catalog').catch(() => null);
+      const resCat = await fetch(apiUrl('/products/catalog')).catch(() => null);
       if (resCat && resCat.ok) {
         const data = await resCat.json();
         setGames(data);
@@ -82,7 +84,7 @@ export default function AdminProductsPage() {
       }
 
       // 2. Pricing Rules
-      const resRules = await fetch('http://localhost:4000/api/products/pricing/rules').catch(() => null);
+      const resRules = await fetch(apiUrl('/products/pricing/rules')).catch(() => null);
       if (resRules && resRules.ok) {
         const rules = await resRules.json();
         setPriceRules(rules);
@@ -95,7 +97,7 @@ export default function AdminProductsPage() {
       }
 
       // 3. Service Requests
-      const resReq = await fetch('http://localhost:4000/api/products/admin/service-requests').catch(() => null);
+      const resReq = await fetch(apiUrl('/products/admin/service-requests')).catch(() => null);
       if (resReq && resReq.ok) {
         const reqs = await resReq.json();
         setServiceRequests(reqs);
@@ -203,7 +205,7 @@ export default function AdminProductsPage() {
   const handleCreateGame = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:4000/api/products/admin/game', {
+      const res = await fetch(apiUrl('/products/admin/game'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
         body: JSON.stringify({
@@ -252,7 +254,7 @@ export default function AdminProductsPage() {
     }
 
     try {
-      await fetch(`http://localhost:4000/api/products/admin/product/${product.id}/kill-switch`, {
+      await fetch(apiUrl(`/products/admin/product/${product.id}/kill-switch`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
         body: JSON.stringify({ reason }),
@@ -273,7 +275,7 @@ export default function AdminProductsPage() {
   // Pricing Simulator Calculator (AT-12 & AT-22)
   const handleRunSimulator = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/products/pricing/preview', {
+      const res = await fetch(apiUrl('/products/pricing/preview'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -325,7 +327,7 @@ export default function AdminProductsPage() {
     }
 
     try {
-      await fetch('http://localhost:4000/api/products/pricing/rules', {
+      await fetch(apiUrl('/products/pricing/rules'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
         body: JSON.stringify({
@@ -351,7 +353,7 @@ export default function AdminProductsPage() {
     if (!confirmPublish) return;
 
     try {
-      await fetch(`http://localhost:4000/api/products/admin/service-requests/${reqItem.id}/status`, {
+      await fetch(apiUrl(`/products/admin/service-requests/${reqItem.id}/status`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
         body: JSON.stringify({
