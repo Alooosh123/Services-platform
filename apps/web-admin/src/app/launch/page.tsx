@@ -186,7 +186,7 @@ export default function PilotLaunchPage() {
     return;
     const nextState = !config.isPilotActive;
     try {
-      const res = await fetch(`${API_URL}/pilot/config`, {
+      const res = await fetch(apiUrl('/pilot/config'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isPilotActive: nextState }),
@@ -213,7 +213,7 @@ export default function PilotLaunchPage() {
     setStatusMessage('جارٍ تشغيل دورة التحقق الشاملة AT-21 (TopUp → Credit → Checkout → Settlement → Payout)...');
 
     try {
-      const res = await fetch(`${API_URL}/pilot/run-cycle`, {
+      const res = await fetch(apiUrl('/pilot/run-cycle'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
