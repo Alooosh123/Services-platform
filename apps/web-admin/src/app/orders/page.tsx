@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl } from '@/lib/api';
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminToken } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
@@ -120,6 +120,11 @@ export default function AdminOrdersPage() {
   }, [filterStatus]);
 
   const handleManualFulfill = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تنفيذ الطلبات والاسترداد وإعادة المحاولة معطّلة في Staging حتى تجهيز مزود حقيقي واعتماد الاختبارات المالية.');
+      return;
+    }
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     if (!selectedOrder) return;
     if (!voucherInput.trim()) {
       alert('يرجى إدخال كود القسيمة الرقمية أو رقم العملية للتأكيد.');
@@ -155,15 +160,18 @@ export default function AdminOrdersPage() {
         alert(`فشل التنفيذ: ${err.message || 'خطأ غير معروف'}`);
       }
     } catch {
-      alert('تم حفظ التنفيذ اليدوي واعتماد تسوية الطلب.');
-      setShowFulfillModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد التنفيذ اليدوي من الخادم. لم يتم تسجيل نجاح محلي.');
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleRefund = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تنفيذ الطلبات والاسترداد وإعادة المحاولة معطّلة في Staging حتى تجهيز مزود حقيقي واعتماد الاختبارات المالية.');
+      return;
+    }
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     if (!selectedOrder) return;
     if (!refundReasonInput.trim()) {
       alert('سبب الاسترداد إلزامي ومطلوب لتوثيق القيد العكسي.');
@@ -195,15 +203,18 @@ export default function AdminOrdersPage() {
         alert(`فشل الاسترداد: ${err.message || 'خطأ'}`);
       }
     } catch {
-      alert('تم تسجيل استرداد الطلب بنجاح.');
-      setShowRefundModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد الاسترداد من الخادم. لم يتم تسجيل نجاح محلي.');
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleRetry = async (orderId: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تنفيذ الطلبات والاسترداد وإعادة المحاولة معطّلة في Staging حتى تجهيز مزود حقيقي واعتماد الاختبارات المالية.');
+      return;
+    }
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/orders/admin/${orderId}/retry`), {
@@ -219,7 +230,7 @@ export default function AdminOrdersPage() {
         fetchOrders();
       }
     } catch {
-      alert('تمت إعادة محاولة إرسال الطلب.');
+      alert('تعذر تأكيد إعادة محاولة الطلب من الخادم.');
     }
   };
 
