@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../components/Header';
 import {
@@ -61,7 +63,7 @@ export default function AdminDashboardPage() {
   });
 
   useEffect(() => {
-    fetch('http://localhost:4000/api/reports/dashboard-kpis')
+    fetch(apiUrl('/reports/dashboard-kpis'))
       .then((res) => (res.ok ? res.json() : null))
       .then((res) => {
         if (res && res.kpis) setData(res);
