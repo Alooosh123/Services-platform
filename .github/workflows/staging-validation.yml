@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: staging-validation-\${{ github.ref }}
+  group: staging-validation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -63,6 +63,28 @@ jobs:
 
       - name: Fail on high or critical advisories
         run: npm audit --audit-level=high
+
+  cloudflare-compatibility:
+    name: Cloudflare vinext compatibility scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check all three Next.js applications
+        shell: bash
+        run: |
+          set -euo pipefail
+          for app in apps/web-customer apps/web-admin apps/web-saas; do
+            echo "Checking $app"
+            (cd "$app" && npx --yes vinext check)
+          done
 
   powershell-validation:
     name: Validate migration PowerShell syntax
