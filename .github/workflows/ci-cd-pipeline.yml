@@ -56,6 +56,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: "postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public"
+      DIRECT_URL: "postgresql://postgres:postgrespassword@localhost:5432/digital_topup_test_db?schema=public"
       REDIS_URL: "redis://localhost:6379"
       JWT_SECRET: "test-jwt-access-token-secret-for-ci-pipeline-minimum-32-chars-long"
       JWT_REFRESH_SECRET: "test-jwt-refresh-token-secret-for-ci-pipeline-minimum-32-chars-long"
@@ -89,6 +90,7 @@ jobs:
     needs: quality-gate
     env:
       DATABASE_URL: "postgresql://postgres:ci-only-not-used@localhost:5432/digital_topup_test_db?schema=public"
+      DIRECT_URL: "postgresql://postgres:ci-only-not-used@localhost:5432/digital_topup_test_db?schema=public"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -108,6 +110,7 @@ jobs:
     needs: [automated-tests, migration-dryrun]
     env:
       DATABASE_URL: "postgresql://postgres:ci-only-not-used@localhost:5432/digital_topup_test_db?schema=public"
+      DIRECT_URL: "postgresql://postgres:ci-only-not-used@localhost:5432/digital_topup_test_db?schema=public"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
