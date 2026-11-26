@@ -1,0 +1,98 @@
+name: Staging validation
+
+on:
+  push:
+    branches:
+      - main
+      - infra/northflank-cloudflare-neon-upstash
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-validation-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Run backend unit tests
+        run: npm run test --workspace=apps/backend -- --runInBand
+
+      - name: Build all workspaces
+        run: npm run build
+
+  dependency-audit:
+    name: npm dependency security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Fail on high or critical advisories
+        run: npm audit --audit-level=high
+
+  powershell-validation:
+    name: Validate migration PowerShell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse migration scripts
+        shell: pwsh
+        run: |
+          $scripts = @(
+            'scripts/check-cloudflare-vinext.ps1',
+            'automation/n8n/cloud-migration/Export-LocalWorkflowsForCloud.ps1'
+          )
+
+          foreach ($scriptPath in $scripts) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD $scriptPath),
+              [ref]$tokens,
+              [ref]$parseErrors
+            )
+
+            if ($parseErrors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $scriptPath"
+              $parseErrors | Format-List | Out-String | Write-Host
+              exit 1
+            }
+
+            Write-Host "PowerShell syntax OK: $scriptPath"
+          }
