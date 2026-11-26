@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -93,7 +95,7 @@ export default function AdminReportsPage() {
 
   const fetchDailyCloseReports = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/daily-close', {
+      const res = await fetch(apiUrl('/reports/daily-close'), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -109,7 +111,7 @@ export default function AdminReportsPage() {
 
   const fetchOwnerStatement = async (cur: string) => {
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/statement?currency=${cur}`, {
+      const res = await fetch(apiUrl(`/reports/owner-earnings/statement?currency=${cur}`), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -125,7 +127,7 @@ export default function AdminReportsPage() {
 
   const fetchOwnerBeneficiaries = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/beneficiaries', {
+      const res = await fetch(apiUrl('/reports/owner-earnings/beneficiaries'), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -140,7 +142,7 @@ export default function AdminReportsPage() {
 
   const fetchOwnerPayouts = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/payouts', {
+      const res = await fetch(apiUrl('/reports/owner-earnings/payouts'), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -156,7 +158,7 @@ export default function AdminReportsPage() {
 
   const fetchAnalyticsReport = async () => {
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/profit-and-performance?dateRange=${dateRange}`, {
+      const res = await fetch(apiUrl(`/reports/profit-and-performance?dateRange=${dateRange}`), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -338,7 +340,7 @@ export default function AdminReportsPage() {
     setActionError(null);
     setActionSuccess(null);
     try {
-      const res = await fetch('http://localhost:4000/api/reports/daily-close', {
+      const res = await fetch(apiUrl('/reports/daily-close'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -370,7 +372,7 @@ export default function AdminReportsPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/daily-close/${adjDate}/adjustment`, {
+      const res = await fetch(apiUrl(`/reports/daily-close/${adjDate}/adjustment`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -400,7 +402,7 @@ export default function AdminReportsPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/payouts/request', {
+      const res = await fetch(apiUrl('/reports/owner-earnings/payouts/request'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -435,7 +437,7 @@ export default function AdminReportsPage() {
   const handleApprovePayout = async (id: string) => {
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/payouts/${id}/approve`, {
+      const res = await fetch(apiUrl(`/reports/owner-earnings/payouts/${id}/approve`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -462,7 +464,7 @@ export default function AdminReportsPage() {
     }
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/payouts/${selectedPayoutId}/confirm`, {
+      const res = await fetch(apiUrl(`/reports/owner-earnings/payouts/${selectedPayoutId}/confirm`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -689,7 +691,7 @@ export default function AdminReportsPage() {
                           </td>
                           <td className="p-3 text-center space-x-2 space-x-reverse">
                             <a
-                              href={`http://localhost:4000/api/reports/daily-close/${report.closeDate}/export`}
+                              href={apiUrl(`/reports/daily-close/${report.closeDate}/export`)}
                               target="_blank"
                               rel="noreferrer"
                               className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 transition-colors"
