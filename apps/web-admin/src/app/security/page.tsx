@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import {
   ShieldAlert,
@@ -60,7 +62,7 @@ export default function SecurityCenterPage() {
     setLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      let url = 'http://localhost:4000/api/audit/logs?limit=50';
+      let url = apiUrl('/audit/logs?limit=50');
       if (selectedFilter !== 'ALL') {
         url += `&action=${selectedFilter}`;
       }
@@ -120,7 +122,7 @@ export default function SecurityCenterPage() {
   const handlePurgeTokens = async () => {
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await fetch('http://localhost:4000/api/privacy/admin/purge-expired-tokens', {
+      const res = await fetch(apiUrl('/privacy/admin/purge-expired-tokens'), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -145,7 +147,7 @@ export default function SecurityCenterPage() {
     setIsFreezeSubmitting(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await fetch(`http://localhost:4000/api/wallet/admin/${freezeWalletId}/freeze`, {
+      const res = await fetch(apiUrl(`/wallet/admin/${freezeWalletId}/freeze`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -176,7 +178,7 @@ export default function SecurityCenterPage() {
     if (!unfreezeWalletId) return;
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await fetch(`http://localhost:4000/api/wallet/admin/${unfreezeWalletId}/unfreeze`, {
+      const res = await fetch(apiUrl(`/wallet/admin/${unfreezeWalletId}/unfreeze`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
