@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl } from '@/lib/api';
+import { apiUrl, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
@@ -17,42 +17,22 @@ export default function AdminLedgerPage() {
   const [adjustReason, setAdjustReason] = useState('');
 
   const fetchLedger = async () => {
+    const token = getAdminToken();
+    if (!token) {
+      setEntries([]);
+      return;
+    }
+
     try {
       const res = await fetch(apiUrl('/ledger/admin/statement'), {
-        headers: { Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders(),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setEntries(data.data || []);
-      }
+      if (!res.ok) throw new Error('تعذر تحميل السجل المحاسبي من الخادم');
+      const data = await res.json();
+      setEntries(Array.isArray(data.data) ? data.data : []);
     } catch {
-      setEntries([
-        {
-          id: 'led-1',
-          createdAt: new Date().toISOString(),
-          user: { fullName: 'أحمد محمد', email: 'customer@gmail.com' },
-          type: 'شراء (PURCHASE)',
-          amount: '-10.49',
-          balanceAfter: '89.51',
-          currency: 'USD',
-          referenceType: 'طلب شراء شحنة',
-          referenceId: 'ORD-20261008-8491',
-          notes: 'شراء شدات ببجي موبايل - 660 UC',
-        },
-        {
-          id: 'led-2',
-          createdAt: new Date(Date.now() - 3600000).toISOString(),
-          user: { fullName: 'أحمد محمد', email: 'customer@gmail.com' },
-          type: 'إيداع (DEPOSIT)',
-          amount: '+100.00',
-          balanceAfter: '100.00',
-          currency: 'USD',
-          referenceType: 'إيداع أولي',
-          referenceId: 'SEED-DEPOSIT-001',
-          notes: 'إيداع رصيد تجريبي عند تهيئة النظام',
-          performedByUserId: 'Super Admin',
-        },
-      ]);
+      // Never substitute demo ledger entries for real financial records.
+      setEntries([]);
     }
   };
 
@@ -62,37 +42,50 @@ export default function AdminLedgerPage() {
 
   const handleAdjustBalance = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!adjustReason || adjustReason.trim().length < 6) {
+
+    const token = getAdminToken();
+    if (!token) {
+      alert('انتهت جلسة الإدارة. سجّل الدخول مجدداً قبل تنفيذ أي تعديل مالي.');
+      return;
+    }
+    if (!targetUserId.trim()) {
+      alert('معرف العميل مطلوب. لا يتم اختيار حساب تجريبي تلقائياً.');
+      return;
+    }
+    if (!adjustReason.trim() || adjustReason.trim().length < 6) {
       alert('يجب إدخال سبب رقابي إلزامي ومبرر للتعديل.');
+      return;
+    }
+    const amount = Number(adjustAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('أدخل مبلغاً موجباً وصحيحاً.');
       return;
     }
 
     try {
       const res = await fetch(apiUrl('/ledger/admin/adjust-balance'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer mock-token',
-        },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          userId: targetUserId || 'seed-customer-id',
+          userId: targetUserId.trim(),
           type: adjustType,
-          amount: parseFloat(adjustAmount),
-          reason: adjustReason,
+          amount,
+          reason: adjustReason.trim(),
         }),
       });
 
-      if (res.ok) {
-        alert('تم تسجيل القيد المحاسبي وتحديث الرصيد بنجاح.');
-        setShowAdjustModal(false);
-        fetchLedger();
-      } else {
-        alert('تمت محاكاة تسجيل القيد المالي الإداري بنجاح.');
-        setShowAdjustModal(false);
+      if (!res.ok) {
+        throw new Error(`رفض الخادم العملية (HTTP ${res.status}). لم يتم تأكيد تسجيل القيد.`);
       }
-    } catch {
-      alert('تمت محاكاة تسجيل القيد المالي الإداري بنجاح.');
+
+      alert('أكد الخادم تسجيل القيد المحاسبي بنجاح.');
       setShowAdjustModal(false);
+      setTargetUserId('');
+      setAdjustReason('');
+      await fetchLedger();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'تعذر تنفيذ العملية. لم يتم تأكيد أي تعديل مالي.';
+      alert(message);
     }
   };
 
