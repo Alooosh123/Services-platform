@@ -1,6 +1,6 @@
 'use client';
 
-import { apiUrl } from '@/lib/api';
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminToken } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import {
@@ -86,8 +86,16 @@ export default function SecurityCenterPage() {
   }, [selectedFilter]);
 
   const handlePurgeTokens = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionMessage({ text: 'تعديلات الأمان/المحافظ معطّلة في Staging حتى اعتماد الاختبارات والموافقات. لم يتم تنفيذ أي تغيير.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionMessage({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl('/privacy/admin/purge-expired-tokens'), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -100,19 +108,27 @@ export default function SecurityCenterPage() {
         });
         fetchIncidents();
       } else {
-        setActionMessage({ text: 'تم تنفيذ تنظيف الرموز والجلسات المنتهية في وضع المحاكاة.', type: 'success' });
+        setActionMessage({ text: 'لم يؤكد الخادم تنفيذ تنظيف الجلسات والرموز.', type: 'error' });
       }
     } catch {
-      setActionMessage({ text: 'تم تنظيف الجلسات والرموز المنتهية بنجاح.', type: 'success' });
+      setActionMessage({ text: 'تعذر الاتصال بالخادم. لم يتم تأكيد تنظيف الجلسات والرموز.', type: 'error' });
     }
   };
 
   const handleFreezeSubmit = async (e: React.FormEvent) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionMessage({ text: 'تعديلات الأمان/المحافظ معطّلة في Staging حتى اعتماد الاختبارات والموافقات. لم يتم تنفيذ أي تغيير.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionMessage({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     e.preventDefault();
     if (!freezeWalletId || !freezeReason) return;
     setIsFreezeSubmitting(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/wallet/admin/${freezeWalletId}/freeze`), {
         method: 'POST',
         headers: {
@@ -132,18 +148,25 @@ export default function SecurityCenterPage() {
         setActionMessage({ text: err.message || 'فشل تجميد المحفظة', type: 'error' });
       }
     } catch {
-      setActionMessage({ text: 'تم تسجيل أمر تجميد المحفظة بنجاح.', type: 'success' });
-      setIsFreezeModalOpen(false);
+      setActionMessage({ text: 'تعذر الاتصال بالخادم. لم يتم تأكيد تجميد المحفظة.', type: 'error' });
     } finally {
       setIsFreezeSubmitting(false);
     }
   };
 
   const handleUnfreezeSubmit = async (e: React.FormEvent) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionMessage({ text: 'تعديلات الأمان/المحافظ معطّلة في Staging حتى اعتماد الاختبارات والموافقات. لم يتم تنفيذ أي تغيير.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionMessage({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     e.preventDefault();
     if (!unfreezeWalletId) return;
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const res = await fetch(apiUrl(`/wallet/admin/${unfreezeWalletId}/unfreeze`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
