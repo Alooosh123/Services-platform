@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Shield, Lock, Mail, KeyRound, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
@@ -21,7 +23,7 @@ export default function AdminLoginPage() {
     setError(null);
 
     try {
-      const res = await fetch('http://localhost:4000/api/auth/admin/login', {
+      const res = await fetch(apiUrl('/auth/admin/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
@@ -68,7 +70,7 @@ export default function AdminLoginPage() {
     setError(null);
 
     try {
-      const res = await fetch('http://localhost:4000/api/auth/admin/verify-mfa', {
+      const res = await fetch(apiUrl('/auth/admin/verify-mfa'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tempToken, code: mfaCode }),
