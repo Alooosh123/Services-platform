@@ -270,7 +270,7 @@ export default function AdminProductsPage() {
     try {
       const res = await fetch(apiUrl(`/products/admin/product/${product.id}/kill-switch`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reason }),
       });
       if (!res.ok) throw new Error(`رفض الخادم تغيير حالة الباقة (HTTP ${res.status}).`);
@@ -353,7 +353,7 @@ export default function AdminProductsPage() {
     try {
       const res = await fetch(apiUrl('/products/pricing/rules'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           scope: ruleScope,
           targetId: ruleTargetId || undefined,
@@ -380,7 +380,7 @@ export default function AdminProductsPage() {
     try {
       const res = await fetch(apiUrl(`/products/admin/service-requests/${reqItem.id}/status`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           status: 'PUBLISHED',
           adminNotes: 'تم الاعتماد والنشر الآلي المباشر (Zero-Code Dynamic Publishing).',
