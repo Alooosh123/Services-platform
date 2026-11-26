@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -55,7 +57,7 @@ export default function AdminSupportPage() {
   const fetchTickets = async () => {
     setLoading(true);
     try {
-      let url = 'http://localhost:4000/api/support/admin/tickets';
+      let url = apiUrl('/support/admin/tickets');
       const params = new URLSearchParams();
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (categoryFilter !== 'ALL') params.append('category', categoryFilter);
@@ -136,8 +138,8 @@ export default function AdminSupportPage() {
     setActionLoading(true);
     try {
       const endpoint = isInternalNote
-        ? `http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/internal-notes`
-        : `http://localhost:4000/api/support/tickets/${selectedTicket.id}/messages`;
+        ? apiUrl(`/support/admin/tickets/${selectedTicket.id}/internal-notes`)
+        : apiUrl(`/support/tickets/${selectedTicket.id}/messages`);
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -190,7 +192,7 @@ export default function AdminSupportPage() {
     if (!selectedTicket) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/status`, {
+      const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/status`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -214,7 +216,7 @@ export default function AdminSupportPage() {
     if (!selectedTicket) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/diagnose`, {
+      const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/diagnose`), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -253,7 +255,7 @@ export default function AdminSupportPage() {
     if (!selectedTicket || !refundReason) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/resolve-dispute`, {
+      const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/resolve-dispute`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
