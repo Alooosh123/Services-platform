@@ -105,8 +105,16 @@ jobs:
           npm install --workspace=packages/database --save-dev --package-lock-only --no-audit --no-fund bcrypt@6.0.0
 
       - name: Align RxJS to one version across all workspaces
+        shell: bash
         run: |
-          npm install --workspace=apps/backend --package-lock-only --no-audit --no-fund rxjs@7.8.2
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = 'apps/backend/package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.dependencies.rxjs = '7.8.2';
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          NODE
+          npm install --package-lock-only --no-audit --no-fund
 
       - name: Apply narrowly scoped patched transitive dependency overrides
         shell: bash
