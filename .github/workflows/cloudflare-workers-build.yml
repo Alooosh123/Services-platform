@@ -135,7 +135,7 @@ jobs:
       - name: Upload Cloudflare Workers build output
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflare-worker-${{ matrix.app }}
+          name: cloudflare-worker-${{ matrix.app == 'apps/web-customer' && 'customer' || matrix.app == 'apps/web-admin' && 'admin' || 'saas' }}
           path: ${{ matrix.app }}/.cloudflare/output/v1/workers/default/
           if-no-files-found: error
           retention-days: 5
