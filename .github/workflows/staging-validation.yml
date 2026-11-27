@@ -131,3 +131,126 @@ jobs:
 
             Write-Host "PowerShell syntax OK: $scriptPath"
           }
+
+  backend-runtime-smoke:
+    name: Backend runtime with ephemeral PostgreSQL and Redis
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_DB: services_platform_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d services_platform_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      NODE_ENV: test
+      PORT: 4000
+      API_PREFIX: api
+      DATABASE_URL: postgresql://postgres:ci-only-postgres-password@localhost:5432/services_platform_smoke?schema=public
+      DIRECT_URL: postgresql://postgres:ci-only-postgres-password@localhost:5432/services_platform_smoke?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-only-jwt-access-secret-at-least-32-characters-long
+      JWT_REFRESH_SECRET: ci-only-jwt-refresh-secret-at-least-32-characters-long
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      WEBHOOK_HMAC_SECRET: ci-only-webhook-hmac-secret-at-least-32-bytes-long
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build --workspace=packages/shared
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Build database package
+        run: npm run build --workspace=packages/database
+
+      - name: Create ephemeral smoke-test schema (no seed data)
+        run: npx prisma db push --skip-generate --schema=packages/database/prisma/schema.prisma
+
+      - name: Build Backend
+        run: npm run build --workspace=apps/backend
+
+      - name: Start Backend and verify live, ready, and health probes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm run start:prod --workspace=apps/backend > /tmp/services-platform-backend.log 2>&1 &
+          backend_pid=$!
+
+          cleanup() {
+            kill "$backend_pid" 2>/dev/null || true
+            wait "$backend_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --silent --fail http://127.0.0.1:4000/api/health/live -o /tmp/health-live.json; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$backend_pid" 2>/dev/null; then
+              echo "Backend exited before liveness probe succeeded."
+              cat /tmp/services-platform-backend.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Backend did not become live."
+            cat /tmp/services-platform-backend.log
+            exit 1
+          fi
+
+          node -e "const h=require('/tmp/health-live.json'); if(h.status !== 'UP') process.exit(1)"
+          echo "PASS GET /api/health/live"
+
+          ready_status=$(curl --silent --show-error --output /tmp/health-ready.json --write-out '%{http_code}' http://127.0.0.1:4000/api/health/ready)
+          if [ "$ready_status" != "200" ]; then
+            echo "Backend readiness returned HTTP $ready_status"
+            cat /tmp/health-ready.json
+            cat /tmp/services-platform-backend.log
+            exit 1
+          fi
+          node -e "const h=require('/tmp/health-ready.json'); if(h.ready !== true) process.exit(1)"
+          echo "PASS GET /api/health/ready (PostgreSQL + Redis)"
+
+          health_status=$(curl --silent --show-error --output /tmp/health-detailed.json --write-out '%{http_code}' http://127.0.0.1:4000/api/health)
+          if [ "$health_status" != "200" ]; then
+            echo "Detailed health returned HTTP $health_status"
+            cat /tmp/health-detailed.json
+            cat /tmp/services-platform-backend.log
+            exit 1
+          fi
+          node -e "const h=require('/tmp/health-detailed.json'); if(!h.services || h.services.database.status !== 'HEALTHY' || h.services.redis.status !== 'HEALTHY') process.exit(1)"
+          echo "PASS GET /api/health (database and Redis healthy)"
