@@ -113,22 +113,24 @@ jobs:
           p.overrides = {
             ...(p.overrides || {}),
             'ajv': '8.18.0',
-            'body-parser': '1.20.9',
-            'glob': '14.0.2',
             'js-yaml': '4.3.2',
             'lodash': '4.18.0',
             'picomatch': '4.0.4',
             'postcss': '8.5.33',
             'qs': '6.16.1',
             'tar': '7.5.24',
-            'tmp': '0.2.6'
+            'tmp': '0.2.6',
+            '@nestjs/cli': { 'glob': '14.0.2' },
+            'express': { 'body-parser': '2.4.0' }
           };
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
           npm install --package-lock-only --no-audit --no-fund
 
       - name: Apply any remaining non-forced compatible lockfile fixes
-        run: npm audit fix --package-lock-only --no-fund
+        shell: bash
+        run: |
+          npm audit fix --package-lock-only --no-fund || echo "Audit fix reported remaining advisories; candidate validation will continue without force."
 
       - name: Install the candidate lockfile cleanly
         run: npm ci
