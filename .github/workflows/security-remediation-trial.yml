@@ -120,6 +120,9 @@ jobs:
             'qs': '6.16.1',
             'tar': '7.5.24',
             'tmp': '0.2.6',
+            '@nestjs/common': '11.2.12',
+            '@nestjs/core': '11.2.12',
+            '@nestjs/platform-express': '11.2.12',
             '@nestjs/cli': { 'glob': '14.0.2' }
           };
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
@@ -158,6 +161,21 @@ jobs:
 
       - name: Build shared package required by backend imports
         run: npm run build --workspace=packages/shared
+
+      - name: Verify a single NestJS 11 runtime is resolved by the backend
+        shell: bash
+        run: |
+          npm ls @nestjs/common @nestjs/core @nestjs/platform-express --all
+          node - <<'NODE'
+          const path = require('node:path');
+          const backend = path.resolve('apps/backend');
+          for (const name of ['@nestjs/common', '@nestjs/core', '@nestjs/platform-express', '@nestjs/jwt']) {
+            const file = require.resolve(name + '/package.json', { paths: [backend] });
+            const pkg = require(file);
+            console.log(name + ' ' + pkg.version + ' -> ' + file);
+            if (!pkg.version.startsWith('11.')) throw new Error(name + ' resolved outside NestJS 11');
+          }
+          NODE
 
       - name: Run authentication and security regression tests
         run: npm run test --workspace=apps/backend -- --runInBand --runTestsByPath src/modules/auth/auth.security.spec.ts
