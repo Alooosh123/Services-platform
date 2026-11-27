@@ -1,5 +1,9 @@
 FROM node:20-alpine AS builder
 
+# argon2 may need a native musl build when no matching prebuilt binary exists.
+RUN apk add --no-cache python3 make g++
+ENV PYTHON=/usr/bin/python3
+
 WORKDIR /app
 
 COPY package*.json ./
@@ -14,6 +18,9 @@ RUN npm run build --workspace=packages/database
 RUN npm run build --workspace=apps/backend
 
 FROM node:20-alpine AS runner
+
+# Runtime library required by the native argon2 binding built in the builder stage.
+RUN apk add --no-cache libstdc++
 
 WORKDIR /app
 ENV NODE_ENV=production
