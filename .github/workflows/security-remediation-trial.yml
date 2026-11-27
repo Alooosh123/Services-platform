@@ -120,12 +120,12 @@ jobs:
             'qs': '6.16.1',
             'tar': '7.5.24',
             'tmp': '0.2.6',
-            '@nestjs/cli': { 'glob': '14.0.2' },
-            'express': { 'body-parser': '2.4.0' }
+            '@nestjs/cli': { 'glob': '14.0.2' }
           };
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
           npm install --package-lock-only --no-audit --no-fund
+          npm update body-parser glob --package-lock-only --no-fund
 
       - name: Apply any remaining non-forced compatible lockfile fixes
         shell: bash
@@ -155,6 +155,9 @@ jobs:
         run: |
           npm run db:generate
           npm run build --workspace=packages/database
+
+      - name: Build shared package required by backend imports
+        run: npm run build --workspace=packages/shared
 
       - name: Run authentication and security regression tests
         run: npm run test --workspace=apps/backend -- --runInBand --runTestsByPath src/modules/auth/auth.security.spec.ts
