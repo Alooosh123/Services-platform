@@ -143,6 +143,12 @@ jobs:
           npm install --package-lock-only --no-audit --no-fund
           npm update body-parser glob --package-lock-only --no-fund
 
+      - name: Regenerate workspace lockfile from manifests
+        shell: bash
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock-only --no-audit --no-fund
+
       - name: Apply any remaining non-forced compatible lockfile fixes
         shell: bash
         run: |
