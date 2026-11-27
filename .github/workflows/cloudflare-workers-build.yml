@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   worker-build:
-    name: vinext Workers build (${{ matrix.app }})
+    name: vinext Workers build and preview (${{ matrix.app }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -64,7 +64,78 @@ jobs:
         run: |
           test -f vite.config.ts
           test -f cloudflare.config.ts
-          node -e "const p=require('./package.json'); if (!p.scripts || !p.scripts['build:vinext']) process.exit(1)"
+          node -e "const p=require('./package.json'); if (!p.scripts || !p.scripts['build:vinext'] || !p.scripts.start) process.exit(1)"
 
       - name: Build production Workers output
         run: npm run build:vinext
+
+      - name: Run local Cloudflare Worker preview and HTTP smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d .cloudflare/output/v1/workers/default
+
+          npm run start -- --host 127.0.0.1 --port 8787 > /tmp/vinext-preview.log 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --silent --fail http://127.0.0.1:8787/ -o /tmp/vinext-home.html; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "Preview server exited before becoming ready."
+              cat /tmp/vinext-preview.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Preview server did not become ready."
+            cat /tmp/vinext-preview.log
+            exit 1
+          fi
+
+          test -s /tmp/vinext-home.html
+          grep -Eiq '<!doctype html|<html' /tmp/vinext-home.html
+
+          case "${{ matrix.app }}" in
+            apps/web-customer)
+              routes=(/login /register)
+              ;;
+            apps/web-admin)
+              routes=(/login)
+              ;;
+            apps/web-saas)
+              routes=()
+              ;;
+          esac
+
+          for route in "${routes[@]}"; do
+            status=$(curl --silent --show-error --output /tmp/vinext-route.html --write-out '%{http_code}' "http://127.0.0.1:8787$route")
+            if [ "$status" -lt 200 ] || [ "$status" -ge 400 ]; then
+              echo "Preview route $route returned HTTP $status"
+              cat /tmp/vinext-preview.log
+              exit 1
+            fi
+            test -s /tmp/vinext-route.html
+            echo "PASS HTTP $status $route"
+          done
+
+          echo "PASS Cloudflare Worker preview: ${{ matrix.app }}"
+
+      - name: Upload Cloudflare Workers build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-worker-${{ matrix.app }}
+          path: ${{ matrix.app }}/.cloudflare/output/v1/workers/default/
+          if-no-files-found: error
+          retention-days: 5
