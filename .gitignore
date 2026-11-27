@@ -4,6 +4,10 @@
 !.env.example
 !.env.production.example
 
+# Local migration exports and generated scan reports
+/artifacts/
+/ServicesPlatform-n8n-cloud-migration/
+
 # JavaScript workspaces
 node_modules/
 **/node_modules/

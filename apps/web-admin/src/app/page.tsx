@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../components/Header';
 import {
@@ -12,7 +14,22 @@ import {
 } from 'lucide-react';
 
 export default function AdminDashboardPage() {
-  const [data, setData] = useState<any>({
+  const emptyDashboardData = {
+    kpis: {
+      totalRevenue: '—',
+      totalCost: '—',
+      netProfit: '—',
+      totalOrders: 0,
+      completedOrders: 0,
+      failedOrders: 0,
+      successRate: '—',
+      totalCustomers: 0,
+      totalCustomerWalletLiabilities: '—',
+    },
+    providers: [],
+    recentOrders: [],
+  };
+  const [data, setData] = useState<any>(process.env.NODE_ENV === 'production' ? emptyDashboardData : {
     kpis: {
       totalRevenue: '14,285.50',
       totalCost: '11,430.00',
@@ -61,12 +78,22 @@ export default function AdminDashboardPage() {
   });
 
   useEffect(() => {
-    fetch('http://localhost:4000/api/reports/dashboard-kpis')
-      .then((res) => (res.ok ? res.json() : null))
+    const token = getAdminToken();
+    if (!token) {
+      setData(emptyDashboardData);
+      return;
+    }
+
+    fetch(apiUrl('/reports/dashboard-kpis'), { headers: getAdminAuthHeaders() })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Dashboard request failed (HTTP ${res.status})`);
+        return res.json();
+      })
       .then((res) => {
         if (res && res.kpis) setData(res);
+        else setData(emptyDashboardData);
       })
-      .catch(() => {});
+      .catch(() => setData(emptyDashboardData));
   }, []);
 
   return (

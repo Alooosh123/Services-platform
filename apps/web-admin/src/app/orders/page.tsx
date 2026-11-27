@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminToken } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -44,7 +46,7 @@ export default function AdminOrdersPage() {
     setLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const url = new URL('http://localhost:4000/api/orders/admin/all');
+      const url = new URL(apiUrl('/orders/admin/all'));
       if (filterStatus !== 'ALL') url.searchParams.append('status', filterStatus);
       if (search) url.searchParams.append('search', search);
 
@@ -65,6 +67,10 @@ export default function AdminOrdersPage() {
   };
 
   const loadFallbackOrders = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setOrders([]);
+      return;
+    }
     setOrders([
       {
         id: 'ord-1',
@@ -114,6 +120,11 @@ export default function AdminOrdersPage() {
   }, [filterStatus]);
 
   const handleManualFulfill = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تنفيذ الطلبات والاسترداد وإعادة المحاولة معطّلة في Staging حتى تجهيز مزود حقيقي واعتماد الاختبارات المالية.');
+      return;
+    }
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     if (!selectedOrder) return;
     if (!voucherInput.trim()) {
       alert('يرجى إدخال كود القسيمة الرقمية أو رقم العملية للتأكيد.');
@@ -123,7 +134,7 @@ export default function AdminOrdersPage() {
     setActionLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/orders/admin/${selectedOrder.id}/fulfill-manual`, {
+      const res = await fetch(apiUrl(`/orders/admin/${selectedOrder.id}/fulfill-manual`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -149,15 +160,18 @@ export default function AdminOrdersPage() {
         alert(`فشل التنفيذ: ${err.message || 'خطأ غير معروف'}`);
       }
     } catch {
-      alert('تم حفظ التنفيذ اليدوي واعتماد تسوية الطلب.');
-      setShowFulfillModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد التنفيذ اليدوي من الخادم. لم يتم تسجيل نجاح محلي.');
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleRefund = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تنفيذ الطلبات والاسترداد وإعادة المحاولة معطّلة في Staging حتى تجهيز مزود حقيقي واعتماد الاختبارات المالية.');
+      return;
+    }
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     if (!selectedOrder) return;
     if (!refundReasonInput.trim()) {
       alert('سبب الاسترداد إلزامي ومطلوب لتوثيق القيد العكسي.');
@@ -167,7 +181,7 @@ export default function AdminOrdersPage() {
     setActionLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/orders/admin/${selectedOrder.id}/refund`, {
+      const res = await fetch(apiUrl(`/orders/admin/${selectedOrder.id}/refund`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -189,18 +203,21 @@ export default function AdminOrdersPage() {
         alert(`فشل الاسترداد: ${err.message || 'خطأ'}`);
       }
     } catch {
-      alert('تم تسجيل استرداد الطلب بنجاح.');
-      setShowRefundModal(false);
-      setSelectedOrder(null);
+      alert('تعذر تأكيد الاسترداد من الخادم. لم يتم تسجيل نجاح محلي.');
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleRetry = async (orderId: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      alert('تنفيذ الطلبات والاسترداد وإعادة المحاولة معطّلة في Staging حتى تجهيز مزود حقيقي واعتماد الاختبارات المالية.');
+      return;
+    }
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/orders/admin/${orderId}/retry`, {
+      const res = await fetch(apiUrl(`/orders/admin/${orderId}/retry`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -213,7 +230,7 @@ export default function AdminOrdersPage() {
         fetchOrders();
       }
     } catch {
-      alert('تمت إعادة محاولة إرسال الطلب.');
+      alert('تعذر تأكيد إعادة محاولة الطلب من الخادم.');
     }
   };
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiUrl, getAdminToken } from '@/lib/api';
 import {
   Rocket,
   ShieldCheck,
@@ -93,12 +94,12 @@ interface GoNoGoAssessment {
 export default function PilotLaunchPage() {
   const [config, setConfig] = useState<PilotConfig>({
     id: 'default-pilot-config',
-    isPilotActive: true,
+    isPilotActive: false,
     maxOrderAmountYER: 10000,
     maxOrderAmountUSD: 20,
     maxDailyWalletLimitYER: 50000,
-    allowedProductIds: ['ALL'],
-    allowedChannelCodes: ['JAIB', 'JAWALI', 'ONE_CASH'],
+    allowedProductIds: [],
+    allowedChannelCodes: [],
     cohortType: 'TRUSTED_BETA_USERS',
     whitelistedUserIds: [],
     goNoGoDecision: 'NO_GO',
@@ -135,7 +136,6 @@ export default function PilotLaunchPage() {
   const [history, setHistory] = useState<PilotCycleResult[]>([]);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
   useEffect(() => {
     fetchData();
@@ -143,7 +143,7 @@ export default function PilotLaunchPage() {
 
   const fetchData = async () => {
     try {
-      const resCfg = await fetch(`${API_URL}/pilot/config`);
+      const resCfg = await fetch(apiUrl('/pilot/config'), { headers: { Authorization: `Bearer ${getAdminToken() || ''}` } });
       if (resCfg.ok) {
         const data = await resCfg.json();
         setConfig(data);
@@ -155,7 +155,7 @@ export default function PilotLaunchPage() {
     }
 
     try {
-      const resGng = await fetch(`${API_URL}/pilot/go-no-go`);
+      const resGng = await fetch(apiUrl('/pilot/go-no-go'), { headers: { Authorization: `Bearer ${getAdminToken() || ''}` } });
       if (resGng.ok) {
         const data = await resGng.json();
         setAssessment(data);
@@ -168,7 +168,7 @@ export default function PilotLaunchPage() {
     }
 
     try {
-      const resHist = await fetch(`${API_URL}/pilot/history`);
+      const resHist = await fetch(apiUrl('/pilot/history'), { headers: { Authorization: `Bearer ${getAdminToken() || ''}` } });
       if (resHist.ok) {
         const data = await resHist.json();
         if (Array.isArray(data)) setHistory(data);
@@ -182,60 +182,16 @@ export default function PilotLaunchPage() {
   };
 
   const handleTogglePilot = async () => {
-    const nextState = !config.isPilotActive;
-    try {
-      const res = await fetch(`${API_URL}/pilot/config`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isPilotActive: nextState }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setConfig(updated);
-        setStatusMessage(nextState ? 'تم تفعيل وضع الإطلاق التجريبي (Pilot Caps Active)' : 'تم الانتقال إلى وضع الإطلاق التجاري العام (Public Production)');
-      } else {
-        setStatusMessage('رفض الخادم تغيير وضع التشغيل؛ لم يتم تحديث الإعداد محلياً.');
-      }
-    } catch (error) {
-      setStatusMessage(
-        `تعذر تغيير وضع Pilot: ${error instanceof Error ? error.message : 'خطأ اتصال غير معروف'}`,
-      );
-    }
+    setStatusMessage(
+      'تغيير حالة Pilot معطّل في النسخة المنشورة. يلزم اجتياز بوابة Go/No-Go ومراجعة مستقلة قبل أي تشغيل مالي.',
+    );
   };
 
   const handleRunAt21Cycle = async () => {
-    setRunningCycle(true);
-    setStatusMessage('جارٍ تشغيل دورة التحقق الشاملة AT-21 (TopUp → Credit → Checkout → Settlement → Payout)...');
-
-    try {
-      const res = await fetch(`${API_URL}/pilot/run-cycle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: Number(cycleAmount),
-          currency: cycleCurrency,
-          channelCode: cycleChannel,
-          cycleName: `AT-21-LIVE-RUN-${cycleCurrency}-${cycleAmount}`,
-        }),
-      });
-
-      if (res.ok) {
-        const data: PilotCycleResult = await res.json();
-        setLastCycleResult(data);
-        setHistory((prev) => [data, ...prev]);
-        setStatusMessage(`اكتمل التنفيذ: ${data.notes}`);
-      } else {
-        setLastCycleResult(null);
-        setStatusMessage('لم تُنفذ دورة AT-21؛ الخادم لم يؤكد تنفيذها.');
-      }
-    } catch (error) {
-      setLastCycleResult(null);
-      setStatusMessage(
-        `تعذر تنفيذ دورة AT-21: ${error instanceof Error ? error.message : 'خطأ اتصال غير معروف'}`,
-      );
-    } finally {
-      setRunningCycle(false);
-    }
+    setLastCycleResult(null);
+    setStatusMessage(
+      'دورة AT-21 التي تشمل الإيداع والشحن والتسوية والسحب معطّلة. لا تُنفذ معاملات مالية أثناء إعداد Staging.',
+    );
   };
 
   return (
@@ -409,14 +365,14 @@ export default function PilotLaunchPage() {
         {/* Live AT-21 Flow Breakdown */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 pt-2">
           {[
-            { step: '1', title: 'إيداع بنكي', desc: 'Bank TopUp', status: 'OK' },
-            { step: '2', title: 'قيد الأستاذ', desc: 'Double-Entry', status: 'OK' },
-            { step: '3', title: 'حجز الرصيد', desc: 'Wallet Hold', status: 'OK' },
-            { step: '4', title: 'تنفيذ الشحن', desc: 'Provider Fulfillment', status: 'OK' },
-            { step: '5', title: 'تسوية المزود', desc: 'Cost Settlement', status: 'OK' },
-            { step: '6', title: 'إقفال اليوم', desc: 'Daily Close', status: 'OK' },
-            { step: '7', title: 'سحب الأرباح', desc: 'MFA Payout', status: 'OK' },
-            { step: '8', title: 'المطابقة البنكية', desc: 'Reconciliation', status: 'OK' },
+            { step: '1', title: 'إيداع بنكي', desc: 'Bank TopUp', status: 'NOT_VERIFIED' },
+            { step: '2', title: 'قيد الأستاذ', desc: 'Double-Entry', status: 'NOT_VERIFIED' },
+            { step: '3', title: 'حجز الرصيد', desc: 'Wallet Hold', status: 'NOT_VERIFIED' },
+            { step: '4', title: 'تنفيذ الشحن', desc: 'Provider Fulfillment', status: 'NOT_VERIFIED' },
+            { step: '5', title: 'تسوية المزود', desc: 'Cost Settlement', status: 'NOT_VERIFIED' },
+            { step: '6', title: 'إقفال اليوم', desc: 'Daily Close', status: 'NOT_VERIFIED' },
+            { step: '7', title: 'سحب الأرباح', desc: 'MFA Payout', status: 'NOT_VERIFIED' },
+            { step: '8', title: 'المطابقة البنكية', desc: 'Reconciliation', status: 'NOT_VERIFIED' },
           ].map((item, idx) => (
             <div
               key={idx}
@@ -427,8 +383,8 @@ export default function PilotLaunchPage() {
               </span>
               <p className="text-xs font-bold text-white truncate">{item.title}</p>
               <p className="text-[10px] text-slate-400 truncate">{item.desc}</p>
-              <span className="inline-block text-[10px] font-mono font-bold text-emerald-400">
-                ✓ {item.status}
+              <span className="inline-block text-[10px] font-mono font-bold text-amber-300">
+                • {item.status === 'NOT_VERIFIED' ? 'غير متحقق' : item.status}
               </span>
             </div>
           ))}

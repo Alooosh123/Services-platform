@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl, getAdminAuthHeaders, getAdminToken } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -49,7 +51,7 @@ export default function AdminProductsPage() {
   const [packageCost, setPackageCost] = useState('1.00');
   const [packageRetail, setPackageRetail] = useState('1.20');
   const [packageCurrency, setPackageCurrency] = useState('USD');
-  const [providerCode, setProviderCode] = useState('YEMEN_TOPUP_MOCK');
+  const [providerCode, setProviderCode] = useState('');
   const [isManualFulfillment, setIsManualFulfillment] = useState(false);
   const [gatingError, setGatingError] = useState<string | null>(null);
 
@@ -73,7 +75,7 @@ export default function AdminProductsPage() {
     setLoading(true);
     try {
       // 1. Catalog
-      const resCat = await fetch('http://localhost:4000/api/products/catalog').catch(() => null);
+      const resCat = await fetch(apiUrl('/products/catalog')).catch(() => null);
       if (resCat && resCat.ok) {
         const data = await resCat.json();
         setGames(data);
@@ -82,10 +84,12 @@ export default function AdminProductsPage() {
       }
 
       // 2. Pricing Rules
-      const resRules = await fetch('http://localhost:4000/api/products/pricing/rules').catch(() => null);
+      const resRules = await fetch(apiUrl('/products/pricing/rules')).catch(() => null);
       if (resRules && resRules.ok) {
         const rules = await resRules.json();
         setPriceRules(rules);
+      } else if (process.env.NODE_ENV === 'production') {
+        setPriceRules([]);
       } else {
         setPriceRules([
           { id: 'prule-def', version: 1, scope: 'DEFAULT', targetId: null, marginType: 'PERCENTAGE', marginValue: 10, feePercentage: 1.0, changeReason: 'القاعدة الافتراضية الأولية للمنصة', isActive: true },
@@ -95,10 +99,12 @@ export default function AdminProductsPage() {
       }
 
       // 3. Service Requests
-      const resReq = await fetch('http://localhost:4000/api/products/admin/service-requests').catch(() => null);
+      const resReq = await fetch(apiUrl('/products/admin/service-requests')).catch(() => null);
       if (resReq && resReq.ok) {
         const reqs = await resReq.json();
         setServiceRequests(reqs);
+      } else if (process.env.NODE_ENV === 'production') {
+        setServiceRequests([]);
       } else {
         setServiceRequests([
           { id: 'req-01', title: 'شحن عملات تطبيق لايكي (Likee)', categorySlug: 'apps', description: 'يرجى توفير باقات تطبيق لايكي للبث المباشر', identifierLabelAr: 'Likee ID', status: 'PENDING', requestedByUserId: 'cust-99', contactPhone: '777000111', createdAt: new Date().toISOString() },
@@ -111,6 +117,10 @@ export default function AdminProductsPage() {
   };
 
   const loadFallbackCatalog = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setGames([]);
+      return;
+    }
     setGames([
       {
         id: '1',
@@ -202,10 +212,11 @@ export default function AdminProductsPage() {
   // Create Game Handler
   const handleCreateGame = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     try {
-      const res = await fetch('http://localhost:4000/api/products/admin/game', {
+      const res = await fetch(apiUrl('/products/admin/game'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           name: gameName,
           nameAr: gameNameAr,
@@ -213,18 +224,22 @@ export default function AdminProductsPage() {
           playerFields: fields,
         }),
       });
+      if (!res.ok) throw new Error(`رفض الخادم حفظ اللعبة (HTTP ${res.status}).`);
       setShowAddGameModal(false);
       fetchData();
-      alert('تم حفظ اللعبة والحقول المخصصة بنجاح!');
-    } catch {
-      setShowAddGameModal(false);
-      alert('تم حفظ اللعبة ديناميكياً.');
+      alert('أكد الخادم حفظ اللعبة والحقول المخصصة.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'تعذر حفظ اللعبة.');
     }
   };
 
   // Create Package with Provider Gating Enforcement (AT-11)
   const handleCreatePackage = (e: React.FormEvent) => {
     e.preventDefault();
+    if (process.env.NODE_ENV === 'production') {
+      setGatingError('إنشاء الباقات غير متاح حتى ربط النموذج بواجهة حفظ فعلية في الخادم. لم يتم نشر أي باقة.');
+      return;
+    }
     setGatingError(null);
 
     // Enforce Provider Mapping Gating
@@ -239,6 +254,7 @@ export default function AdminProductsPage() {
 
   // Toggle Emergency Kill Switch (AT-24)
   const handleToggleKillSwitch = async (product: any) => {
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     const isStopping = product.isActive;
     const promptMsg = isStopping
       ? `هل أنت متأكد من تفعيل زر الإيقاف الطارئ (Emergency Kill Switch) للباقة [${product.nameAr || product.name}]؟ سيتم حظر طلبات الشراء فوراً لمنع الخسائر.`
@@ -252,12 +268,16 @@ export default function AdminProductsPage() {
     }
 
     try {
-      await fetch(`http://localhost:4000/api/products/admin/product/${product.id}/kill-switch`, {
+      const res = await fetch(apiUrl(`/products/admin/product/${product.id}/kill-switch`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reason }),
       });
-    } catch {}
+      if (!res.ok) throw new Error(`رفض الخادم تغيير حالة الباقة (HTTP ${res.status}).`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'لم يؤكد الخادم تغيير حالة الباقة.');
+      return;
+    }
 
     // Update local state
     setGames((prev) =>
@@ -273,7 +293,7 @@ export default function AdminProductsPage() {
   // Pricing Simulator Calculator (AT-12 & AT-22)
   const handleRunSimulator = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/products/pricing/preview', {
+      const res = await fetch(apiUrl('/products/pricing/preview'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -284,12 +304,17 @@ export default function AdminProductsPage() {
           targetId: simTargetId,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setSimResult(data);
+      if (!res.ok) throw new Error(`تعذر حساب السعر من الخادم (HTTP ${res.status}).`);
+      const data = await res.json();
+      setSimResult(data);
+      return;
+    } catch (error) {
+      if (process.env.NODE_ENV === 'production') {
+        setSimResult(null);
+        setGatingError(error instanceof Error ? error.message : 'تعذر حساب السعر من الخادم.');
         return;
       }
-    } catch {}
+    }
 
     // Fallback dynamic calculation simulation
     const cost = parseFloat(simCost) || 0;
@@ -319,15 +344,16 @@ export default function AdminProductsPage() {
   // Create Price Rule Version
   const handleCreatePriceRule = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     if (!ruleChangeReason.trim()) {
       alert('سبب التعديل إلزامي لتوثيق سجل التدقيق المحاسبي (Four-Eyes & Audit).');
       return;
     }
 
     try {
-      await fetch('http://localhost:4000/api/products/pricing/rules', {
+      const res = await fetch(apiUrl('/products/pricing/rules'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           scope: ruleScope,
           targetId: ruleTargetId || undefined,
@@ -336,30 +362,35 @@ export default function AdminProductsPage() {
           changeReason: ruleChangeReason,
         }),
       });
+      if (!res.ok) throw new Error(`رفض الخادم حفظ قاعدة التسعير (HTTP ${res.status}).`);
       setShowAddRuleModal(false);
       fetchData();
-      alert('تم اعتماد وحفظ إصدار قاعدة التسعير الجديد دون التأثير على الطلبات السابقة!');
-    } catch {
-      setShowAddRuleModal(false);
-      alert('تم حفظ إصدار قاعدة التسعير.');
+      alert('أكد الخادم حفظ إصدار قاعدة التسعير.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'تعذر حفظ قاعدة التسعير.');
     }
   };
 
   // Publish Customer Service Request (AT-11)
   const handlePublishServiceRequest = async (reqItem: any) => {
+    if (!getAdminToken()) { alert('سجّل الدخول بحساب إداري صالح أولاً.'); return; }
     const confirmPublish = confirm(`هل تريد اعتماد ونشر الخدمة [${reqItem.title}] مباشرة في الكتالوج دون تعديل الكود المصدري؟`);
     if (!confirmPublish) return;
 
     try {
-      await fetch(`http://localhost:4000/api/products/admin/service-requests/${reqItem.id}/status`, {
+      const res = await fetch(apiUrl(`/products/admin/service-requests/${reqItem.id}/status`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-token' },
+        headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           status: 'PUBLISHED',
           adminNotes: 'تم الاعتماد والنشر الآلي المباشر (Zero-Code Dynamic Publishing).',
         }),
       });
-    } catch {}
+      if (!res.ok) throw new Error(`رفض الخادم نشر الخدمة (HTTP ${res.status}).`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'لم يؤكد الخادم نشر الخدمة.');
+      return;
+    }
 
     setServiceRequests((prev) =>
       prev.map((r) => (r.id === reqItem.id ? { ...r, status: 'PUBLISHED' } : r)),

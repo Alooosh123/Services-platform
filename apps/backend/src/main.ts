@@ -45,6 +45,75 @@ export function validateProductionSecrets(logger: Logger) {
       logger.error(msg);
       throw new Error(msg);
     }
+    try {
+      const parsedRedisUrl = new URL(process.env.REDIS_URL);
+      if (parsedRedisUrl.protocol !== 'rediss:' || !parsedRedisUrl.hostname || !parsedRedisUrl.password) {
+        throw new Error('REDIS_URL must use rediss:// with a host and password.');
+      }
+    } catch (error) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: REDIS_URL must be a valid TLS Redis TCP connection URL (rediss://).';
+      logger.error(msg);
+      throw new Error(msg);
+    }
+
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: DATABASE_URL is required in production.';
+      logger.error(msg);
+      throw new Error(msg);
+    }
+    try {
+      const parsedDatabaseUrl = new URL(databaseUrl);
+      if (
+        !['postgres:', 'postgresql:'].includes(parsedDatabaseUrl.protocol) ||
+        parsedDatabaseUrl.searchParams.get('sslmode') !== 'require'
+      ) {
+        throw new Error('DATABASE_URL must use PostgreSQL with sslmode=require.');
+      }
+    } catch (error) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: DATABASE_URL must be a valid TLS-protected PostgreSQL connection URL.';
+      logger.error(msg);
+      throw new Error(msg);
+    }
+
+    if (jwtSecret === refreshSecret) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: JWT_SECRET and JWT_REFRESH_SECRET must be distinct values.';
+      logger.error(msg);
+      throw new Error(msg);
+    }
+
+    const configuredOrigins = (process.env.CORS_ORIGIN || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+
+    if (configuredOrigins.length === 0 || configuredOrigins.includes('*')) {
+      const msg = 'CRITICAL SECURITY GATE FAILURE: CORS_ORIGIN must contain explicit HTTPS application origins; wildcard and empty lists are forbidden.';
+      logger.error(msg);
+      throw new Error(msg);
+    }
+
+    for (const origin of configuredOrigins) {
+      let parsedOrigin: URL;
+      try {
+        parsedOrigin = new URL(origin);
+      } catch {
+        const msg = 'CRITICAL SECURITY GATE FAILURE: CORS_ORIGIN contains an invalid origin.';
+        logger.error(msg);
+        throw new Error(msg);
+      }
+
+      if (
+        parsedOrigin.protocol !== 'https:' ||
+        parsedOrigin.origin !== origin ||
+        parsedOrigin.username ||
+        parsedOrigin.password
+      ) {
+        const msg = 'CRITICAL SECURITY GATE FAILURE: every CORS_ORIGIN entry must be an exact HTTPS origin without paths or credentials.';
+        logger.error(msg);
+        throw new Error(msg);
+      }
+    }
   }
 }
 

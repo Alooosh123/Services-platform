@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -34,7 +36,7 @@ export default function AdminProvidersPage() {
     setLoading(true);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch('http://localhost:4000/api/providers/admin/list', {
+      const res = await fetch(apiUrl('/providers/admin/list'), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
@@ -51,13 +53,17 @@ export default function AdminProvidersPage() {
   };
 
   const loadFallback = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setProviders([]);
+      return;
+    }
     setProviders([
       {
         id: 'prov-mock',
         code: 'MOCK',
         name: 'مزود الشحن الفوري التجريبي (Demo Mode)',
         type: 'MOCK',
-        baseUrl: 'http://localhost:4000/api/mock-provider',
+        baseUrl: apiUrl('/mock-provider'),
         apiKey: 'mock****345',
         balance: '10000.00',
         currency: 'USD',
@@ -99,7 +105,7 @@ export default function AdminProvidersPage() {
     setTestingId(id);
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/providers/admin/${id}/test-connection`, {
+      const res = await fetch(apiUrl(`/providers/admin/${id}/test-connection`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -108,10 +114,15 @@ export default function AdminProvidersPage() {
         alert(`تم اختبار الاتصال بنجاح مع المزود "${name}". الرصيد الحالي: ${data.balance?.balance} ${data.balance?.currency}`);
         fetchProviders();
       } else {
+        if (process.env.NODE_ENV === 'production') throw new Error('Provider connection test was not confirmed by the backend.');
         alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
       }
     } catch {
-      alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
+      if (process.env.NODE_ENV === 'production') {
+        alert('تعذر تأكيد اتصال المزود من الخادم. لم يتم تسجيل نجاح الاختبار.');
+      } else {
+        alert(`فحص الاتصال بالمزود ${name} نجح (محاكاة الاتصال عبر المحول).`);
+      }
     } finally {
       setTestingId(null);
     }
@@ -133,7 +144,7 @@ export default function AdminProvidersPage() {
     if (!selectedProvider) return;
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
-      const res = await fetch(`http://localhost:4000/api/providers/admin/${selectedProvider.id}`, {
+      const res = await fetch(apiUrl(`/providers/admin/${selectedProvider.id}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -147,12 +158,20 @@ export default function AdminProvidersPage() {
         setEditModal(false);
         fetchProviders();
       } else {
-        alert('تم حفظ التعديلات.');
-        setEditModal(false);
+        if (process.env.NODE_ENV === 'production') {
+          alert('لم يؤكد الخادم حفظ إعدادات المزود. لم يتم تحديث الحالة المحلية.');
+        } else {
+          alert('لم يؤكد الخادم حفظ الإعدادات.');
+          setEditModal(false);
+        }
       }
     } catch {
-      alert('تم حفظ التعديلات.');
-      setEditModal(false);
+      if (process.env.NODE_ENV === 'production') {
+        alert('تعذر الاتصال بالخادم. لم يتم حفظ إعدادات المزود.');
+      } else {
+        alert('تعذر الاتصال بالخادم.');
+        setEditModal(false);
+      }
     }
   };
 

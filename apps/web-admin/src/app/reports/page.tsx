@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -93,7 +95,7 @@ export default function AdminReportsPage() {
 
   const fetchDailyCloseReports = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/daily-close', {
+      const res = await fetch(apiUrl('/reports/daily-close'), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -109,7 +111,7 @@ export default function AdminReportsPage() {
 
   const fetchOwnerStatement = async (cur: string) => {
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/statement?currency=${cur}`, {
+      const res = await fetch(apiUrl(`/reports/owner-earnings/statement?currency=${cur}`), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -125,7 +127,7 @@ export default function AdminReportsPage() {
 
   const fetchOwnerBeneficiaries = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/beneficiaries', {
+      const res = await fetch(apiUrl('/reports/owner-earnings/beneficiaries'), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -140,7 +142,7 @@ export default function AdminReportsPage() {
 
   const fetchOwnerPayouts = async () => {
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/payouts', {
+      const res = await fetch(apiUrl('/reports/owner-earnings/payouts'), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -156,7 +158,7 @@ export default function AdminReportsPage() {
 
   const fetchAnalyticsReport = async () => {
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/profit-and-performance?dateRange=${dateRange}`, {
+      const res = await fetch(apiUrl(`/reports/profit-and-performance?dateRange=${dateRange}`), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -171,6 +173,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackDailyReports = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setDailyReports([]);
+      return;
+    }
     setDailyReports([
       {
         id: 'dclose-2026-10-10',
@@ -238,6 +244,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackOwnerStatement = (cur: string) => {
+    if (process.env.NODE_ENV === 'production') {
+      setOwnerStatement(null);
+      return;
+    }
     setOwnerStatement({
       userId: 'user-owner-001',
       currency: cur,
@@ -257,6 +267,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackPayouts = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setOwnerPayouts([]);
+      return;
+    }
     setOwnerPayouts([
       {
         id: 'po-test-01',
@@ -276,6 +290,10 @@ export default function AdminReportsPage() {
   };
 
   const loadFallbackAnalytics = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setData(null);
+      return;
+    }
     setData({
       statusBreakdown: {
         total: 142,
@@ -334,11 +352,15 @@ export default function AdminReportsPage() {
 
   // 1. Submit Daily Close
   const handleExecuteDailyClose = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     setActionSuccess(null);
     try {
-      const res = await fetch('http://localhost:4000/api/reports/daily-close', {
+      const res = await fetch(apiUrl('/reports/daily-close'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -367,10 +389,14 @@ export default function AdminReportsPage() {
 
   // 2. Submit Daily Close Adjustment
   const handleAddAdjustment = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/daily-close/${adjDate}/adjustment`, {
+      const res = await fetch(apiUrl(`/reports/daily-close/${adjDate}/adjustment`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -397,10 +423,14 @@ export default function AdminReportsPage() {
 
   // 3. Submit Owner Payout Request (TOTP MFA)
   const handleRequestPayout = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
-      const res = await fetch('http://localhost:4000/api/reports/owner-earnings/payouts/request', {
+      const res = await fetch(apiUrl('/reports/owner-earnings/payouts/request'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -433,9 +463,13 @@ export default function AdminReportsPage() {
 
   // 4. Finance Officer Approves Payout
   const handleApprovePayout = async (id: string) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/payouts/${id}/approve`, {
+      const res = await fetch(apiUrl(`/reports/owner-earnings/payouts/${id}/approve`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -456,13 +490,17 @@ export default function AdminReportsPage() {
 
   // 5. Finance Officer Confirms Wire & Posts Ledger
   const handleConfirmPayout = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionError('العمليات المالية معطّلة في Staging حتى اكتمال المراجعة والاختبارات المستقلة. لم يتم إرسال أي طلب مالي.');
+      return;
+    }
     if (!externalReference) {
       setActionError('رقم الحوالة البنكية أو المرجع الخارجي مطلوب');
       return;
     }
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/reports/owner-earnings/payouts/${selectedPayoutId}/confirm`, {
+      const res = await fetch(apiUrl(`/reports/owner-earnings/payouts/${selectedPayoutId}/confirm`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -586,6 +624,12 @@ export default function AdminReportsPage() {
         </div>
 
         {/* ---------------------------------------------------- */}
+        {process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED && (
+          <div className="mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs font-bold">
+            وضع Staging للقراءة فقط: إغلاق اليوم، التسويات، طلبات السحب، واعتماد الحوالات معطّلة افتراضياً.
+          </div>
+        )}
+
         {/* TAB 1: DAILY CLOSE & IMMUTABLE AUDIT TRAIL */}
         {/* ---------------------------------------------------- */}
         {activeMainTab === 'dailyClose' && (
@@ -689,7 +733,7 @@ export default function AdminReportsPage() {
                           </td>
                           <td className="p-3 text-center space-x-2 space-x-reverse">
                             <a
-                              href={`http://localhost:4000/api/reports/daily-close/${report.closeDate}/export`}
+                              href={apiUrl(`/reports/daily-close/${report.closeDate}/export`)}
                               target="_blank"
                               rel="noreferrer"
                               className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 transition-colors"

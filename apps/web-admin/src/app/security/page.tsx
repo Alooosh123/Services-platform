@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl, FINANCIAL_ADMIN_WRITES_ENABLED, getAdminToken } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import {
   ShieldAlert,
@@ -59,8 +61,8 @@ export default function SecurityCenterPage() {
   const fetchIncidents = async () => {
     setLoading(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      let url = 'http://localhost:4000/api/audit/logs?limit=50';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+      let url = apiUrl('/audit/logs?limit=50');
       if (selectedFilter !== 'ALL') {
         url += `&action=${selectedFilter}`;
       }
@@ -72,42 +74,8 @@ export default function SecurityCenterPage() {
         setIncidents(json.data || []);
       }
     } catch {
-      // Fallback demo mock incidents if backend offline
-      setIncidents([
-        {
-          id: 'inc-001',
-          userId: 'user-attacker-002',
-          action: 'BOLA_VIOLATION_ATTEMPT',
-          entityName: 'Order',
-          entityId: 'ORD-20261011-0001',
-          newValues: { attemptedBy: 'user-attacker-002', actualOwner: 'user-victim-001' },
-          ipAddress: '185.220.101.5',
-          createdAt: new Date().toISOString(),
-          user: { fullName: 'المهاجم (Attacker)', email: 'attacker@example.com', role: 'CUSTOMER' },
-        },
-        {
-          id: 'inc-002',
-          userId: 'staff-finance-004',
-          action: 'WALLET_FROZEN',
-          entityName: 'Wallet',
-          entityId: 'wallet-a-yer',
-          newValues: { isFrozen: true, reason: 'شبهة نشاط احتيالي واختراق بيانات' },
-          ipAddress: '192.168.1.10',
-          createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-          user: { fullName: 'المدير المالي', email: 'finance@platform.ye', role: 'FINANCE_MANAGER' },
-        },
-        {
-          id: 'inc-003',
-          userId: 'user-victim-001',
-          action: 'DATA_EXPORT',
-          entityName: 'User',
-          entityId: 'user-victim-001',
-          newValues: { exportedAt: new Date(Date.now() - 3600000 * 5).toISOString() },
-          ipAddress: '178.130.40.22',
-          createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-          user: { fullName: 'العميل الأول', email: 'victim@example.com', role: 'CUSTOMER' },
-        },
-      ]);
+      // Security events must come from the API; never invent incident records.
+      setIncidents([]);
     } finally {
       setLoading(false);
     }
@@ -118,9 +86,17 @@ export default function SecurityCenterPage() {
   }, [selectedFilter]);
 
   const handlePurgeTokens = async () => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionMessage({ text: 'تعديلات الأمان/المحافظ معطّلة في Staging حتى اعتماد الاختبارات والموافقات. لم يتم تنفيذ أي تغيير.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionMessage({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await fetch('http://localhost:4000/api/privacy/admin/purge-expired-tokens', {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+      const res = await fetch(apiUrl('/privacy/admin/purge-expired-tokens'), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -132,20 +108,28 @@ export default function SecurityCenterPage() {
         });
         fetchIncidents();
       } else {
-        setActionMessage({ text: 'تم تنفيذ تنظيف الرموز والجلسات المنتهية في وضع المحاكاة.', type: 'success' });
+        setActionMessage({ text: 'لم يؤكد الخادم تنفيذ تنظيف الجلسات والرموز.', type: 'error' });
       }
     } catch {
-      setActionMessage({ text: 'تم تنظيف الجلسات والرموز المنتهية بنجاح.', type: 'success' });
+      setActionMessage({ text: 'تعذر الاتصال بالخادم. لم يتم تأكيد تنظيف الجلسات والرموز.', type: 'error' });
     }
   };
 
   const handleFreezeSubmit = async (e: React.FormEvent) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionMessage({ text: 'تعديلات الأمان/المحافظ معطّلة في Staging حتى اعتماد الاختبارات والموافقات. لم يتم تنفيذ أي تغيير.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionMessage({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     e.preventDefault();
     if (!freezeWalletId || !freezeReason) return;
     setIsFreezeSubmitting(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await fetch(`http://localhost:4000/api/wallet/admin/${freezeWalletId}/freeze`, {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+      const res = await fetch(apiUrl(`/wallet/admin/${freezeWalletId}/freeze`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -164,19 +148,26 @@ export default function SecurityCenterPage() {
         setActionMessage({ text: err.message || 'فشل تجميد المحفظة', type: 'error' });
       }
     } catch {
-      setActionMessage({ text: 'تم تسجيل أمر تجميد المحفظة بنجاح.', type: 'success' });
-      setIsFreezeModalOpen(false);
+      setActionMessage({ text: 'تعذر الاتصال بالخادم. لم يتم تأكيد تجميد المحفظة.', type: 'error' });
     } finally {
       setIsFreezeSubmitting(false);
     }
   };
 
   const handleUnfreezeSubmit = async (e: React.FormEvent) => {
+    if (process.env.NODE_ENV === 'production' && !FINANCIAL_ADMIN_WRITES_ENABLED) {
+      setActionMessage({ text: 'تعديلات الأمان/المحافظ معطّلة في Staging حتى اعتماد الاختبارات والموافقات. لم يتم تنفيذ أي تغيير.', type: 'error' });
+      return;
+    }
+    if (!getAdminToken()) {
+      setActionMessage({ text: 'سجّل الدخول بحساب إداري صالح قبل تنفيذ الإجراء.', type: 'error' });
+      return;
+    }
     e.preventDefault();
     if (!unfreezeWalletId) return;
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await fetch(`http://localhost:4000/api/wallet/admin/${unfreezeWalletId}/unfreeze`, {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+      const res = await fetch(apiUrl(`/wallet/admin/${unfreezeWalletId}/unfreeze`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -190,8 +181,7 @@ export default function SecurityCenterPage() {
         setActionMessage({ text: err.message || 'فشل إلغاء التجميد', type: 'error' });
       }
     } catch {
-      setActionMessage({ text: 'تم رفع الحظر الإداري بنجاح.', type: 'success' });
-      setIsUnfreezeModalOpen(false);
+      setActionMessage({ text: 'تعذر الاتصال بالخادم. لم يتم تأكيد إلغاء تجميد المحفظة.', type: 'error' });
     }
   };
 

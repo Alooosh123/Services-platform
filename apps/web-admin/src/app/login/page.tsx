@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Shield, Lock, Mail, KeyRound, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
@@ -21,7 +23,7 @@ export default function AdminLoginPage() {
     setError(null);
 
     try {
-      const res = await fetch('http://localhost:4000/api/auth/admin/login', {
+      const res = await fetch(apiUrl('/auth/admin/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
@@ -32,26 +34,14 @@ export default function AdminLoginPage() {
         throw new Error(data.message || 'بيانات الدخول الإدارية غير صحيحة');
       }
 
-      if (data.requiresMfa) {
-        setTempToken(data.tempToken);
-        setStep('mfa');
-      } else if (data.tokens) {
-        localStorage.setItem('admin_token', data.tokens.accessToken);
-        localStorage.setItem('admin_user', JSON.stringify(data.user));
-        setSuccess(true);
-        setTimeout(() => router.push('/'), 1000);
+      if (!data.requiresMfa || !data.tempToken) {
+        throw new Error('رفض تسجيل الدخول: لم يطلب الخادم تحقق MFA إلزامياً.');
       }
+
+      setTempToken(data.tempToken);
+      setStep('mfa');
     } catch (err: any) {
-      // Mock / Offline Fallback for Admin
-      if (
-        identifier === 'admin@digitaltopup.com' ||
-        identifier === 'finance@digitaltopup.com'
-      ) {
-        setTempToken('mock_temp_mfa_token_xyz');
-        setStep('mfa');
-      } else {
-        setError(err.message || 'فشل تسجيل الدخول');
-      }
+      setError(err.message || 'فشل تسجيل الدخول');
     } finally {
       setLoading(false);
     }
@@ -68,7 +58,7 @@ export default function AdminLoginPage() {
     setError(null);
 
     try {
-      const res = await fetch('http://localhost:4000/api/auth/admin/verify-mfa', {
+      const res = await fetch(apiUrl('/auth/admin/verify-mfa'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tempToken, code: mfaCode }),
@@ -78,27 +68,16 @@ export default function AdminLoginPage() {
       if (!res.ok) {
         throw new Error(data.message || 'رمز التحقق غير صحيح');
       }
+      if (!data.tokens?.accessToken || !data.user) {
+        throw new Error('استجابة MFA غير مكتملة. لم يتم إنشاء جلسة إدارية.');
+      }
 
       localStorage.setItem('admin_token', data.tokens.accessToken);
       localStorage.setItem('admin_user', JSON.stringify(data.user));
       setSuccess(true);
       setTimeout(() => router.push('/'), 1000);
     } catch (err: any) {
-      // Offline fallback: accept 123456 or any 6-digit code
-      if (mfaCode.length === 6) {
-        const mockAdmin = {
-          id: 'user-admin-001',
-          fullName: 'Super Administrator',
-          email: identifier,
-          role: identifier.includes('finance') ? 'FINANCE' : 'SUPER_ADMIN',
-        };
-        localStorage.setItem('admin_token', 'mock_admin_jwt_session_789');
-        localStorage.setItem('admin_user', JSON.stringify(mockAdmin));
-        setSuccess(true);
-        setTimeout(() => router.push('/'), 1000);
-      } else {
-        setError(err.message || 'رمز التحقق غير صحيح');
-      }
+      setError(err.message || 'رمز التحقق غير صحيح');
     } finally {
       setLoading(false);
     }

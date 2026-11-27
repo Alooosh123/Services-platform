@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiUrl as platformApiUrl } from '@/lib/api';
 import {
   Activity,
   HardDrive,
@@ -123,7 +124,7 @@ export default function OperationsPage() {
   const [simulationMode, setSimulationMode] = useState<'SAFE_FAILOVER' | 'MOCK_TIMEOUT'>('SAFE_FAILOVER');
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+  const apiUrl = (path: string) => platformApiUrl(path);
 
   const fetchData = async () => {
     setLoading(true);
@@ -143,7 +144,7 @@ export default function OperationsPage() {
       }
 
       // 3. Mock or fetch alerts & backups
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
       const alertsRes = await fetch(`${apiUrl}/monitoring/alerts`, { headers });
@@ -158,6 +159,10 @@ export default function OperationsPage() {
         setBackups(bData);
       }
     } catch (e: any) {
+      setHealth(null);
+      setMetrics(null);
+      setAlerts([]);
+      setBackups([]);
       console.error('Operations fetch error:', e);
     } finally {
       setLoading(false);
@@ -171,83 +176,15 @@ export default function OperationsPage() {
   }, []);
 
   const triggerReconciliationAudit = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${apiUrl}/monitoring/reconciliation-check`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-      const data = await res.json();
-      if (data.status === 'ALL_CLEAR') {
-        setActionNotice({ text: 'تم فحص المطابقة: جميع القيود متوازنة ولا توجد أي فروقات مالية!', type: 'success' });
-      } else {
-        setActionNotice({ text: `تم رصد ${data.alertsCreated} تنبيه بحاجة لتدخل الإدارة المالية!`, type: 'error' });
-      }
-      fetchData();
-    } catch (e) {
-      setActionNotice({ text: 'فشل في تشغيل فحص المطابقة', type: 'error' });
-    }
+    setActionNotice({ text: 'فحص المطابقة غير متاح في Staging حتى ربط خدمة المطابقة الحقيقية وتوثيق صلاحياتها. لم يتم تشغيل الفحص.', type: 'error' });
   };
 
   const runAT20Drill = async () => {
-    setIsDrillRunning(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${apiUrl}/backups/drill`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ environment: 'staging', notes: 'Dashboard drill' }),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setDrillResult(result);
-        setActionNotice({
-          text: `نجحت تجربة استعادة النسخ: توازن الدائن والمدين بنسبة 100% وتحقق RTO في ${result.durationSeconds} ثانية!`,
-          type: 'success',
-        });
-        fetchData();
-      }
-    } catch (e) {
-      setActionNotice({ text: 'فشلت تجربة استعادة النسخ الاحتياطي', type: 'error' });
-    } finally {
-      setIsDrillRunning(false);
-    }
+    setActionNotice({ text: 'مناورة النسخ الاحتياطي والاستعادة معطّلة في Staging حتى تجهيز بيئة اختبار ونسخة احتياطية قابلة للاستعادة.', type: 'error' });
   };
 
   const runOutageSimulation = async () => {
-    setIsSimulating(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${apiUrl}/monitoring/simulate-outage`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          serviceTarget: simulationTarget,
-          simulationMode,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActionNotice({
-          text: `تم تفعيل المحاكاة بنجاح: تحول النظام للوضع الآمن (${data.failoverStatus}) مع حماية الأموال بنسبة 100%!`,
-          type: 'success',
-        });
-        fetchData();
-      }
-    } catch (e) {
-      setActionNotice({ text: 'فشلت محاكاة انقطاع المزود', type: 'error' });
-    } finally {
-      setIsSimulating(false);
-    }
+    setActionNotice({ text: 'محاكاة الانقطاع معطّلة في Staging حتى تجهيز خطة اختبار معزولة واعتماد فريق العمليات.', type: 'error' });
   };
 
   const formatUptime = (seconds: number) => {

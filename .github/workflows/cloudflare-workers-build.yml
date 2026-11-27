@@ -1,0 +1,141 @@
+name: Cloudflare Workers build validation
+
+on:
+  push:
+    branches:
+      - infra/northflank-cloudflare-neon-upstash
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-workers-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker-build:
+    name: vinext Workers build and preview (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - apps/web-customer
+          - apps/web-admin
+          - apps/web-saas
+    env:
+      # Compile-time placeholder only. This hostname is not a deploy target.
+      NEXT_PUBLIC_API_URL: https://api.staging.invalid/api
+      NEXT_PUBLIC_ENABLE_FINANCIAL_ADMIN_WRITES: "false"
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked workspace dependencies
+        run: npm ci
+        working-directory: .
+
+      - name: Initialize non-interactive Cloudflare Workers config
+        run: >-
+          npx --yes vinext@latest init
+          --platform=cloudflare
+          --cdn-cache=none
+          --data-cache=none
+          --image-optimization=none
+          --no-prerender
+
+      - name: Verify generated Workers configuration
+        shell: bash
+        run: |
+          test -f vite.config.ts
+          test -f cloudflare.config.ts
+          node -e "const p=require('./package.json'); if (!p.scripts || !p.scripts['build:vinext'] || !p.scripts.start) process.exit(1)"
+
+      - name: Build production Workers output
+        run: npm run build:vinext
+
+      - name: Run local Cloudflare Workers runtime preview and HTTP smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d .cloudflare/output/v1/workers/default
+
+          npx vite preview --host 127.0.0.1 --port 8787 > /tmp/vinext-preview.log 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --silent --fail http://127.0.0.1:8787/ -o /tmp/vinext-home.html; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "Preview server exited before becoming ready."
+              cat /tmp/vinext-preview.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Preview server did not become ready."
+            cat /tmp/vinext-preview.log
+            exit 1
+          fi
+
+          test -s /tmp/vinext-home.html
+          grep -Eiq '<!doctype html|<html' /tmp/vinext-home.html
+
+          case "${{ matrix.app }}" in
+            apps/web-customer)
+              routes=(/login /register)
+              ;;
+            apps/web-admin)
+              routes=(/login)
+              ;;
+            apps/web-saas)
+              routes=()
+              ;;
+          esac
+
+          for route in "${routes[@]}"; do
+            status=$(curl --silent --show-error --output /tmp/vinext-route.html --write-out '%{http_code}' "http://127.0.0.1:8787$route")
+            if [ "$status" -lt 200 ] || [ "$status" -ge 400 ]; then
+              echo "Preview route $route returned HTTP $status"
+              cat /tmp/vinext-preview.log
+              exit 1
+            fi
+            test -s /tmp/vinext-route.html
+            echo "PASS HTTP $status $route"
+          done
+
+          echo "PASS Cloudflare Worker preview: ${{ matrix.app }}"
+
+      - name: Upload Cloudflare Workers build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-worker-${{ matrix.app == 'apps/web-customer' && 'customer' || matrix.app == 'apps/web-admin' && 'admin' || 'saas' }}
+          path: ${{ matrix.app }}/.cloudflare/output/v1/workers/default/
+          if-no-files-found: error
+          retention-days: 5

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiUrl, getAdminToken } from '@/lib/api';
 import {
   FileCheck2,
   ShieldCheck,
@@ -104,7 +105,7 @@ export default function HandoverOperationsPage() {
   const [handoverPkg, setHandoverPkg] = useState<HandoverPackage>({
     packageId: 'HANDOVER-YEMEN-TOPUP-V1.0',
     version: '1.0.0',
-    status: 'TRANSFERRED',
+    status: 'PENDING_REVIEW',
     repositoriesDelivered: {
       backendApi: 'apps/backend (NestJS Modular Monolith + Swagger + Strict Ledger)',
       webAdmin: 'apps/web-admin (Next.js 14 - 19 شاشات تشغيلية كاملة)',
@@ -123,7 +124,6 @@ export default function HandoverOperationsPage() {
     totalChecklistItems: 24,
   });
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
   useEffect(() => {
     fetchData();
@@ -131,7 +131,7 @@ export default function HandoverOperationsPage() {
 
   const fetchData = async () => {
     try {
-      const resKpis = await fetch(`${API_URL}/handover/kpis`);
+      const resKpis = await fetch(apiUrl('/handover/kpis'));
       if (resKpis.ok) {
         const data = await resKpis.json();
         setKpis(data);
@@ -145,7 +145,7 @@ export default function HandoverOperationsPage() {
     }
 
     try {
-      const resRbs = await fetch(`${API_URL}/handover/runbooks`);
+      const resRbs = await fetch(apiUrl('/handover/runbooks'));
       if (resRbs.ok) {
         const data = await resRbs.json();
         if (Array.isArray(data)) setRunbooks(data);
@@ -157,7 +157,7 @@ export default function HandoverOperationsPage() {
     }
 
     try {
-      const resPkg = await fetch(`${API_URL}/handover/sign-off`);
+      const resPkg = await fetch(apiUrl('/handover/sign-off'));
       if (resPkg.ok) {
         const data = await resPkg.json();
         setHandoverPkg(data);
@@ -172,13 +172,22 @@ export default function HandoverOperationsPage() {
   };
 
   const handleExecuteDrill = async (drillType: string, labelAr: string) => {
+    if (process.env.NODE_ENV === 'production') {
+      setLastDrillResult(null);
+      setStatusMessage('مناورات التسليم معطّلة في Staging؛ لا يتم تسجيل تجارب دعم أو إقفال أو تدقيق حتى تجهيز بيئة اختبار معزولة.');
+      return;
+    }
+    if (!getAdminToken()) {
+      setStatusMessage('سجّل الدخول بحساب إداري صالح قبل طلب أي مناورة.');
+      return;
+    }
     setActiveDrillLoading(true);
     setStatusMessage(`جارٍ طلب تنفيذ المناورة: ${labelAr}...`);
 
     try {
-      const res = await fetch(`${API_URL}/handover/drills`, {
+      const res = await fetch(apiUrl('/handover/drills'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAdminToken()}` },
         body: JSON.stringify({
           drillType,
           operatorName: 'فريق العمليات والمالية (Live Operations Team)',

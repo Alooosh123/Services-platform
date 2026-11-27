@@ -1,5 +1,7 @@
 'use client';
 
+import { apiUrl } from '@/lib/api';
+
 import { useState, useEffect } from 'react';
 import { Header } from '../../components/Header';
 import {
@@ -55,7 +57,7 @@ export default function AdminSupportPage() {
   const fetchTickets = async () => {
     setLoading(true);
     try {
-      let url = 'http://localhost:4000/api/support/admin/tickets';
+      let url = apiUrl('/support/admin/tickets');
       const params = new URLSearchParams();
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (categoryFilter !== 'ALL') params.append('category', categoryFilter);
@@ -79,6 +81,11 @@ export default function AdminSupportPage() {
   };
 
   const loadFallbackTickets = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setTickets([]);
+      setSelectedTicket(null);
+      return;
+    }
     const demo = [
       {
         id: 'tck-test-001',
@@ -136,8 +143,8 @@ export default function AdminSupportPage() {
     setActionLoading(true);
     try {
       const endpoint = isInternalNote
-        ? `http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/internal-notes`
-        : `http://localhost:4000/api/support/tickets/${selectedTicket.id}/messages`;
+        ? apiUrl(`/support/admin/tickets/${selectedTicket.id}/internal-notes`)
+        : apiUrl(`/support/tickets/${selectedTicket.id}/messages`);
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -170,6 +177,10 @@ export default function AdminSupportPage() {
   };
 
   const addLocalStaffReply = () => {
+    if (process.env.NODE_ENV === 'production') {
+      alert('لم يؤكد الخادم إرسال الرد. لم يتم تسجيل أي رسالة محلياً.');
+      return;
+    }
     const localMsg = {
       id: `m-staff-${Date.now()}`,
       senderName: 'فريق الدعم (أنت)',
@@ -190,7 +201,7 @@ export default function AdminSupportPage() {
     if (!selectedTicket) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/status`, {
+      const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/status`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -214,7 +225,7 @@ export default function AdminSupportPage() {
     if (!selectedTicket) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/diagnose`, {
+      const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/diagnose`), {
         headers: getAuthHeader(),
       });
       if (res.ok) {
@@ -232,6 +243,11 @@ export default function AdminSupportPage() {
   };
 
   const loadFallbackDiagnostics = () => {
+    if (process.env.NODE_ENV === 'production') {
+      setDiagnosticsData(null);
+      setIsDiagnosticsModalOpen(false);
+      return;
+    }
     setDiagnosticsData({
       hasLinkedOrder: true,
       orderId: selectedTicket?.orderId || 'ORD-20261011-002',
@@ -250,29 +266,41 @@ export default function AdminSupportPage() {
   };
 
   const handleResolveDispute = async () => {
-    if (!selectedTicket || !refundReason) return;
+    if (process.env.NODE_ENV === 'production') {
+      setNotificationMsg('اعتماد النزاعات والاستردادات معطّل في Staging حتى اكتمال ربط Backend والتحقق المستقل من صلاحيات الموافقة والقيود المالية. لم يتم إرسال أي استرداد.');
+      return;
+    }
+    if (!selectedTicket || !refundReason.trim()) return;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+    if (!token) {
+      setNotificationMsg('سجّل الدخول بحساب إداري صالح قبل البت في النزاع.');
+      return;
+    }
+
     setActionLoading(true);
     try {
-      const res = await fetch(`http://localhost:4000/api/support/admin/tickets/${selectedTicket.id}/resolve-dispute`, {
+      const res = await fetch(apiUrl(`/support/admin/tickets/${selectedTicket.id}/resolve-dispute`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...getAuthHeader(),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           approved: refundApproved,
           refundAmount: Number(refundAmount),
-          reason: refundReason,
+          reason: refundReason.trim(),
         }),
       });
-      if (res.ok) {
-        const result = await res.json();
-        setSelectedTicket(result.ticket);
-        setIsDisputeModalOpen(false);
-        setNotificationMsg('تم توثيق قرار النزاع والاسترداد وإشعار العميل بنجاح.');
-        fetchTickets();
-      }
-    } catch {} finally {
+      if (!res.ok) throw new Error(`لم يؤكد الخادم قرار النزاع (HTTP ${res.status}).`);
+      const result = await res.json();
+      if (!result?.ticket) throw new Error('استجابة الخادم لا تحتوي على سجل النزاع المحدّث.');
+      setSelectedTicket(result.ticket);
+      setIsDisputeModalOpen(false);
+      setNotificationMsg('أكد الخادم حفظ قرار النزاع. تحقق من رقم القيد قبل إبلاغ العميل.');
+      fetchTickets();
+    } catch (error) {
+      setNotificationMsg(error instanceof Error ? error.message : 'تعذر تأكيد قرار النزاع. لم يتم تسجيل نجاح محلي.');
+    } finally {
       setActionLoading(false);
     }
   };
