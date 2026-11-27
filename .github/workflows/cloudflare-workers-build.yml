@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-workers-build-${{ github.ref }}-${{ matrix.app }}
+  group: cloudflare-workers-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
