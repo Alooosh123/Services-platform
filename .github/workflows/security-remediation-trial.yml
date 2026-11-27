@@ -104,6 +104,10 @@ jobs:
         run: |
           npm install --workspace=packages/database --save-dev --package-lock-only --no-audit --no-fund bcrypt@6.0.0
 
+      - name: Align RxJS to one version across all workspaces
+        run: |
+          npm install --workspace=apps/backend --package-lock-only --no-audit --no-fund rxjs@7.8.2
+
       - name: Apply narrowly scoped patched transitive dependency overrides
         shell: bash
         run: |
@@ -123,6 +127,7 @@ jobs:
             '@nestjs/common': '11.2.12',
             '@nestjs/core': '11.2.12',
             '@nestjs/platform-express': '11.2.12',
+            'rxjs': '7.8.2',
             '@nestjs/cli': { 'glob': '14.0.2' }
           };
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
@@ -175,6 +180,23 @@ jobs:
             console.log(name + ' ' + pkg.version + ' -> ' + file);
             if (!pkg.version.startsWith('11.')) throw new Error(name + ' resolved outside NestJS 11');
           }
+          NODE
+
+      - name: Verify a single RxJS runtime is resolved by the backend
+        shell: bash
+        run: |
+          npm ls rxjs --all
+          node - <<'NODE'
+          const path = require('node:path');
+          const backend = path.resolve('apps/backend');
+          const rootRxjs = require.resolve('rxjs/package.json');
+          const backendRxjs = require.resolve('rxjs/package.json', { paths: [backend] });
+          console.log('root RxJS:', rootRxjs);
+          console.log('backend RxJS:', backendRxjs);
+          if (rootRxjs !== backendRxjs) throw new Error('Duplicate RxJS installations remain.');
+          const pkg = require(rootRxjs);
+          console.log('RxJS version:', pkg.version);
+          if (pkg.version !== '7.8.2') throw new Error('Unexpected RxJS version.');
           NODE
 
       - name: Run authentication and security regression tests
