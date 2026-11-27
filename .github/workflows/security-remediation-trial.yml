@@ -1,0 +1,226 @@
+name: Security remediation trial (isolated)
+
+on:
+  push:
+    branches:
+      - security/dependency-remediation-trial
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-remediation-trial
+  cancel-in-progress: true
+
+jobs:
+  upgrade-and-verify:
+    name: Controlled dependency upgrades and regression checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      NEXT_PUBLIC_API_URL: https://api.staging.invalid/api
+      NEXT_PUBLIC_ENABLE_FINANCIAL_ADMIN_WRITES: "false"
+    steps:
+      - name: Checkout isolated trial branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install current locked dependencies
+        run: npm ci
+
+      - name: Capture legacy bcrypt hash before upgrade
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const bcrypt = require('bcrypt');
+          bcrypt.hash('services-platform-legacy-fixture', 10)
+            .then(hash => fs.writeFileSync('/tmp/legacy-bcrypt-hash.txt', hash))
+            .catch(error => { console.error(error); process.exit(1); });
+          NODE
+
+      - name: Record target package peer dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > dependency-peer-metadata.txt
+          for spec in \
+            @nestjs/common@11.2.12 \
+            @nestjs/core@11.2.12 \
+            @nestjs/platform-express@11.2.12 \
+            @nestjs/testing@11.2.12 \
+            @nestjs/cli@11.0.18 \
+            @nestjs/schematics@11.1.0 \
+            @nestjs/config@4.0.4 \
+            @nestjs/swagger@11.4.8 \
+            @nestjs/throttler@6.8.0 \
+            @nestjs/jwt@11.0.2 \
+            @nestjs/passport@11.0.5 \
+            next@15.5.29 \
+            bcrypt@6.0.0 \
+            uuid@11.1.1; do
+            echo "===== $spec =====" | tee -a dependency-peer-metadata.txt
+            npm view "$spec" peerDependencies engines --json | tee -a dependency-peer-metadata.txt
+          done
+
+      - name: Upgrade NestJS framework and compatible adapters together
+        run: |
+          npm install --workspace=apps/backend --package-lock-only --no-audit --no-fund \
+            @nestjs/common@11.2.12 \
+            @nestjs/core@11.2.12 \
+            @nestjs/platform-express@11.2.12 \
+            @nestjs/config@4.0.4 \
+            @nestjs/swagger@11.4.8 \
+            @nestjs/throttler@6.8.0 \
+            @nestjs/jwt@11.0.2 \
+            @nestjs/passport@11.0.5 \
+            bcrypt@6.0.0 \
+            uuid@11.1.1
+
+      - name: Upgrade Nest CLI and testing packages together
+        run: |
+          npm install --workspace=apps/backend --save-dev --package-lock-only --no-audit --no-fund \
+            @nestjs/testing@11.2.12 \
+            @nestjs/cli@11.0.18 \
+            @nestjs/schematics@11.1.0
+
+      - name: Upgrade all frontend apps to the patched Next.js 15 line
+        run: |
+          npm install --workspace=apps/web-admin --package-lock-only --no-audit --no-fund next@15.5.29
+          npm install --workspace=apps/web-customer --package-lock-only --no-audit --no-fund next@15.5.29
+          npm install --workspace=apps/web-saas --package-lock-only --no-audit --no-fund next@15.5.29
+
+      - name: Upgrade frontend PostCSS packages
+        run: |
+          npm install --workspace=apps/web-admin --save-dev --package-lock-only --no-audit --no-fund postcss@8.5.33
+          npm install --workspace=apps/web-customer --save-dev --package-lock-only --no-audit --no-fund postcss@8.5.33
+          npm install --workspace=apps/web-saas --save-dev --package-lock-only --no-audit --no-fund postcss@8.5.33
+
+      - name: Upgrade database tooling bcrypt
+        run: |
+          npm install --workspace=packages/database --save-dev --package-lock-only --no-audit --no-fund bcrypt@6.0.0
+
+      - name: Apply narrowly scoped patched transitive dependency overrides
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          p.overrides = {
+            ...(p.overrides || {}),
+            'ajv': '8.18.0',
+            'body-parser': '1.20.9',
+            'glob': '14.0.2',
+            'js-yaml': '4.3.2',
+            'lodash': '4.18.0',
+            'picomatch': '4.0.4',
+            'postcss': '8.5.33',
+            'qs': '6.16.1',
+            'tar': '7.5.24',
+            'tmp': '0.2.6'
+          };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          NODE
+          npm install --package-lock-only --no-audit --no-fund
+
+      - name: Apply any remaining non-forced compatible lockfile fixes
+        run: npm audit fix --package-lock-only --no-fund
+
+      - name: Install the candidate lockfile cleanly
+        run: npm ci
+
+      - name: Verify bcrypt v5 hash compatibility after bcrypt v6 upgrade
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const bcrypt = require('bcrypt');
+          const hash = fs.readFileSync('/tmp/legacy-bcrypt-hash.txt', 'utf8').trim();
+          Promise.all([
+            bcrypt.compare('services-platform-legacy-fixture', hash),
+            bcrypt.hash('services-platform-new-fixture', 10)
+              .then(newHash => bcrypt.compare('services-platform-new-fixture', newHash))
+          ]).then(([legacyOk, newOk]) => {
+            if (!legacyOk || !newOk) throw new Error('bcrypt compatibility test failed');
+            console.log('PASS: legacy bcrypt hashes remain verifiable; new hashes round-trip');
+          }).catch(error => { console.error(error); process.exit(1); });
+          NODE
+
+      - name: Generate Prisma Client and build database package
+        run: |
+          npm run db:generate
+          npm run build --workspace=packages/database
+
+      - name: Run authentication and security regression tests
+        run: npm run test --workspace=apps/backend -- --runInBand --runTestsByPath src/modules/auth/auth.security.spec.ts
+
+      - name: Run all backend unit tests
+        run: npm run test --workspace=apps/backend -- --runInBand
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Capture post-upgrade audit report
+        if: always()
+        shell: bash
+        run: |
+          npm audit --json > dependency-audit-after.json || true
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('dependency-audit-after.json', 'utf8'));
+          const v = report.metadata?.vulnerabilities || {};
+          const rows = [
+            '# Dependency remediation trial',
+            '',
+            '| Severity | Count |',
+            '|---|---:|',
+            '| Critical | ' + (v.critical || 0) + ' |',
+            '| High | ' + (v.high || 0) + ' |',
+            '| Moderate | ' + (v.moderate || 0) + ' |',
+            '| Low | ' + (v.low || 0) + ' |',
+            '| Total | ' + (v.total || 0) + ' |',
+            '',
+            'This is an isolated candidate. Do not merge unless critical/high are zero and every required regression/build check passes.'
+          ].join('\n');
+          fs.writeFileSync('dependency-remediation-summary.md', rows + '\n');
+          console.log(rows);
+          NODE
+
+      - name: Upload candidate manifests, lockfile, and audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-remediation-trial
+          path: |
+            package.json
+            package-lock.json
+            apps/backend/package.json
+            apps/web-admin/package.json
+            apps/web-customer/package.json
+            apps/web-saas/package.json
+            packages/database/package.json
+            dependency-peer-metadata.txt
+            dependency-audit-after.json
+            dependency-remediation-summary.md
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce critical/high advisory gate
+        if: always()
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          if (!fs.existsSync('dependency-audit-after.json')) {
+            throw new Error('Audit report is missing; security gate remains blocked.');
+          }
+          const r = JSON.parse(fs.readFileSync('dependency-audit-after.json', 'utf8'));
+          const v = r.metadata?.vulnerabilities || {};
+          console.log(JSON.stringify(v));
+          if ((v.critical || 0) > 0 || (v.high || 0) > 0) {
+            throw new Error('Critical/high advisories remain; do not merge.');
+          }
+          NODE
