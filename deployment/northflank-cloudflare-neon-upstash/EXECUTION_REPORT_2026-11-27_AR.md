@@ -1,78 +1,140 @@
-# تقرير التنفيذ المرحلي — Services-platform + n8n
-**التاريخ:** 2026-11-27  
+# تقرير التنفيذ والتدقيق — Services-platform + n8n
+**التاريخ:** 27 نوفمبر 2026  
 **الفرع:** `infra/northflank-cloudflare-neon-upstash`  
 **طلب الدمج:** [PR #7](https://github.com/Alooosh123/Services-platform/pull/7) — Draft، إلى `main`  
+**بيئة التحقق:** GitHub Actions + Workers Preview محلي + PostgreSQL/Redis مؤقتان في CI  
 **الهدف:** Staging فقط؛ ليس إصداراً إنتاجياً.
 
-## 1. نتائج GitHub Actions التي تم التحقق منها
+## 1. النتائج المؤكدة
 
-### تشغيل Staging validation — 45912469359
+### أ. واجهات Cloudflare Workers — نجاح البناء والتشغيل المحلي
+
+تشغيل GitHub Actions: [45996911828](https://github.com/Alooosh123/Services-platform/actions/runs/45996911828)
+
+تم لكل من `web-customer` و`web-admin` و`web-saas`:
+- تثبيت الاعتمادات من lockfile.
+- تهيئة vinext لمشروع Cloudflare Workers.
+- بناء Production Worker output.
+- تشغيل Worker Preview محلياً عبر بيئة Workerd.
+- تنفيذ HTTP smoke tests على الصفحة الرئيسية وصفحات تسجيل الدخول والتسجيل.
+- رفع build artifacts إلى GitHub Actions.
+
+نتائج HTTP التي ظهرت في تشغيل سابق مماثل: Customer `/login` و`/register` = 200، Admin `/login` = 200، وSaaS root أعاد HTML صالحاً. التشغيل الأخير 45996911828 انتهى بنجاح لجميع التطبيقات الثلاثة.
+
+**هذا ليس نشرًا على حساب Cloudflare ولا يثبت أن نطاقاً عاماً أو Backend حياً متصل بهذه الواجهات.** عنوان API المستخدم في CI هو placeholder `api.staging.invalid` ولا يُستخدم كنقطة خدمة فعلية.
+
+### ب. Backend + PostgreSQL + Redis — نجاح تشغيل واختبار
+
+تشغيل Staging validation: [45996903741](https://github.com/Alooosh123/Services-platform/actions/runs/45996903741)
+
+نجح فحص Backend Runtime باستخدام حاويات PostgreSQL 16 وRedis 7 مؤقتة:
+1. تثبيت الاعتمادات.
+2. توليد Prisma Client وبناء الحزم.
+3. إنشاء Schema مؤقت باستخدام Prisma `db push`، دون Seed أو حسابات/أرصدة اختبار.
+4. تشغيل NestJS.
+5. التحقق من:
+   - `GET /api/health/live` — نجح.
+   - `GET /api/health/ready` — نجح مع اتصال PostgreSQL وRedis.
+   - `GET /api/health` — نجح، وأكد `database=HEALTHY` و`redis=HEALTHY`.
+
+لم يتم الاتصال بـ Neon أو Upstash الفعليين. هذا اختبار تكامل حقيقي مع نسخ PostgreSQL/Redis مؤقتة داخل CI.
+
+### ج. Backend production container — نجاح البناء
+
+في التشغيل نفسه، اكتملت:
+- اختبارات Backend الوحدية.
+- بناء shared package وPrisma Client وحزمة database.
+- بناء جميع Workspaces.
+- بناء صورة Docker من `docker/Dockerfile.backend`.
+
+أثناء الفحص أصلحنا:
+- متطلبات Native build لحزمة `argon2` على Alpine (Python وmake وg++).
+- مكتبات OpenSSL التي يحتاجها Prisma على Alpine.
+- إزالة مسار نسخ `apps/backend/node_modules` غير الموجود في بنية npm workspaces؛ الاعتمادات موجودة في root `node_modules`.
+
+**الصورة بُنيت بنجاح، لكن لم تُنشر في Northflank ولم يتم تشغيلها في حساب سحابي.** اختبار الصحة أعلاه شغّل Backend من build output مباشرة في CI، وليس من حاوية Docker.
+
+### د. CI / الاختبارات / Prisma
+
+تشغيل CI/CD Phase 10: [45996911978](https://github.com/Alooosh123/Services-platform/actions/runs/45996911978)
+
 | الفحص | النتيجة |
 |---|---|
-| تثبيت الاعتمادات المقفلة بـ `npm ci` | ناجح |
-| بناء الحزمة المشتركة | ناجح |
-| توليد Prisma Client | ناجح |
-| بناء حزمة قاعدة البيانات | ناجح |
-| اختبارات Backend | ناجحة |
-| بناء جميع Workspaces | ناجح |
-| فحص توافق vinext للتطبيقات الثلاثة | ناجح، لكنه فحص توافق ساكن محدود |
-| فحص صياغة سكربتات PowerShell | ناجح |
-| `npm audit --audit-level=high` | **فشل — 34 ثغرة** |
+| Lint / Types / Security audit step في Phase 10 | ناجح؛ ملاحظة: هذا الـworkflow يتسامح مع npm audit عبر `|| true` |
+| Backend Unit, Security & Stress Tests | ناجح |
+| Migration Dry-Run & Safety Check | ناجح |
+| Monorepo Packages & Apps Build | ناجح |
+| Staging Deployment | متخطى عمداً، لم تُضبط خدمة نشر فعلية |
+| Production Deployment | متخطى عمداً |
 
-تفصيل تدقيق الاعتمادات في سجل CI: **2 Critical، 14 High، 15 Moderate، 3 Low**. ويتضمن السجل مشكلات في Next.js وتبعياته، و`tar` عبر bcrypt/node-pre-gyp، و`tmp`، و`webpack` وغيرها. لا تستخدم `npm audit fix --force` كحل تلقائي؛ بعض الإصلاحات المقترحة تتطلب قفزات major مثل Next.js 16 وbcrypt 6 وNest CLI 12 وuuid 14.
+كما اجتاز فحص صياغة سكربتات PowerShell وفحص vinext للتوافق في تشغيل Staging validation رقم 45996903741.
 
-### تشغيل CI/CD — 45912469356
-- Lint / Types / Security Audit: ناجح.
-- Migration Dry-Run & Safety Check: ناجح.
-- Backend Unit, Security & Stress Tests: ناجح.
-- Monorepo build: ناجح.
-- Staging deployment: تم تخطيه عمداً لأن بيانات النشر لم تُجهز.
-- Production deployment: تم تخطيه عمداً.
+## 2. بوابة أمن التبعيات — لا تزال فاشلة
 
-### Cloudflare
-تكامل Cloudflare Pages الحالي أبلغ عن فشل البناء. فحص `vinext check` بنسبة 100% لا يساوي إنشاء Worker أو بناءه أو تشغيله. أُضيف ملف:
-`.github/workflows/cloudflare-workers-build.yml`
-ليهيئ vinext بطريقة غير تفاعلية ويبني كل واجهة في Workers output. هذا الاختبار الجديد ينتظر نتيجة GitHub Actions؛ لا يعني أنه تم نشر أي Worker.
+في lockfile المعتمد حالياً، فشل الأمر الصارم `npm audit --audit-level=high` بالنتيجة التالية:
+- 2 Critical
+- 14 High
+- 15 Moderate
+- 3 Low
+- الإجمالي 34
 
-## 2. نتائج فحص n8n المحلي التي قدمها مالك المشروع
+أنشأنا تجربة إصلاح غير قسرية دون `--force`، وأعيد بناء واختبار الحزم وBackend بنجاح. لكن lockfile المرشح في Artifact خفّض الإجمالي إلى 32 فقط:
+- 2 Critical
+- 14 High
+- 13 Moderate
+- 3 Low
 
-- الإصدار المحلي: `2.49.5`.
-- إجمالي تعريفات التدفقات: 31؛ منها 30 غير فارغة وتدفق واحد فارغ باسم `Services-Platform-n8n`.
-- جميع التدفقات الـ31 كانت غير مفعّلة.
-- 14 Webhook استقبال في Services-platform لديها `headerAuth` لكن بلا ربط `httpHeaderAuth`.
-- 13 Webhook استقبال في SmartNet لديها ربط Header Auth محلي؛ يجب إعادة إنشاء الاعتماد وربطه في الخادم المستهدف.
-- 13 ربط اعتماد OpenAI ضمن SmartNet يجب إعادة إنشائها في الخادم المستهدف.
-- 13 عقدة `Respond to Webhook` هي عقد رد وليست Webhooks استقبال.
-- 80 مرجعاً لمتغيرات البيئة. من الأسماء الحساسة: `SP_API_TOKEN`، `SP_LLM_API_KEY`، `SP_N8N_AGENT_TOKEN`، `TELEGRAM_BOT_TOKEN`.
-- ثلاث Code Nodes تستخدم `$env`: اثنتان لـ `SP_ADMIN_BASE_URL` وواحدة لـ `TELEGRAM_BOT_TOKEN`. لا تفتح وصول Code Nodes إلى جميع متغيرات بيئة الخادم لحل هذه المشكلة؛ أعد بناء العقد لاستخدام بيانات Workflow غير السرية أو Credentials.
-- مراجع محلية على منافذ n8n (5678)، Ollama (11434)، Backend (4000)، FastAPI (8000)، وخدمة غير محددة (3001). يجب تعيين وجهة كل عقدة على حدة.
+هذا المرشح لم يُدمج في الفرع؛ لم يخفض أي Critical أو High. إصلاحات بعض الثغرات تتطلب قفزات Major في Next.js وbcrypt وNest CLI/Packages وuuid. لا نستخدم `npm audit fix --force` تلقائياً ولا نعتبر بوابة الأمن مجتازة.
 
-**مهم:** التصدير الذي تم قبل تحديث فرع النقل استخدم بنية قديمة (مجلد `sanitized-workflows`). سكربت التصدير المحدث في هذا الفرع يستخدم `review-only-workflows`، ويستثني التدفق الفارغ، ويضيف `ImportReadiness` وتقرير `environment-reference-audit.csv`. بعد سحب آخر تحديث، أعد التصدير وأعد المراجعة. لا تستورد النسخ السابقة.
+**القرار:** لا نشر عام ولا فتح عمليات مالية ما دامت Critical/High غير معالجة ومختبرة.
 
-## 3. ملفات النقل وأمان البيانات
+## 3. تدقيق n8n المحلي وموانع النقل
 
-- خدمة Backend على Northflank تستخدم `docker/Dockerfile.backend` والمنفذ 4000.
-- خدمة n8n مستقلة على Northflank بالإصدار المحلي المطابق أولاً، مع قاعدة PostgreSQL منفصلة تماماً.
-- Neon: قاعدة منفصلة للمنصة وأخرى لـ n8n.
-- Upstash: اتصال Redis عبر TCP/TLS باستخدام `rediss://`؛ وليس REST API، لأن Backend الحالي يستخدم عميل Redis TCP.
-- Cloudflare: Workers منفصلة للعميل والإدارة وSaaS.
-- `N8N_BLOCK_ENV_ACCESS_IN_NODE` يبقى مفعلاً. لا توضع الأسرار في Set nodes أو في نصوص Workflow أو في Git.
-- لا تستخدم Seeder التطوير أو بيانات أرصدة وهمية على قاعدة Staging/Production.
-- ملفات `source-workflows-private` تبقى محلية وخاصة ولا تُرفع إلى GitHub.
+النتائج التي قدمها مالك المشروع من الجهاز المحلي:
+- n8n المحلي: `2.49.5`.
+- تعريفات التدفقات الأصلية: 31؛ واحد فارغ باسم `Services-Platform-n8n`، و30 غير فارغ.
+- جميع التدفقات الأصلية كانت غير مفعّلة.
+- 14 Inbound Webhooks لمنصة Services-platform تستخدم `headerAuth` لكن بلا ربط `httpHeaderAuth`.
+- 13 Inbound Webhooks لـSmartNet لديها ربط Header Auth محلي؛ يجب إنشاء الاعتماد من جديد في الهدف.
+- 13 ربط OpenAI يجب إعادة إنشائها في الهدف.
+- 13 عقدة `Respond to Webhook` هي عقد استجابة، وليست Webhooks استقبال.
+- 80 مرجعاً لمتغيرات البيئة، من ضمنها أسرار: `SP_API_TOKEN`، `SP_LLM_API_KEY`، `SP_N8N_AGENT_TOKEN`، `TELEGRAM_BOT_TOKEN`.
+- ثلاث Code Nodes تقرأ `$env`; يجب إعادة تصميمها لتجنب كشف أسرار بيئة العملية.
+- اتصالات محلية على المنافذ 5678 (n8n)، 11434 (Ollama)، 4000 (Backend)، 8000 (FastAPI)، 3001 (خدمة غير محددة).
 
-## 4. ما لم يتم تنفيذه بعد
+تحديث سكربت التصدير على الفرع الحالي ينتج `review-only-workflows` وملفات تدقيق `ImportReadiness` و`environment-reference-audit.csv`، ويستثني التدفق الفارغ من النسخ المرشحة للاستيراد. **التصدير السابق من 2026-11-27 01:30 محلي وقديم بالنسبة إلى السكربت الحالي؛ يجب سحب الفرع وإعادة تصدير التدفقات محلياً قبل اختيار أي Workflow للاستيراد.** لم يتم استيراد أي Workflow إلى n8n سحابي.
 
-لم يتم إنشاء أو ربط موارد فعلية في حسابات Northflank أو Neon أو Upstash أو Cloudflare من خلال هذه الجلسة. لا توجد حتى الآن عناوين API أو Workers حية، ولم يتم تشغيل Backend أو n8n على السحابة، ولم يتم استيراد أي Workflow إلى n8n مستهدف. كذلك لا يوجد وصول مباشر من هذه الجلسة إلى جهاز Windows المحلي لتنفيذ السكربتات عليه.
+ملفات `source-workflows-private` قد تحتوي إعدادات سرية، وتبقى محلية فقط. لا ترفعها إلى GitHub ولا ترسلها في المحادثة.
 
-لذلك لم يُجر اختبار HTTP حي لـ `/api/health/live` أو `/api/health/ready`، ولم يُختبر Neon أو Redis من خدمة Backend مستضافة، ولم تُختبر عملية استعادة نسخة احتياطية.
+## 4. بنية الاستضافة المعتمدة
 
-## 5. بوابات لا يجوز تجاوزها
+| المكون | الاستضافة المقصودة |
+|---|---|
+| Backend NestJS | Northflank |
+| n8n مستقل | Northflank، بالإصدار 2.49.5 مبدئياً |
+| قاعدة المنصة | Neon |
+| قاعدة n8n | قاعدة مستقلة على Neon |
+| Redis | Upstash عبر TCP/TLS `rediss://` |
+| Customer / Admin / SaaS | Cloudflare Workers مستقلة |
 
-1. إزالة ثغرات Critical وHigh بإصلاحات مدروسة واختبارات انحدار؛ تبقى بوابة npm audit حمراء حتى ذلك الحين.
-2. إتمام vinext production build لكل واجهة ومراجعة التغييرات المولدة، ثم اختبار SSR والتنقل والمصادقة وطلبات API على Worker Preview.
-3. توفير حسابات Staging وتكوين الأسرار داخل مديري أسرار الخدمات، وليس في GitHub.
-4. استيراد التدفقات بعد تحديث التصدير، وربط Credentials وإصلاح Webhooks ومراجع العناوين المحلية، مع إبقاء جميع التدفقات غير نشطة أولاً.
-5. تبقى وكلاء الإيداع والمحفظة والتسويات والأرباح وربط الحسابات محظورة من تغيير الأرصدة أو Ledger أو تنفيذ Refund/Payout. لا تمنح n8n صلاحيات Owner أو Finance.
-6. لا تجرِ أي اختبار مالي حقيقي. اختبارات Staging الأولى تكون للقراءة أو ببيانات اختبار غير مالية فقط.
+مقتضيات التشغيل الإنتاجي للـBackend تتضمن JWT secrets مستقلة وقوية، وENCRYPTION_KEY بصيغة 64 hex، وWEBHOOK_HMAC_SECRET، وPostgreSQL TLS، وRedis TLS، وCORS origins صريحة HTTPS. يجب إدخال الأسرار مباشرة في مدير أسرار المزود، لا في GitHub أو ملفات Workflow.
 
-**الحالة النهائية لهذا التقرير:** اجتازت مجموعة مهمة من اختبارات الكود والبناء وPrisma وBackend في CI، لكن المشروع لم يصبح منشوراً أو عاملاً على الخدمات السحابية، وما زالت بوابات الأمن والنشر الفعلي مفتوحة.
+إعداد n8n يبقي `N8N_BLOCK_ENV_ACCESS_IN_NODE` مفعّلاً. يستخدم Credentials للرموز ومفاتيح API، وقاعدة منفصلة، ومفتاح تشفير ثابت. لا تمنح n8n حساب Owner أو Finance ولا صلاحيات كتابة Ledger.
+
+## 5. ما لم يتم إنجازه بعد
+
+لم تُنشأ أو تُربط موارد فعلية في حسابات Northflank أو Neon أو Upstash أو Cloudflare من خلال هذه الجلسة. لم يتم نشر Backend أو n8n أو Workers إلى نطاقات عامة، ولم يتم اختبار Neon/Upstash من خدمة مستضافة، ولم يتم اختبار backup/restore فعلياً على خدمة مستضافة.
+
+لا يوجد وصول مباشر من هذه الجلسة إلى جهاز Windows المحلي لتشغيل n8n أو إعادة تصدير التدفقات. لذلك يحتاج مالك المشروع إلى سحب فرع النقل وإعادة التصدير محلياً؛ وبعد ذلك يمكن تنفيذ مراجعة نهائية لملفات التدفقات المنقحة وقائمة الاعتمادات.
+
+## 6. بوابات منع التفعيل
+
+1. إزالة الثغرات الحرجة والعالية بإصلاحات متوافقة واختبارات انحدار؛ فشل `npm audit --audit-level=high` يمنع اعتماد النشر.
+2. تجهيز حسابات Staging والمزودين، وإضافة الأسرار من خلال مدير أسرار كل خدمة.
+3. نقل Backend وn8n إلى Northflank، وربط Neon وUpstash، ثم تشغيل health/readiness checks على البيئة المستضافة.
+4. إعادة تصدير n8n بالإصدار الحالي، ومراجعة كل ImportReadiness blocker، وإصلاح 14 ربط Header Auth، وإعادة إنشاء Credentials، وإعادة توجيه الاتصالات المحلية.
+5. استيراد التدفقات الآمنة بحالة Inactive أولاً. تبقى وكلاء الإيداع والمحفظة والتسويات والأرباح وربط الحسابات محظورة من تغيير الأرصدة أو Ledger أو تنفيذ Refund/Payout.
+6. نشر الواجهات على Cloudflare بعد ربط API origin الفعلي، ثم اختبار تسجيل الدخول والعمليات للقراءة في Staging.
+7. تنفيذ backup/restore وrollback drill موثق قبل التفكير بالإنتاج.
+
+**الحالة:** اجتازت الواجهات الثلاث بناء وتشغيل Preview محلياً، واجتاز Backend اختبارات الوحدة والأمن والإجهاد، ونجح تشغيله مع PostgreSQL وRedis مؤقتين في CI، كما اكتمل بناء Docker image. لكن بوابة تبعيات npm ما زالت فاشلة، ولم يحدث نشر سحابي فعلي أو استيراد n8n إلى بيئة هدف. المشروع لا يزال Staging / Not production-ready.
