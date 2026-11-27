@@ -69,14 +69,14 @@ jobs:
       - name: Build production Workers output
         run: npm run build:vinext
 
-      - name: Run local Cloudflare Worker preview and HTTP smoke tests
+      - name: Run local Cloudflare Workers runtime preview and HTTP smoke tests
         shell: bash
         run: |
           set -euo pipefail
 
           test -d .cloudflare/output/v1/workers/default
 
-          npm run start -- --host 127.0.0.1 --port 8787 > /tmp/vinext-preview.log 2>&1 &
+          npx vite preview --host 127.0.0.1 --port 8787 > /tmp/vinext-preview.log 2>&1 &
           server_pid=$!
           cleanup() {
             kill "$server_pid" 2>/dev/null || true
