@@ -37,7 +37,9 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
-          const bcrypt = require('bcrypt');
+          const path = require('node:path');
+          const backendPath = path.resolve('apps/backend');
+          const bcrypt = require(require.resolve('bcrypt', { paths: [backendPath] }));
           bcrypt.hash('services-platform-legacy-fixture', 10)
             .then(hash => fs.writeFileSync('/tmp/legacy-bcrypt-hash.txt', hash))
             .catch(error => { console.error(error); process.exit(1); });
@@ -161,7 +163,9 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
-          const bcrypt = require('bcrypt');
+          const path = require('node:path');
+          const backendPath = path.resolve('apps/backend');
+          const bcrypt = require(require.resolve('bcrypt', { paths: [backendPath] }));
           const hash = fs.readFileSync('/tmp/legacy-bcrypt-hash.txt', 'utf8').trim();
           Promise.all([
             bcrypt.compare('services-platform-legacy-fixture', hash),
